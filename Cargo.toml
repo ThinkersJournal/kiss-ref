@@ -1,0 +1,30 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/kiss-classify-vocab",
+    "crates/kiss-ops-vocab",
+    "crates/kiss-ref-core",
+    "crates/kiss-ref-conformance",
+]
+
+[workspace.package]
+edition    = "2021"
+version    = "0.0.1"
+license    = "MIT OR Apache-2.0"
+repository = "https://github.com/ThinkersJournal/KISS"
+rust-version = "1.74"
+
+# The reference implementation targets the KISS working-tree drafts as of
+# 2026-07-16 (both KISS-Ops and KISS-Classify are unfrozen first-draft
+# proposals — no version number exists yet). See DESIGN.md "Spec pin".
+
+[workspace.dependencies]
+# Kept deliberately tiny: a reference implementation is portable, pure, and
+# obviously-correct. `libm` is pure-Rust no_std transcendentals; `half` is
+# the f16/bf16 storage type. Nothing else in the first cut.
+libm = "0.2"
+half = "2"
+
+kiss-classify-vocab = { path = "crates/kiss-classify-vocab", version = "0.0.1" }
+kiss-ops-vocab      = { path = "crates/kiss-ops-vocab", version = "0.0.1" }
+kiss-ref-core       = { path = "crates/kiss-ref-core", version = "0.0.1" }

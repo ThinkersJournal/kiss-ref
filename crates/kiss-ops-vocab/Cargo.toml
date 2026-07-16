@@ -1,0 +1,14 @@
+[package]
+name         = "kiss-ops-vocab"
+description  = "Rust binding of the KISS-Ops op vocabulary: primitive floor, non-primitive ops + reference decompositions (a conformant implementation, no privilege)."
+edition.workspace      = true
+version.workspace      = true
+license.workspace      = true
+repository.workspace   = true
+rust-version.workspace = true
+
+# Foundational root: binds KISS-Ops only, imports NOTHING — in particular never
+# kiss-classify-vocab (KISS-Ops front-matter / §6.9: the computation vocabulary
+# and the data vocabulary are independent sibling roots, neither importing the
+# other).
+[dependencies]

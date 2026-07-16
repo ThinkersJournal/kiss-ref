@@ -1,0 +1,13 @@
+[package]
+name         = "kiss-classify-vocab"
+description  = "Rust binding of the KISS-Classify pinned scalar dtype set (a conformant implementation, no privilege)."
+edition.workspace      = true
+version.workspace      = true
+license.workspace      = true
+repository.workspace   = true
+rust-version.workspace = true
+
+# Foundational root: binds KISS-Classify only, imports NOTHING — in particular
+# never kiss-ops-vocab (KISS-Classify §6.9-0001: the two vocabularies are
+# independent siblings).
+[dependencies]

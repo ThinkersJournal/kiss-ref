@@ -1,0 +1,13 @@
+[package]
+name         = "kiss-ref-conformance"
+description  = "The build-time (atom × legal-dtype) coverage gate + the KISS-Conform-named conformance corpus for kiss-ref."
+edition.workspace      = true
+version.workspace      = true
+license.workspace      = true
+repository.workspace   = true
+rust-version.workspace = true
+
+[dependencies]
+kiss-classify-vocab = { workspace = true }
+kiss-ops-vocab      = { workspace = true }
+kiss-ref-core       = { workspace = true }

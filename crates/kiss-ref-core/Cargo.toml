@@ -1,0 +1,14 @@
+[package]
+name         = "kiss-ref-core"
+description  = "The KISS base-op reference kernels: the floor atoms + the §6.13/§6.14 recursive-resolution engine. Spec-exact, obvious, slow."
+edition.workspace      = true
+version.workspace      = true
+license.workspace      = true
+repository.workspace   = true
+rust-version.workspace = true
+
+[dependencies]
+kiss-classify-vocab = { workspace = true }
+kiss-ops-vocab      = { workspace = true }
+libm                = { workspace = true }
+# half (f16/bf16) is a next-wave dependency — not used in the f32/f64 seed.
