@@ -25,10 +25,13 @@
 
 pub mod resolve;
 pub mod scalar;
+pub mod scalar_int;
 
-pub use resolve::{eval_expr, eval_op, float_supported, support};
+pub use resolve::{eval_expr, eval_op, float_supported, implemented, support};
 pub use scalar::ScalarFloat;
+pub use scalar_int::{eval_int_op, int_supported};
 
+use kiss_classify_vocab::Dtype;
 use kiss_ops_vocab::Op;
 
 /// A reference-evaluation failure. The reference never panics; every problem is
@@ -46,6 +49,9 @@ pub enum Error {
     /// A stored §6.13 decomposition string failed to parse (a vocab bug — the
     /// conformance suite guards against this).
     BadDecomposition { op: Op, pos: usize },
+    /// The op is not defined on this dtype in this seed (e.g. an integer op on a
+    /// float dtype, or a dtype with no reference path yet).
+    UnsupportedDtype(Dtype),
 }
 
 /// Coverage of an `(op, dtype)` cell in this seed. The conformance coverage gate

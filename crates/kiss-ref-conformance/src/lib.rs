@@ -11,15 +11,14 @@
 //!   numeric semantics of §6.
 
 use kiss_ops_vocab::Op;
-use kiss_ref_core::float_supported;
+use kiss_ref_core::implemented;
 
 /// The coverage split of the reference implementation over the KISS-Ops vocab.
 pub struct Ledger {
-    /// Ops the `f32`/`f64` scalar path evaluates (Done on both float dtypes).
+    /// Ops a reference path evaluates (float scalar on `f32`/`f64`, integer
+    /// scalar on the integer dtypes, or the tensor path).
     pub done: Vec<Op>,
-    /// Ops enumerated by the vocab but not yet evaluable in this seed
-    /// (integer-only bitwise atoms, structural atoms, and the reductions /
-    /// scans / normalizations that build on them).
+    /// Ops enumerated by the vocab but not yet evaluable in this seed.
     pub pending: Vec<Op>,
 }
 
@@ -28,8 +27,9 @@ impl Ledger {
     pub fn summary(&self) -> String {
         let total = self.done.len() + self.pending.len();
         format!(
-            "kiss-ref coverage — f32/f64 scalar path: {} of {} ops DONE, {} PENDING. \
-             Dtypes: 2 of 20 DONE (f32, f64); 18 PENDING (f16/bf16/fp8/sub-byte/complex).",
+            "kiss-ref coverage — {} of {} ops evaluable, {} PENDING. \
+             Paths: f32/f64 float scalar + integer scalar (s8..u64, s4/u4/b1). \
+             Dtype breadth still PENDING: f16/bf16/FP8/bool/complex.",
             self.done.len(),
             total,
             self.pending.len()
@@ -47,7 +47,7 @@ pub fn ledger() -> Ledger {
     let mut done = Vec::new();
     let mut pending = Vec::new();
     for &op in Op::ALL {
-        if float_supported(op) {
+        if implemented(op) {
             done.push(op);
         } else {
             pending.push(op);

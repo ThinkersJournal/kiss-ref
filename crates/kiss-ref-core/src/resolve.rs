@@ -184,11 +184,20 @@ pub fn float_supported(op: Op) -> bool {
     go(op, 32)
 }
 
-/// Coverage of `(op, dtype)` in this seed: `Done` iff the dtype is a supported
-/// float dtype (`f32`/`f64`) and the op resolves through the float path;
-/// `Pending` otherwise. Drives the conformance coverage ledger.
+/// Whether any reference path evaluates `op` (float scalar, integer scalar, or
+/// — added in a later increment — the tensor path). Used by the coverage ledger.
+pub fn implemented(op: Op) -> bool {
+    float_supported(op) || crate::int_supported(op)
+}
+
+/// Coverage of `(op, dtype)` in this seed: `Done` iff a reference path evaluates
+/// `op` on `dtype` — the float scalar path on `f32`/`f64`, or the integer scalar
+/// path on an integer dtype. `Pending` otherwise (the remaining dtype breadth:
+/// `f16`/`bf16`/FP8/`bool`/complex). Drives the conformance coverage ledger.
 pub fn support(op: Op, dtype: Dtype) -> Support {
-    if matches!(dtype, Dtype::F32 | Dtype::F64) && float_supported(op) {
+    let done = (matches!(dtype, Dtype::F32 | Dtype::F64) && float_supported(op))
+        || (crate::scalar_int::int_spec(dtype).is_some() && crate::int_supported(op));
+    if done {
         Support::Done
     } else {
         Support::Pending
