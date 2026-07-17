@@ -155,6 +155,46 @@ pub fn diff_f64(
     Ok(report)
 }
 
+/// Diff a candidate's `f32` outputs against this reference over `rows`, under
+/// `tol`. Same shape as [`diff_f64`]; ULP distances are the `f32` metric.
+pub fn diff_f32(
+    op: Op,
+    rows: &[&[f32]],
+    candidate: &[f32],
+    tol: Tolerance,
+) -> Result<DiffReport, Error> {
+    let reference = reference_f32(op, rows)?;
+    if candidate.len() != reference.len() {
+        return Err(Error::LengthMismatch {
+            expected: reference.len(),
+            got: candidate.len(),
+        });
+    }
+    let mut report = DiffReport {
+        n: reference.len(),
+        mismatches: 0,
+        max_ulp: 0,
+        first_mismatch: None,
+    };
+    for (i, (&e, &g)) in reference.iter().zip(candidate).enumerate() {
+        let d = ulp_distance_f32(e, g) as u64;
+        if d > report.max_ulp {
+            report.max_ulp = d;
+        }
+        let ok = match tol {
+            Tolerance::Exact => d == 0,
+            Tolerance::Ulp(n) => d <= n,
+        };
+        if !ok {
+            report.mismatches += 1;
+            if report.first_mismatch.is_none() {
+                report.first_mismatch = Some((i, e as f64, g as f64));
+            }
+        }
+    }
+    Ok(report)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

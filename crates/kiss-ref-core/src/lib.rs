@@ -29,8 +29,8 @@ pub mod scalar;
 pub mod scalar_int;
 
 pub use diff::{
-    diff_f64, reference_f32, reference_f64, ulp_distance_f32, ulp_distance_f64, DiffReport,
-    Tolerance,
+    diff_f32, diff_f64, reference_f32, reference_f64, ulp_distance_f32, ulp_distance_f64,
+    DiffReport, Tolerance,
 };
 pub use resolve::{eval_expr, eval_op, float_supported, implemented, support};
 pub use scalar::ScalarFloat;

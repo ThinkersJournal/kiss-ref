@@ -62,17 +62,33 @@ fn coverage_int_ops_done_on_every_integer_dtype() {
 }
 
 #[test]
+fn coverage_narrow_floats_match_wide_except_nextafter() {
+    // f16/bf16 cover the same float ops as f32/f64, minus nextafter (§6.9-0003).
+    for &op in Op::ALL {
+        for &d in &[Dtype::F16, Dtype::Bf16] {
+            if float_supported(op) && op != Op::Nextafter {
+                assert_eq!(support(op, d), Support::Done, "{op:?}/{d:?}");
+            }
+        }
+        // nextafter is declined on the narrow floats.
+        assert_eq!(support(Op::Nextafter, Dtype::F16), Support::Pending);
+        assert_eq!(support(Op::Nextafter, Dtype::Bf16), Support::Pending);
+        // ...but supported on the wide floats.
+        assert_eq!(support(Op::Nextafter, Dtype::F32), Support::Done);
+    }
+}
+
+#[test]
 fn coverage_support_consistency() {
-    // support() is Done on a float dtype iff float_supported, on an integer dtype
-    // iff int_supported, and never on the not-yet-covered dtypes.
+    // support() is Done on a float dtype iff float_supported (narrow floats minus
+    // nextafter), on an integer dtype iff int_supported, else never.
     for &op in Op::ALL {
         for &d in Dtype::ALL.iter() {
-            let expect = if matches!(d, Dtype::F32 | Dtype::F64) {
-                float_supported(op)
-            } else if int_spec(d).is_some() {
-                int_supported(op)
-            } else {
-                false
+            let expect = match d {
+                Dtype::F32 | Dtype::F64 => float_supported(op),
+                Dtype::F16 | Dtype::Bf16 => float_supported(op) && op != Op::Nextafter,
+                _ if int_spec(d).is_some() => int_supported(op),
+                _ => false,
             };
             assert_eq!(support(op, d) == Support::Done, expect, "{op:?}/{d:?}");
         }
@@ -81,10 +97,8 @@ fn coverage_support_consistency() {
 
 #[test]
 fn coverage_dtype_breadth_still_pending() {
-    // f16/bf16/FP8/bool/complex have no reference path yet in the seed.
+    // FP8 / bool / complex have no reference path yet in the seed.
     for &d in &[
-        Dtype::F16,
-        Dtype::Bf16,
         Dtype::E4m3,
         Dtype::E5m2,
         Dtype::Bool,

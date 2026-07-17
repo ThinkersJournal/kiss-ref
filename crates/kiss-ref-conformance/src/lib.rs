@@ -28,8 +28,9 @@ impl Ledger {
         let total = self.done.len() + self.pending.len();
         format!(
             "kiss-ref coverage — {} of {} ops evaluable, {} PENDING. \
-             Paths: f32/f64 float scalar + integer scalar (s8..u64, s4/u4/b1). \
-             Dtype breadth still PENDING: f16/bf16/FP8/bool/complex.",
+             Paths: f16/bf16/f32/f64 float scalar (nextafter on f32/f64 only, §6.9-0003) \
+             + integer scalar (s8..u64, s4/u4/b1). Dtype breadth still PENDING: \
+             FP8 (e4m3/e5m2), bool, complex (c32/c64).",
             self.done.len(),
             total,
             self.pending.len()

@@ -85,7 +85,14 @@ pub fn eval_op<T: ScalarFloat>(op: Op, args: &[T]) -> Result<T, Error> {
         // binary-math atoms (§6.9)
         Op::Atan2 => bin(op, args, |a, b| a.atan2(b)),
         Op::Copysign => bin(op, args, |a, b| a.copysign(b)),
-        Op::Nextafter => bin(op, args, |a, b| a.nextafter(b)),
+        Op::Nextafter => {
+            // §6.9-0003: nextafter declines the narrow floats (f16/bf16/e4m3/
+            // e5m2) — stepping in a promoted f32 yields the wrong neighbor.
+            if T::NARROW_FLOAT {
+                return Err(Error::Unsupported(op));
+            }
+            bin(op, args, |a, b| a.nextafter(b))
+        }
 
         // refined non-primitives (§6.13-0003, all 11 refine-marked ops):
         // computed directly because the literal decomposition overflows,
@@ -211,13 +218,19 @@ pub fn implemented(op: Op) -> bool {
 }
 
 /// Coverage of `(op, dtype)` in this seed: `Done` iff a reference path evaluates
-/// `op` on `dtype` — the float scalar path on `f32`/`f64`, or the integer scalar
-/// path on an integer dtype. `Pending` otherwise (the remaining dtype breadth:
-/// `f16`/`bf16`/FP8/`bool`/complex). Drives the conformance coverage ledger.
+/// `op` on `dtype` — the float scalar path on `f32`/`f64`/`f16`/`bf16`, or the
+/// integer scalar path on an integer dtype. `Pending` otherwise (FP8, `bool`,
+/// complex). `nextafter` is `Pending` on the narrow floats (§6.9-0003 decline).
+/// Drives the conformance coverage ledger.
 pub fn support(op: Op, dtype: Dtype) -> Support {
-    let done = (matches!(dtype, Dtype::F32 | Dtype::F64) && float_supported(op))
-        || (crate::scalar_int::int_spec(dtype).is_some() && crate::int_supported(op));
-    if done {
+    let float_ok = match dtype {
+        Dtype::F32 | Dtype::F64 => float_supported(op),
+        // narrow floats: same coverage as the wide floats, minus nextafter.
+        Dtype::F16 | Dtype::Bf16 => float_supported(op) && op != Op::Nextafter,
+        _ => false,
+    };
+    let int_ok = crate::scalar_int::int_spec(dtype).is_some() && crate::int_supported(op);
+    if float_ok || int_ok {
         Support::Done
     } else {
         Support::Pending

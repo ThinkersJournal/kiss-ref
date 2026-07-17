@@ -14,6 +14,10 @@
 pub trait ScalarFloat: Copy + PartialEq + PartialOrd {
     const ZERO: Self;
     const ONE: Self;
+    /// True for the narrow floats (`f16`/`bf16`). Used by the resolver to
+    /// **decline `nextafter`** on them per §6.9-0003 (stepping in a promoted
+    /// `f32` yields the wrong neighbor in the narrow lattice).
+    const NARROW_FLOAT: bool = false;
 
     /// Round an `f64` reference constant into this dtype (§6.12 `const(bits)`).
     fn from_f64(v: f64) -> Self;
@@ -274,6 +278,162 @@ impl_scalar_float!(
     sinh = libm::sinhf, cosh = libm::coshf, log1p = libm::log1pf, expm1 = libm::expm1f,
     pow = libm::powf, hypot = libm::hypotf
 );
+
+// ---- Narrow floats (f16 / bf16) ----------------------------------------------
+//
+// Computed by promoting to f32, evaluating with the f32 reference, then rounding
+// back to the narrow type. For `+ - *` this is correctly-rounded to the narrow
+// format (the exact result of two narrow operands fits in f32); for the
+// transcendentals it lands well inside the coarse narrow-dtype ULP ceiling; `bf16`
+// has no native arithmetic and is *defined* to compute in f32 (§6.16). Caveat:
+// narrow `div` is a double-rounding (f32-correct then narrowed) — occasionally 1
+// ULP off a true correctly-rounded narrow divide; documented, revisited later.
+// `nextafter` is declined for these types by the resolver (§6.9-0003), so its
+// f32-promoted body here is never reached through `eval_op`.
+macro_rules! impl_scalar_float_via_f32 {
+    ($t:ty) => {
+        impl ScalarFloat for $t {
+            const ZERO: $t = <$t>::ZERO;
+            const ONE: $t = <$t>::ONE;
+            const NARROW_FLOAT: bool = true;
+
+            #[inline]
+            fn from_f64(v: f64) -> $t {
+                <$t>::from_f32(v as f32)
+            }
+            #[inline]
+            fn to_f64(self) -> f64 {
+                self.to_f32() as f64
+            }
+            #[inline]
+            fn is_nan(self) -> bool {
+                self.is_nan()
+            }
+
+            #[inline]
+            fn add(self, b: $t) -> $t {
+                <$t>::from_f32(self.to_f32() + b.to_f32())
+            }
+            #[inline]
+            fn sub(self, b: $t) -> $t {
+                <$t>::from_f32(self.to_f32() - b.to_f32())
+            }
+            #[inline]
+            fn mul(self, b: $t) -> $t {
+                <$t>::from_f32(self.to_f32() * b.to_f32())
+            }
+            #[inline]
+            fn div(self, b: $t) -> $t {
+                <$t>::from_f32(self.to_f32() / b.to_f32())
+            }
+            #[inline]
+            fn neg(self) -> $t {
+                <$t>::from_f32(-self.to_f32())
+            }
+            #[inline]
+            fn abs(self) -> $t {
+                <$t>::from_f32(ScalarFloat::abs(self.to_f32()))
+            }
+
+            #[inline]
+            fn floor(self) -> $t {
+                <$t>::from_f32(ScalarFloat::floor(self.to_f32()))
+            }
+            #[inline]
+            fn ceil(self) -> $t {
+                <$t>::from_f32(ScalarFloat::ceil(self.to_f32()))
+            }
+            #[inline]
+            fn trunc(self) -> $t {
+                <$t>::from_f32(ScalarFloat::trunc(self.to_f32()))
+            }
+            #[inline]
+            fn round_even(self) -> $t {
+                <$t>::from_f32(ScalarFloat::round_even(self.to_f32()))
+            }
+
+            #[inline]
+            fn exp(self) -> $t {
+                <$t>::from_f32(ScalarFloat::exp(self.to_f32()))
+            }
+            #[inline]
+            fn log(self) -> $t {
+                <$t>::from_f32(ScalarFloat::log(self.to_f32()))
+            }
+            #[inline]
+            fn sin(self) -> $t {
+                <$t>::from_f32(ScalarFloat::sin(self.to_f32()))
+            }
+            #[inline]
+            fn cos(self) -> $t {
+                <$t>::from_f32(ScalarFloat::cos(self.to_f32()))
+            }
+            #[inline]
+            fn sqrt(self) -> $t {
+                <$t>::from_f32(ScalarFloat::sqrt(self.to_f32()))
+            }
+            #[inline]
+            fn erf(self) -> $t {
+                <$t>::from_f32(ScalarFloat::erf(self.to_f32()))
+            }
+            #[inline]
+            fn atan(self) -> $t {
+                <$t>::from_f32(ScalarFloat::atan(self.to_f32()))
+            }
+            #[inline]
+            fn lgamma(self) -> $t {
+                <$t>::from_f32(ScalarFloat::lgamma(self.to_f32()))
+            }
+
+            #[inline]
+            fn atan2(self, x: $t) -> $t {
+                <$t>::from_f32(ScalarFloat::atan2(self.to_f32(), x.to_f32()))
+            }
+            #[inline]
+            fn copysign(self, sign: $t) -> $t {
+                <$t>::from_f32(ScalarFloat::copysign(self.to_f32(), sign.to_f32()))
+            }
+            #[inline]
+            fn nextafter(self, to: $t) -> $t {
+                // Declined by the resolver for narrow floats (§6.9-0003); this
+                // f32-promoted body is never reached through eval_op.
+                <$t>::from_f32(ScalarFloat::nextafter(self.to_f32(), to.to_f32()))
+            }
+
+            #[inline]
+            fn tanh(self) -> $t {
+                <$t>::from_f32(ScalarFloat::tanh(self.to_f32()))
+            }
+            #[inline]
+            fn sinh(self) -> $t {
+                <$t>::from_f32(ScalarFloat::sinh(self.to_f32()))
+            }
+            #[inline]
+            fn cosh(self) -> $t {
+                <$t>::from_f32(ScalarFloat::cosh(self.to_f32()))
+            }
+            #[inline]
+            fn log1p(self) -> $t {
+                <$t>::from_f32(ScalarFloat::log1p(self.to_f32()))
+            }
+            #[inline]
+            fn expm1(self) -> $t {
+                <$t>::from_f32(ScalarFloat::expm1(self.to_f32()))
+            }
+            #[inline]
+            fn pow(self, b: $t) -> $t {
+                <$t>::from_f32(ScalarFloat::pow(self.to_f32(), b.to_f32()))
+            }
+            #[inline]
+            fn hypot(self, b: $t) -> $t {
+                <$t>::from_f32(ScalarFloat::hypot(self.to_f32(), b.to_f32()))
+            }
+        }
+    };
+}
+
+impl_scalar_float_via_f32!(half::f16);
+impl_scalar_float_via_f32!(half::bf16);
 
 // ---- Refined non-primitive scalar forms (§6.13-0003) --------------------------
 // The literal reference decompositions of these ops overflow to NaN for large

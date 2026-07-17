@@ -11,4 +11,5 @@ rust-version.workspace = true
 kiss-classify-vocab = { workspace = true }
 kiss-ops-vocab      = { workspace = true }
 libm                = { workspace = true }
-# half (f16/bf16) is a next-wave dependency — not used in the f32/f64 seed.
+# no_std-compatible (default features off) — f16/bf16 storage + conversions.
+half                = { version = "2", default-features = false }
