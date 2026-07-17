@@ -23,10 +23,15 @@
 
 #![cfg_attr(not(test), no_std)]
 
+pub mod diff;
 pub mod resolve;
 pub mod scalar;
 pub mod scalar_int;
 
+pub use diff::{
+    diff_f64, reference_f32, reference_f64, ulp_distance_f32, ulp_distance_f64, DiffReport,
+    Tolerance,
+};
 pub use resolve::{eval_expr, eval_op, float_supported, implemented, support};
 pub use scalar::ScalarFloat;
 pub use scalar_int::{eval_int_op, int_supported};
@@ -52,6 +57,8 @@ pub enum Error {
     /// The op is not defined on this dtype in this seed (e.g. an integer op on a
     /// float dtype, or a dtype with no reference path yet).
     UnsupportedDtype(Dtype),
+    /// A differential candidate slice length did not match the reference length.
+    LengthMismatch { expected: usize, got: usize },
 }
 
 /// Coverage of an `(op, dtype)` cell in this seed. The conformance coverage gate
@@ -83,4 +90,13 @@ pub enum Provenance {
 /// the tags are filled then, not asserted now.
 pub fn provenance(_op: Op) -> Provenance {
     Provenance::Fresh
+}
+
+/// A short **source-lineage** tag for the reference kernel of `op` — where its
+/// numeric behavior comes from — so a consumer's differential harness can
+/// attribute a result to a source (Baracuda's provenance ask). First cut: every
+/// kernel is spec-derived over `libm 0.2`; per-op lineage is refined as kernels
+/// are ported or replaced.
+pub fn source_lineage(_op: Op) -> &'static str {
+    "kiss-ref-core: KISS-Ops §6 semantics, libm 0.2 transcendentals (Fresh)"
 }

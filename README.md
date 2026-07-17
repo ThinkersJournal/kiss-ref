@@ -3,9 +3,11 @@
 A project-agnostic, spec-exact **reference implementation** and **correctness oracle** for the
 [KISS](https://github.com/ThinkersJournal/KISS) base-op vocabulary (KISS-Ops + KISS-Classify).
 
-Deliberately naive, obvious, and slow — correctness is the only goal. It is the thing every KISS
-consumer (Fuel, Baracuda, Unpopped, and KISS-Conform itself) tests against, and, because a total
-reference cover always runs, it doubles as an "it always works" correctness floor.
+Deliberately naive, obvious, and slow — correctness is the only goal. The target is a *total cover*
+of the op basis (so it doubles as an "it always works" correctness floor), but read the coverage
+ledger, not the tagline: today the cover holds over the **scalar-resolvable subset** (see Status).
+It exposes a **differential export seam** (`ulp_distance`, `reference_*`, `diff_*`) so KISS-Conform
+and Baracuda's on-device harness can dev-depend on it and cross-run.
 
 See [DESIGN.md](DESIGN.md) for the architecture, the KISS binding, the provenance rule, and scope.
 
@@ -20,8 +22,12 @@ See [DESIGN.md](DESIGN.md) for the architecture, the KISS binding, the provenanc
 
 ## Status
 
-Seed (first cut). Vocab is complete; kernels cover the mandatory core over the common dtypes. The
-coverage gate reports what is DONE vs PENDING. Pre-1.0, following unfrozen KISS drafts.
+Seed. Vocab complete (106 ops, 20 dtypes). Kernels: **78/106 ops evaluable** — the float floor +
+elementwise non-primitives (f32/f64) and the integer floor atoms (all integer dtypes). All 11
+§6.13-0003 refine-marked ops (incl. `pow`/`hypot` full-domain edges) are direct refined kernels.
+PENDING: the structural atoms + the reductions/scans/norms/matmul/pooling that decompose through them
+(a tensor-evaluation layer — see DESIGN.md), and the f16/bf16/FP8/complex dtype breadth. Reviewed by
+the KISS and Baracuda agents (2026-07-17). Pre-1.0, following unfrozen KISS drafts.
 
 ```
 cargo test            # runs the conformance corpus + coverage-ledger report

@@ -211,16 +211,24 @@ impl Op {
         Op::ALL.iter().copied().find(|o| o.token() == tok)
     }
 
-    /// The **maximum ULP ceiling** for a transcendental floor atom (§6.8). A
-    /// conforming kernel MAY declare a tighter per-target ULP but MUST NOT
-    /// declare one looser than this. `None` for every non-transcendental-atom op
-    /// (exact ops are bitwise; non-primitives inherit their decomposition's
-    /// tolerance). `sqrt` reports the 2 ULP fallback ceiling — a target that
-    /// guarantees correctly-rounded `sqrt` MUST meet 0.5 ULP (KISS-OPS-6.8-0003).
-    pub const fn transcendental_ulp_ceiling(self) -> Option<f64> {
+    /// The **maximum ULP ceiling** for an op carrying a declared-ULP tolerance
+    /// (§6.8). A conforming kernel MAY declare a tighter per-target ULP but MUST
+    /// NOT declare one looser than this. `None` for exact ops (bitwise-to-the-pin)
+    /// and for non-primitives (which inherit their decomposition's tolerance).
+    /// `sqrt` reports the 2 ULP fallback ceiling — a target that guarantees
+    /// correctly-rounded `sqrt` MUST meet 0.5 ULP (KISS-OPS-6.8-0003).
+    ///
+    /// **Includes `atan2` at 4 ULP.** The §6.8 ceiling table lists `atan2`, but
+    /// `atan2` is *defined* as a §6.9 binary-math atom, not a §6.8 transcendental
+    /// atom. This binding follows the §6.8 ceiling (the stricter, testable
+    /// reading). The §6.8-vs-§6.9 placement is a genuine **spec inconsistency**
+    /// (an atom appearing in the tolerance table of a section that does not
+    /// define it) and is filed as an RFC to KISS — resolve by either moving the
+    /// `atan2` row to §6.9 or cross-referencing it explicitly.
+    pub const fn ulp_ceiling(self) -> Option<f64> {
         match self {
             Op::Sqrt => Some(2.0),
-            Op::Exp | Op::Log | Op::Sin | Op::Cos | Op::Atan | Op::Erf => Some(4.0),
+            Op::Exp | Op::Log | Op::Sin | Op::Cos | Op::Atan | Op::Erf | Op::Atan2 => Some(4.0),
             Op::Lgamma => Some(8.0),
             _ => None,
         }
@@ -279,15 +287,38 @@ mod tests {
     }
 
     #[test]
-    fn ops_only_transcendental_atoms_carry_a_ulp_ceiling() {
+    fn ops_declared_ulp_ceilings_match_section_6_8() {
+        // The exact §6.8 declared-ULP set (including atan2, per the §6.8 table).
+        let expected: &[(&str, f64)] = &[
+            ("sqrt", 2.0),
+            ("exp", 4.0),
+            ("log", 4.0),
+            ("sin", 4.0),
+            ("cos", 4.0),
+            ("atan", 4.0),
+            ("erf", 4.0),
+            ("atan2", 4.0),
+            ("lgamma", 8.0),
+        ];
         for o in Op::ALL {
-            let ceil = o.transcendental_ulp_ceiling();
-            let is_transcendental_atom = o.is_primitive_floor()
-                && matches!(o.family(), Family::Transcendental);
-            assert_eq!(
-                ceil.is_some(),
-                is_transcendental_atom,
-                "{o:?}: only transcendental floor atoms carry a ULP ceiling"
+            match o.ulp_ceiling() {
+                Some(c) => {
+                    let (_, want) = expected
+                        .iter()
+                        .find(|(t, _)| *t == o.token())
+                        .unwrap_or_else(|| panic!("{o:?} carries a ceiling but is not in §6.8"));
+                    assert_eq!(c, *want, "{o:?} ceiling");
+                }
+                None => assert!(
+                    expected.iter().all(|(t, _)| *t != o.token()),
+                    "{o:?} should carry a §6.8 ceiling"
+                ),
+            }
+        }
+        for (tok, _) in expected {
+            assert!(
+                Op::from_token(tok).and_then(|o| o.ulp_ceiling()).is_some(),
+                "{tok} must carry a ceiling"
             );
         }
     }

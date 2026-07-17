@@ -32,8 +32,21 @@ Two totality properties come from KISS-Ops itself:
 
 A reference implementation that (a) implements the **floor spec-exactly** and (b) can **resolve any
 non-primitive by expanding its §6.13 decomposition to the floor** is therefore a *total cover* of the
-entire op basis: **every op is always evaluable.** That is what makes the same artifact an oracle
-(verify against it) and a correctness floor (execute on it when nothing else will).
+op basis: every op is evaluable, so the same artifact can be an oracle (verify against it) and a
+correctness floor (execute on it when nothing else will).
+
+**This is the design goal, not yet the seed's reach — the distinction matters.** Total cover holds
+today only over the **scalar-resolvable subset**: the elementwise float floor atoms + the
+non-primitives that decompose through them (the float path) and the integer floor atoms (the integer
+path). The **structural atoms** (`reduce`/`gather`/`scatter`/`element_map`/`prefix_scan`/
+`sort_network`) are slice→slice, and `matmul`/pooling/`softmax`/the reductions decompose *through*
+them — so completing the cover needs a **tensor-level evaluation layer that the scalar resolver nests
+inside** (with deliberate handling of the one order-sensitive op, atomic scatter-add). Until then
+"total cover", "the oracle", and "1:1 mirror of the spec" describe the *target*; the coverage ledger
+(`kiss-ref-conformance`) reports exactly which (op × dtype) cells are actually `Done`, and the prose
+should always be read against it. Baracuda's `oracle.rs` already covers this structural/tensor region
+independently, so that layer is a reconciliation point at integration, not necessarily a
+from-scratch build here.
 
 ## Architecture
 

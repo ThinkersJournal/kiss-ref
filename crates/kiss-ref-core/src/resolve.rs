@@ -87,14 +87,24 @@ pub fn eval_op<T: ScalarFloat>(op: Op, args: &[T]) -> Result<T, Error> {
         Op::Copysign => bin(op, args, |a, b| a.copysign(b)),
         Op::Nextafter => bin(op, args, |a, b| a.nextafter(b)),
 
-        // refined non-primitives (§6.13-0003): computed directly because the
-        // literal decomposition overflows to NaN while the true value is finite.
+        // refined non-primitives (§6.13-0003, all 11 refine-marked ops):
+        // computed directly because the literal decomposition overflows,
+        // catastrophically cancels, or gets a pinned domain edge wrong.
         Op::Tanh => un(op, args, |a| a.tanh()),
         Op::Sinh => un(op, args, |a| a.sinh()),
         Op::Cosh => un(op, args, |a| a.cosh()),
         Op::Softplus => un(op, args, |a| softplus_stable(a)),
         Op::Silu => un(op, args, |a| silu_stable(a)),
         Op::Mish => un(op, args, |a| mish_stable(a)),
+        // near-zero-accurate (literal forms catastrophically cancel).
+        Op::Expm1 => un(op, args, |a| a.expm1()),
+        Op::Log1p => un(op, args, |a| a.log1p()),
+        // domain-exact: IEEE pow/hypot pin §6.13-0005 (pow(-2,3)=-8, pow(0,0)=1)
+        // and §6.13-0007 (hypot(inf,NaN)=+inf), which the reference forms miss.
+        Op::Pow => bin(op, args, |a, b| a.pow(b)),
+        Op::Hypot => bin(op, args, |a, b| a.hypot(b)),
+        // exact 2^b scaling via IEEE pow (§6.13-0003 permits the exact form).
+        Op::Ldexp => bin(op, args, |a, b| a.mul(T::from_f64(2.0).pow(b))),
 
         // everything else: resolve via the §6.13 decomposition (§6.14).
         other => resolve_nonprimitive(other, args),
@@ -151,7 +161,17 @@ fn is_float_floor_atom(op: Op) -> bool {
 fn is_refined(op: Op) -> bool {
     matches!(
         op,
-        Op::Tanh | Op::Sinh | Op::Cosh | Op::Softplus | Op::Silu | Op::Mish
+        Op::Tanh
+            | Op::Sinh
+            | Op::Cosh
+            | Op::Softplus
+            | Op::Silu
+            | Op::Mish
+            | Op::Expm1
+            | Op::Log1p
+            | Op::Pow
+            | Op::Hypot
+            | Op::Ldexp
     )
 }
 

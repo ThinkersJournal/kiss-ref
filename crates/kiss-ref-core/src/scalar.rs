@@ -48,13 +48,22 @@ pub trait ScalarFloat: Copy + PartialEq + PartialOrd {
     fn copysign(self, sign: Self) -> Self;
     fn nextafter(self, to: Self) -> Self;
 
-    // Refined transcendental forms (§6.13-0003) — computed directly rather than
-    // via the overflow-unsafe reference decompositions.
+    // Refined non-primitive forms (§6.13-0003) — computed directly rather than
+    // via the overflow-unsafe / edge-wrong reference decompositions.
     fn tanh(self) -> Self;
     fn sinh(self) -> Self;
     fn cosh(self) -> Self;
-    /// `log(1 + x)`, accurate near zero.
+    /// `log(1 + x)`, accurate near zero (vs the cancelling `log(add(1,x))`).
     fn log1p(self) -> Self;
+    /// `exp(x) - 1`, accurate near zero (vs the cancelling `sub(exp(x),1)`).
+    fn expm1(self) -> Self;
+    /// IEEE-754 `pow` — pins the full domain of §6.13-0005 (`pow(-2,3)=-8`,
+    /// `pow(0,0)=1`, signed-zero rules) that the `exp(b·log(a))` reference gets
+    /// wrong for `a ≤ 0`.
+    fn pow(self, b: Self) -> Self;
+    /// IEEE-754 `hypot` — pins §6.13-0007 (`hypot(±inf, NaN)=+inf`) that the
+    /// `sqrt(a²+b²)` reference gets wrong on an infinite operand.
+    fn hypot(self, b: Self) -> Self;
 
     /// `1` if `v`, else `0`, in this dtype (§6.2-0005 comparison result).
     #[inline]
@@ -80,7 +89,8 @@ macro_rules! impl_scalar_float {
      erf=$erf:path, atan=$atan:path, lgamma=$lgamma:path, atan2=$atan2:path,
      copysign=$copysign:path, nextafter=$nextafter:path, floor=$floor:path,
      ceil=$ceil:path, trunc=$trunc:path, fabs=$fabs:path, tanh=$tanh:path,
-     sinh=$sinh:path, cosh=$cosh:path, log1p=$log1p:path) => {
+     sinh=$sinh:path, cosh=$cosh:path, log1p=$log1p:path, expm1=$expm1:path,
+     pow=$pow:path, hypot=$hypot:path) => {
         impl ScalarFloat for $t {
             const ZERO: $t = 0.0;
             const ONE: $t = 1.0;
@@ -229,6 +239,18 @@ macro_rules! impl_scalar_float {
             fn log1p(self) -> $t {
                 $log1p(self)
             }
+            #[inline]
+            fn expm1(self) -> $t {
+                $expm1(self)
+            }
+            #[inline]
+            fn pow(self, b: $t) -> $t {
+                $pow(self, b)
+            }
+            #[inline]
+            fn hypot(self, b: $t) -> $t {
+                $hypot(self, b)
+            }
         }
     };
 }
@@ -239,7 +261,8 @@ impl_scalar_float!(
     erf = libm::erf, atan = libm::atan, lgamma = libm::lgamma, atan2 = libm::atan2,
     copysign = libm::copysign, nextafter = libm::nextafter, floor = libm::floor,
     ceil = libm::ceil, trunc = libm::trunc, fabs = libm::fabs, tanh = libm::tanh,
-    sinh = libm::sinh, cosh = libm::cosh, log1p = libm::log1p
+    sinh = libm::sinh, cosh = libm::cosh, log1p = libm::log1p, expm1 = libm::expm1,
+    pow = libm::pow, hypot = libm::hypot
 );
 
 impl_scalar_float!(
@@ -248,7 +271,8 @@ impl_scalar_float!(
     erf = libm::erff, atan = libm::atanf, lgamma = libm::lgammaf, atan2 = libm::atan2f,
     copysign = libm::copysignf, nextafter = libm::nextafterf, floor = libm::floorf,
     ceil = libm::ceilf, trunc = libm::truncf, fabs = libm::fabsf, tanh = libm::tanhf,
-    sinh = libm::sinhf, cosh = libm::coshf, log1p = libm::log1pf
+    sinh = libm::sinhf, cosh = libm::coshf, log1p = libm::log1pf, expm1 = libm::expm1f,
+    pow = libm::powf, hypot = libm::hypotf
 );
 
 // ---- Refined non-primitive scalar forms (§6.13-0003) --------------------------
