@@ -195,6 +195,82 @@ pub fn diff_f32(
     Ok(report)
 }
 
+// ---- narrow floats (f16 / bf16) ---------------------------------------------
+//
+// The seam covers every float dtype the reference computes in, so a consumer can
+// diff f16/bf16 kernels too. Same sign-magnitude total-order metric, on the
+// 16-bit pattern.
+
+#[inline]
+fn key_u16(bits: u16) -> u16 {
+    if bits & 0x8000 != 0 {
+        !bits
+    } else {
+        bits | 0x8000
+    }
+}
+
+macro_rules! narrow_diff {
+    ($t:ty, $ulp:ident, $refr:ident, $diff:ident) => {
+        /// Sign-magnitude ULP distance between two narrow-float values (both-NaN
+        /// → 0, one-NaN → `u16::MAX`).
+        pub fn $ulp(a: $t, b: $t) -> u16 {
+            match (a.is_nan(), b.is_nan()) {
+                (true, true) => 0,
+                (true, false) | (false, true) => u16::MAX,
+                (false, false) => key_u16(a.to_bits()).abs_diff(key_u16(b.to_bits())),
+            }
+        }
+
+        /// Reference outputs of `op` over a batch of narrow-float input rows.
+        pub fn $refr(op: Op, rows: &[&[$t]]) -> Result<Vec<$t>, Error> {
+            rows.iter().map(|r| eval_op::<$t>(op, r)).collect()
+        }
+
+        /// Diff a candidate's narrow-float outputs against this reference.
+        pub fn $diff(
+            op: Op,
+            rows: &[&[$t]],
+            candidate: &[$t],
+            tol: Tolerance,
+        ) -> Result<DiffReport, Error> {
+            let reference = $refr(op, rows)?;
+            if candidate.len() != reference.len() {
+                return Err(Error::LengthMismatch {
+                    expected: reference.len(),
+                    got: candidate.len(),
+                });
+            }
+            let mut report = DiffReport {
+                n: reference.len(),
+                mismatches: 0,
+                max_ulp: 0,
+                first_mismatch: None,
+            };
+            for (i, (&e, &g)) in reference.iter().zip(candidate).enumerate() {
+                let d = $ulp(e, g) as u64;
+                if d > report.max_ulp {
+                    report.max_ulp = d;
+                }
+                let ok = match tol {
+                    Tolerance::Exact => d == 0,
+                    Tolerance::Ulp(n) => d <= n,
+                };
+                if !ok {
+                    report.mismatches += 1;
+                    if report.first_mismatch.is_none() {
+                        report.first_mismatch = Some((i, e.to_f32() as f64, g.to_f32() as f64));
+                    }
+                }
+            }
+            Ok(report)
+        }
+    };
+}
+
+narrow_diff!(half::f16, ulp_distance_f16, reference_f16, diff_f16);
+narrow_diff!(half::bf16, ulp_distance_bf16, reference_bf16, diff_bf16);
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -242,5 +318,32 @@ mod tests {
         let r = diff_f64(Op::Erf, &rows, &cand, Tolerance::Ulp(4)).unwrap();
         assert!(r.conforms());
         assert_eq!(r.max_ulp, 1);
+    }
+
+    #[test]
+    fn ulp_distance_straddling_zero_is_small() {
+        // Golden edge from Fuel's fkc/verify/ulp.rs (validates two independent
+        // impls agree): smallest +subnormal → +0 → -0 → smallest -subnormal = 3.
+        let pos_min = f64::from_bits(1);
+        let neg_min = f64::from_bits(0x8000_0000_0000_0001);
+        assert_eq!(ulp_distance_f64(pos_min, neg_min), 3);
+    }
+
+    #[test]
+    fn narrow_float_seam_covers_f16_bf16() {
+        use half::{bf16, f16};
+        // signed zero is 1 ULP in the narrow lattice too.
+        assert_eq!(ulp_distance_f16(f16::from_f32(0.0), f16::from_f32(-0.0)), 1);
+        assert_eq!(ulp_distance_bf16(bf16::from_f32(0.0), bf16::from_f32(-0.0)), 1);
+        // an f16 differential run: a planted 1-ULP error is caught at Exact,
+        // tolerated at Ulp(1).
+        let rows: [&[f16]; 2] = [&[f16::from_f32(1.0)], &[f16::from_f32(2.0)]];
+        let reference = reference_f16(Op::Sqr, &rows).unwrap();
+        let cand: Vec<f16> = reference
+            .iter()
+            .map(|&x| f16::from_bits(x.to_bits() + 1))
+            .collect();
+        assert!(!diff_f16(Op::Sqr, &rows, &cand, Tolerance::Exact).unwrap().conforms());
+        assert!(diff_f16(Op::Sqr, &rows, &cand, Tolerance::Ulp(1)).unwrap().conforms());
     }
 }
