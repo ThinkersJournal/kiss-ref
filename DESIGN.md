@@ -1,19 +1,33 @@
-# kiss-ref — a reference implementation & correctness oracle for the KISS base ops
+# kiss-ref — a reference implementation of the KISS base ops
 
 **Status:** seed (first cut, 2026-07-16). Pre-1.0, unratified, following unfrozen KISS drafts.
 **License:** spec-conformance code MIT-OR-Apache-2.0; it implements the CC0 KISS standard.
 
 `kiss-ref` is a **project-agnostic, spec-exact reference implementation** of the KISS base-op
-vocabulary, and — because a reference implementation that always runs *is* an oracle — a
-**correctness oracle** every KISS consumer can test against. It is deliberately naive, obvious,
-and slow: correctness is the only goal. It makes no strategic decisions, has no optimizer, and
-knows nothing about any one consumer's IR.
+vocabulary — a differential *target* every KISS consumer can test against. It is deliberately
+naive, obvious, and slow: correctness is the only goal. It makes no strategic decisions, has no
+optimizer, and knows nothing about any one consumer's IR.
+
+It is **not** the KISS-Conform oracle. That oracle (`../KISS/conformance/src/semantics.rs`) is a
+**wide-precision authoring instrument** — independent by mandate (it shares no lowering code with any
+reference implementation and evaluates wider than the compute dtype, rounding once) and it *mints*
+the conformance corpus (Conform §6.5-0002/0003/0007); a vector derived from kiss-ref's run would be
+rejected as circular. kiss-ref is a **corpus-conformant proxy**: *tested against* that corpus, and
+one dissimilar implementation at the umbrella §5.3 freeze gate (interop / wire / foreign-reader),
+never a corpus minter. Note that kiss-ref and that oracle both resolve non-primitives from the
+*same* §6.13 decomposition table, so they are code-disjoint but **comprehension-correlated** on the
+non-primitives — kiss-ref is a strong independent check on the *floor*, a weak one on the
+decompositions. (General rule: any differential check whose reference is a shared decomposition
+table is not decomposition-independent.) The full authority model + independence reconciliation live
+in [`../KISS/docs/conformance-architecture.md`](../KISS/docs/conformance-architecture.md); this
+DESIGN owns the kiss-ref-specific slice.
 
 It exists to serve four consumers at once, none privileged:
 
-- **KISS** (github.com/ThinkersJournal/KISS) — the executable reference for KISS-Ops + KISS-Classify,
-  and the conformance target other implementations are measured against.
-- **Fuel** — as a *verify* oracle (contract verification) **and** as a total-cover *execution
+- **KISS** (github.com/ThinkersJournal/KISS) — a spec-exact executable reference for KISS-Ops +
+  KISS-Classify that KISS-Conform can differential against (distinct from its independent §6.5
+  oracle, which mints the corpus).
+- **Fuel** — as a *verify* reference (contract verification) **and** as a total-cover *execution
   route*: an "it always works" correctness-floor backend (see "Execution route" below).
 - **Baracuda** — as a reference to test its kernels against and to reconcile its existing
   `baracuda-kernel-vocab` / `baracuda-kernelgen` seeds with.
@@ -32,8 +46,8 @@ Two totality properties come from KISS-Ops itself:
 
 A reference implementation that (a) implements the **floor spec-exactly** and (b) can **resolve any
 non-primitive by expanding its §6.13 decomposition to the floor** is therefore a *total cover* of the
-op basis: every op is evaluable, so the same artifact can be an oracle (verify against it) and a
-correctness floor (execute on it when nothing else will).
+op basis: every op is evaluable, so the same artifact can be a differential reference (verify
+against it) and a correctness floor (execute on it when nothing else will).
 
 **This is the design goal, not yet the seed's reach — the distinction matters.** Total cover holds
 today only over the **scalar-resolvable subset**: the elementwise float floor atoms + the
@@ -42,11 +56,14 @@ path). The **structural atoms** (`reduce`/`gather`/`scatter`/`element_map`/`pref
 `sort_network`) are slice→slice, and `matmul`/pooling/`softmax`/the reductions decompose *through*
 them — so completing the cover needs a **tensor-level evaluation layer that the scalar resolver nests
 inside** (with deliberate handling of the one order-sensitive op, atomic scatter-add). Until then
-"total cover", "the oracle", and "1:1 mirror of the spec" describe the *target*; the coverage ledger
+"total cover" and "1:1 mirror of the spec" describe the *target*; the coverage ledger
 (`kiss-ref-conformance`) reports exactly which (op × dtype) cells are actually `Done`, and the prose
-should always be read against it. Baracuda's `oracle.rs` already covers this structural/tensor region
-independently, so that layer is a reconciliation point at integration, not necessarily a
-from-scratch build here.
+should always be read against it. Baracuda's `oracle.rs` covers this structural/tensor region
+independently — but kiss-ref builds its **own** structural layer from the §6.13 table and does **not**
+converge it against `oracle.rs`. Where the two readings *differ*, that is a spec-ambiguity KISS issue
+to file (e.g. the u32-gather `same_as` bug, `f7578df1`), not an implementation to reconcile:
+reconciling against `oracle.rs` would only deepen the shared-§6.13 comprehension-correlation noted
+above. Two honest readings diverging is the signal.
 
 ## Architecture
 

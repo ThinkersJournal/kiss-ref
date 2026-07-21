@@ -6,20 +6,24 @@
 //! op by expanding its reference decomposition to the floor. Deliberately naive,
 //! obvious, and slow — correctness is the only goal.
 //!
-//! Because a total cover of the base map always runs, this is simultaneously the
-//! oracle every KISS consumer tests against and the "it always works"
-//! correctness floor. It **never panics** — every failure is an [`Error`] — so it
-//! is safe on a consumer's production/execution path (e.g. Fuel's never-panic
-//! backend contract).
+//! Because a total cover of the base map always runs, it doubles as the "it
+//! always works" correctness floor and a differential *target* consumers test
+//! against. It is **not** the KISS-Conform oracle: that oracle is independent by
+//! mandate (shares no lowering code with any reference implementation, Conform
+//! §6.5-0002/0003) and is the artifact that mints the conformance corpus. It
+//! **never panics** — every failure is an [`Error`] — so it is safe on a
+//! consumer's production/execution path (e.g. Fuel's never-panic backend
+//! contract).
 //!
 //! ## Seed scope
 //! The scalar path implements the float floor atoms + elementwise non-primitives
-//! over `f32`/`f64` (the dtypes whose native arithmetic *is* the IEEE-754
-//! reference). Integer atoms, `f16`/`bf16`/FP8/sub-byte/complex dtypes, the
-//! structural atoms (`element_map` … `sort_network`) and the reduction / scan /
-//! normalization / contraction non-primitives that build on them, and the tensor
-//! (`element_map`) wrapper are enumerated in the vocab and reported `Pending` by
-//! [`support`] — the next wave for the evaluating teams.
+//! over `f16`/`bf16`/`f32`/`f64`, and the integer floor atoms over all integer
+//! dtypes (incl. the packed `s4`/`u4`/`b1`), computed in `i128` and wrapped. The
+//! FP8 (`e4m3`/`e5m2`), `bool`, and complex (`c32`/`c64`) dtypes; the structural
+//! atoms (`element_map` … `sort_network`) and the reduction / scan / normalization
+//! / contraction non-primitives that build on them; and the tensor (`element_map`)
+//! wrapper are enumerated in the vocab and reported `Pending` by [`support`] — the
+//! next wave for the evaluating teams.
 
 #![cfg_attr(not(test), no_std)]
 
