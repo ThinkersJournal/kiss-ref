@@ -6,7 +6,9 @@ use kiss_classify_vocab::Dtype;
 use kiss_ops_vocab::Op;
 use kiss_ref_conformance::ledger;
 use kiss_ref_core::scalar_int::int_spec;
-use kiss_ref_core::{float_supported, int_supported, support, tensor_supported, Support};
+use kiss_ref_core::{
+    float_supported, int_supported, int_tensor_supported, support, tensor_supported, Support,
+};
 
 const INT_DTYPES: [Dtype; 11] = [
     Dtype::S8,
@@ -30,18 +32,30 @@ fn coverage_ledger_reports_done_and_pending() {
     println!("{}", l.summary());
     println!("PENDING ops ({}): {:?}", l.pending.len(), l.pending_tokens());
 
-    assert!(
-        l.done.len() >= 103,
-        "expected >= 103 ops evaluable (float+int scalar + the tensor layer), got {}",
-        l.done.len()
-    );
     assert_eq!(l.done.len() + l.pending.len(), Op::ALL.len());
-    // Only the window family remains pending among the structural/tensor ops.
-    for tok in ["avg_pool", "max_pool", "im2col"] {
-        assert!(
-            l.pending_tokens().contains(&tok),
-            "{tok} should still be pending (window family, follow-up)"
-        );
+    // Every op is now evaluable on at least the float (or integer scalar) lane —
+    // the full 106, including the window family. Remaining gaps are per-(op×dtype)
+    // cells (FP8/bool/complex, and the integer/FP8/complex tensor lanes), not whole
+    // ops, so the per-op ledger is complete.
+    assert_eq!(
+        l.done.len(),
+        Op::ALL.len(),
+        "every op should be evaluable; still pending: {:?}",
+        l.pending_tokens()
+    );
+    assert!(l.pending.is_empty(), "no op should remain pending: {:?}", l.pending_tokens());
+}
+
+#[test]
+fn coverage_int_tensor_lane_done_on_integers() {
+    // The integer-capable tensor ops (atoms + argmax/any/all/cum*) are Done on
+    // every integer dtype, incl. the packed s4/u4/b1.
+    for &op in Op::ALL {
+        if int_tensor_supported(op) {
+            for &d in &INT_DTYPES {
+                assert_eq!(support(op, d), Support::Done, "{op:?}/{d:?}");
+            }
+        }
     }
 }
 
@@ -111,7 +125,9 @@ fn coverage_support_consistency() {
                 Dtype::F16 | Dtype::Bf16 => {
                     (float_supported(op) && op != Op::Nextafter) || tensor_supported(op)
                 }
-                _ if int_spec(d).is_some() => int_supported(op),
+                _ if int_spec(d).is_some() => {
+                    int_supported(op) || int_tensor_supported(op)
+                }
                 _ => false,
             };
             assert_eq!(support(op, d) == Support::Done, expect, "{op:?}/{d:?}");

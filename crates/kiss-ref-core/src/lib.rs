@@ -35,7 +35,9 @@ pub mod resolve;
 pub mod scalar;
 pub mod scalar_int;
 pub mod tensor;
+pub mod tensor_int;
 pub mod tensor_ops;
+pub mod window;
 
 pub use diff::{
     diff_bf16, diff_f16, diff_f32, diff_f64, reference_bf16, reference_f16, reference_f32,
@@ -44,7 +46,8 @@ pub use diff::{
 };
 pub use resolve::{eval_expr, eval_op, float_supported, implemented, support, tensor_supported};
 pub use scalar::ScalarFloat;
-pub use scalar_int::{eval_int_op, int_supported};
+pub use scalar_int::{eval_int_expr, eval_int_op, int_supported};
+pub use tensor_int::int_tensor_supported;
 
 pub use attrs::{Combine, Direction, Monoid, OobPolicy};
 pub use bridge::{DetClass, Evaluated};

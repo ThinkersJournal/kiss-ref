@@ -30,9 +30,10 @@ impl Ledger {
             "kiss-ref coverage — {} of {} ops evaluable, {} PENDING. \
              Paths: f16/bf16/f32/f64 float scalar (nextafter on f32/f64 only, §6.9-0003) \
              + integer scalar (s8..u64, s4/u4/b1) \
-             + the §6.11 structural atoms & §6.13 tensor non-primitives on the float lane. \
-             PENDING: the window family (avg_pool/max_pool/im2col), plus the \
-             FP8 (e4m3/e5m2) / bool / complex (c32/c64) and integer-tensor dtype breadth.",
+             + the §6.11 structural atoms, §6.13 tensor non-primitives & window family on \
+             the float lane, plus the integer tensor lane (reduce/scan/gather/scatter/sort/ \
+             argmax/any/all). Every op is evaluable on at least one lane; remaining gaps are \
+             per-(op×dtype) cells — the FP8 (e4m3/e5m2) / bool / complex (c32/c64) dtype breadth.",
             self.done.len(),
             total,
             self.pending.len()

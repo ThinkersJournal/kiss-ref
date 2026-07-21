@@ -10,9 +10,31 @@
 //! logical (§6.10).
 
 use kiss_classify_vocab::Dtype;
+use kiss_ops_vocab::decomp::Expr;
 use kiss_ops_vocab::Op;
 
 use crate::Error;
+
+/// Evaluate a parsed §6.13 decomposition tree over **integer** operands in
+/// `dtype` — the integer analogue of [`crate::resolve::eval_expr`], used by the
+/// integer tensor `element_map`. `const(bits)` leaves truncate toward zero.
+/// Never panics; a >8-ary apply node is an [`Error::Arity`].
+pub fn eval_int_expr(e: &Expr, dtype: Dtype, inputs: &[i128]) -> Result<i128, Error> {
+    match e {
+        Expr::Input(i) => inputs.get(*i as usize).copied().ok_or(Error::MissingInput(*i)),
+        Expr::Const(c) => Ok(c.value() as i128),
+        Expr::Apply(op, args) => {
+            if args.len() > 8 {
+                return Err(Error::Arity { op: *op, expected: 8, got: args.len() });
+            }
+            let mut buf = [0i128; 8];
+            for (k, a) in args.iter().enumerate() {
+                buf[k] = eval_int_expr(a, dtype, inputs)?;
+            }
+            eval_int_op(*op, dtype, &buf[..args.len()])
+        }
+    }
+}
 
 /// `(bit width, signed)` for an integer-kind dtype (including the packed
 /// sub-byte `s4`/`u4`/`b1`), or `None` for a non-integer dtype. `bool` is

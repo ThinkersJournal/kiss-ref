@@ -212,12 +212,11 @@ pub fn float_supported(op: Op) -> bool {
 }
 
 /// Whether the **tensor-evaluation layer** (float lane) evaluates `op` — the six
-/// §6.11 structural atoms plus the §6.13 tensor non-primitives that decompose
-/// through them. The window family (`avg_pool`/`max_pool`/`im2col`) is a
-/// documented follow-up and is **not** listed here, so it stays `Pending`.
+/// §6.11 structural atoms, the §6.13 tensor non-primitives that decompose through
+/// them, and the window family (`avg_pool`/`max_pool`/`im2col`).
 ///
-/// Float lane only (`f16`/`bf16`/`f32`/`f64`); the integer tensor lane is a
-/// separate follow-up.
+/// Float lane (`f16`/`bf16`/`f32`/`f64`); the integer tensor lane covers a subset
+/// separately via `tensor_int::int_tensor_supported`.
 pub fn tensor_supported(op: Op) -> bool {
     matches!(
         op,
@@ -252,6 +251,10 @@ pub fn tensor_supported(op: Op) -> bool {
             | Op::IndexSelect
             | Op::Embedding
             | Op::ScatterAdd
+        // window family
+            | Op::AvgPool
+            | Op::MaxPool
+            | Op::Im2col
     )
 }
 
@@ -275,7 +278,8 @@ pub fn support(op: Op, dtype: Dtype) -> Support {
         }
         _ => false,
     };
-    let int_ok = crate::scalar_int::int_spec(dtype).is_some() && crate::int_supported(op);
+    let int_ok = crate::scalar_int::int_spec(dtype).is_some()
+        && (crate::int_supported(op) || crate::tensor_int::int_tensor_supported(op));
     if float_ok || int_ok {
         Support::Done
     } else {

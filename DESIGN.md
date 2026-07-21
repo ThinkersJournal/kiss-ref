@@ -49,22 +49,24 @@ non-primitive by expanding its §6.13 decomposition to the floor** is therefore 
 op basis: every op is evaluable, so the same artifact can be a differential reference (verify
 against it) and a correctness floor (execute on it when nothing else will).
 
-**Total cover now spans the scalar floor + a tensor-evaluation layer — 103 of 106 ops.** The scalar
+**Total cover now spans all 106 ops — the scalar floor + a full tensor-evaluation layer.** The scalar
 path covers the elementwise float floor atoms + the non-primitives that decompose through them, and
 the integer floor atoms. The six **structural atoms** (`element_map`/`reduce`/`prefix_scan`/`gather`/
-`scatter`/`sort_network`, §6.11) are now hand-written strided-tensor kernels, and `matmul`/`softmax`/
-the reductions/scans/norms decompose *through* them via a **tensor-evaluation layer that nests the
+`scatter`/`sort_network`, §6.11) are hand-written strided-tensor kernels, and `matmul`/`softmax`/the
+reductions/scans/norms/pooling decompose *through* them via a **tensor-evaluation layer that nests the
 scalar resolver inside a row-major odometer** — `element_map`'s per-element body *is* the unchanged
 `eval_expr`, so pointwise numerics (NaN, signed-zero, refined forms) are inherited, not re-implemented,
 and a `reduce`/scan monoid combine is one `eval_op` call. The one order-sensitive op, float
 `scatter_add`, is pinned to row-major source order and tagged order-invariant/nondeterministic
-(§6.0-0004) — compared under tolerance, never byte-exact. This holds on the **float lane**
-(`f16`/`bf16`/`f32`/`f64`); the **window family** (`avg_pool`/`max_pool`/`im2col`) and the integer /
-FP8 / complex tensor lanes are the remaining `Pending` cells. Three §6.11 under-specifications
-surfaced (gather skip-read value; scatter base-state / output-shape; empty-axis for `prefix_scan`/
-`gather`/`scatter`/`sort_network`); kiss-ref pins each by local convention and files them as KISS
-RFCs, so those cells are honest but provisional — the intended §6.13-divergence signal, not a bug to
-hide. Until then
+(§6.0-0004) — compared under tolerance, never byte-exact. The **window family** (`avg_pool`/`max_pool`/
+`im2col`) is included, so **every op is evaluable on at least the float lane (106/106)**; the
+**integer tensor lane** additionally covers the atoms + `argmax`/`any`/`all`/`cum*` over the integer
+dtypes (via `eval_int_op` wrapping). The remaining `Pending` cells are per-(op × dtype): the FP8
+(`e4m3`/`e5m2`) / `bool` / complex (`c32`/`c64`) dtype breadth, on both lanes. Three §6.11
+under-specifications surfaced (gather skip-read value; scatter base-state / output-shape; empty-axis
+for `prefix_scan`/`gather`/`scatter`/`sort_network`); kiss-ref pins each by local convention and files
+them as KISS RFCs, so those cells are honest but provisional — the intended §6.13-divergence signal,
+not a bug to hide. Even so,
 "total cover" and "1:1 mirror of the spec" describe the *target*; the coverage ledger
 (`kiss-ref-conformance`) reports exactly which (op × dtype) cells are actually `Done`, and the prose
 should always be read against it. Baracuda's `oracle.rs` covers this structural/tensor region
@@ -162,15 +164,18 @@ so `kiss-ref-core` returns typed errors, never panics.
 - **Scalar kernels: the mandatory core across the common dtypes.** The floor atoms + resolver over the
   float dtypes (`f32`, `f64`, `f16`, `bf16`) and every legal integer dtype (incl. packed `s4`/`u4`/`b1`),
   with the elementwise non-primitives resolved end-to-end.
-- **Tensor layer: the 6 structural atoms + 19 tensor non-primitives on the float lane** (§6.11/§6.13).
-  `element_map`/`reduce`/`prefix_scan`/`gather`/`scatter`/`sort_network` as strided-tensor kernels; the
-  reductions, scans, normalizations (`softmax`/`log_softmax`/`rms_norm`/`layer_norm`/`logsumexp`),
-  `matmul`, `argmax`, `any`/`all`, and the gather/scatter family (`index_select`/`embedding`/
-  `scatter_add`) as spec-faithful transcriptions of their §6.13 decompositions. Lands the ledger at
-  **103/106**.
-- **Pending (in the ledger):** the window family (`avg_pool`/`max_pool`/`im2col`); the integer / FP8
-  (`e4m3`/`e5m2`) / `bool` / complex (`c32`/`c64`) **tensor** lanes; and the FP8/`bool`/complex scalar
-  dtype breadth. Plus the three §6.11 spec-gap cells held provisional pending KISS RFC rulings.
+- **Tensor layer: the 6 structural atoms + all 22 tensor non-primitives on the float lane** (§6.11/
+  §6.13). `element_map`/`reduce`/`prefix_scan`/`gather`/`scatter`/`sort_network` as strided-tensor
+  kernels; the reductions, scans, normalizations (`softmax`/`log_softmax`/`rms_norm`/`layer_norm`/
+  `logsumexp`), `matmul`, `argmax`, `any`/`all`, the gather/scatter family (`index_select`/`embedding`/
+  `scatter_add`), and the window family (`avg_pool`/`max_pool`/`im2col`) as spec-faithful transcriptions
+  of their §6.13 decompositions. **Lands the ledger at 106/106.**
+- **Integer tensor lane:** the 6 atoms + `argmax`/`any`/`all`/`cum*` over every integer dtype (via
+  `eval_int_op` two's-complement wrapping). The float-only tensor ops (`reduce_mean`/`var`/`std`/
+  `norm2`, the normalizations, `matmul`, pooling — anything needing `div`/`sqrt`/`exp`) stay float.
+- **Pending (in the ledger):** the per-(op × dtype) FP8 (`e4m3`/`e5m2`) / `bool` / complex (`c32`/`c64`)
+  dtype breadth on both lanes. Plus the three §6.11 spec-gap cells held provisional pending KISS RFC
+  rulings.
 
 The coverage gate reports DONE vs PENDING for every (atom × legal-dtype) cell, so what remains is
 machine-visible to the evaluating teams. They fill cells; this seed dictates *how*.
