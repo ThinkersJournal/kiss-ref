@@ -6,7 +6,7 @@ use kiss_classify_vocab::Dtype;
 use kiss_ops_vocab::Op;
 use kiss_ref_conformance::ledger;
 use kiss_ref_core::scalar_int::int_spec;
-use kiss_ref_core::{float_supported, int_supported, support, Support};
+use kiss_ref_core::{float_supported, int_supported, support, tensor_supported, Support};
 
 const INT_DTYPES: [Dtype; 11] = [
     Dtype::S8,
@@ -31,11 +31,33 @@ fn coverage_ledger_reports_done_and_pending() {
     println!("PENDING ops ({}): {:?}", l.pending.len(), l.pending_tokens());
 
     assert!(
-        l.done.len() >= 78,
-        "expected >= 78 ops evaluable (float scalar + integer scalar), got {}",
+        l.done.len() >= 103,
+        "expected >= 103 ops evaluable (float+int scalar + the tensor layer), got {}",
         l.done.len()
     );
     assert_eq!(l.done.len() + l.pending.len(), Op::ALL.len());
+    // Only the window family remains pending among the structural/tensor ops.
+    for tok in ["avg_pool", "max_pool", "im2col"] {
+        assert!(
+            l.pending_tokens().contains(&tok),
+            "{tok} should still be pending (window family, follow-up)"
+        );
+    }
+}
+
+#[test]
+fn coverage_tensor_layer_done_on_floats() {
+    // The 6 structural atoms + the tensor non-primitives are Done on every float
+    // dtype (the float lane: f16/bf16/f32/f64), Pending elsewhere in this cut.
+    for &op in Op::ALL {
+        if tensor_supported(op) {
+            for &d in &[Dtype::F16, Dtype::Bf16, Dtype::F32, Dtype::F64] {
+                assert_eq!(support(op, d), Support::Done, "{op:?}/{d:?}");
+            }
+            // integer / FP8 / bool / complex tensor lanes are follow-ups.
+            assert_eq!(support(op, Dtype::E4m3), Support::Pending, "{op:?}/e4m3");
+        }
+    }
 }
 
 #[test]
@@ -85,8 +107,10 @@ fn coverage_support_consistency() {
     for &op in Op::ALL {
         for &d in Dtype::ALL.iter() {
             let expect = match d {
-                Dtype::F32 | Dtype::F64 => float_supported(op),
-                Dtype::F16 | Dtype::Bf16 => float_supported(op) && op != Op::Nextafter,
+                Dtype::F32 | Dtype::F64 => float_supported(op) || tensor_supported(op),
+                Dtype::F16 | Dtype::Bf16 => {
+                    (float_supported(op) && op != Op::Nextafter) || tensor_supported(op)
+                }
                 _ if int_spec(d).is_some() => int_supported(op),
                 _ => false,
             };

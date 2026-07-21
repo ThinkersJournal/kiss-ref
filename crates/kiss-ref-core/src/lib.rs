@@ -27,19 +27,28 @@
 
 #![cfg_attr(not(test), no_std)]
 
+pub mod attrs;
+pub mod bridge;
 pub mod diff;
+pub mod kernels;
 pub mod resolve;
 pub mod scalar;
 pub mod scalar_int;
+pub mod tensor;
+pub mod tensor_ops;
 
 pub use diff::{
     diff_bf16, diff_f16, diff_f32, diff_f64, reference_bf16, reference_f16, reference_f32,
     reference_f64, ulp_distance_bf16, ulp_distance_f16, ulp_distance_f32, ulp_distance_f64,
     DiffReport, Tolerance,
 };
-pub use resolve::{eval_expr, eval_op, float_supported, implemented, support};
+pub use resolve::{eval_expr, eval_op, float_supported, implemented, support, tensor_supported};
 pub use scalar::ScalarFloat;
 pub use scalar_int::{eval_int_op, int_supported};
+
+pub use attrs::{Combine, Direction, Monoid, OobPolicy};
+pub use bridge::{DetClass, Evaluated};
+pub use tensor::{IndexTensor, Tensor, View, MAX_OPERANDS, MAX_RANK};
 
 use kiss_classify_vocab::Dtype;
 use kiss_ops_vocab::Op;
@@ -64,6 +73,24 @@ pub enum Error {
     UnsupportedDtype(Dtype),
     /// A differential candidate slice length did not match the reference length.
     LengthMismatch { expected: usize, got: usize },
+
+    // ---- tensor-evaluation layer (§6.11 structural atoms) ------------------
+    /// A tensor rank exceeds `MAX_RANK` (§6.19-0037).
+    RankExceeded { rank: usize, max: usize },
+    /// A tensor did not have the shape an operation required (element count or a
+    /// coordinate of the wrong arity).
+    ShapeMismatch { expected: usize, got: usize },
+    /// Two operand shapes are not broadcast-compatible (§6.11-0001 / §6.20-0007).
+    BroadcastIncompatible,
+    /// An axis argument is out of range for the operand rank.
+    AxisOutOfRange { axis: usize, rank: usize },
+    /// An index-operand dtype is not one of `{u32, i32, i64}` (§6.11-0009).
+    IndexDtypeIllegal(Dtype),
+    /// A `reduce`/`prefix_scan` axis selection was empty (`0x0000` forbidden,
+    /// §6.19-0038), or a reduction/scan was asked for no axes.
+    EmptyAxesMask,
+    /// Shape element-count arithmetic overflowed `usize`.
+    ShapeOverflow,
 }
 
 /// Coverage of an `(op, dtype)` cell in this seed. The conformance coverage gate

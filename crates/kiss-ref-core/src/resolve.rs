@@ -211,10 +211,54 @@ pub fn float_supported(op: Op) -> bool {
     go(op, 32)
 }
 
-/// Whether any reference path evaluates `op` (float scalar, integer scalar, or
-/// — added in a later increment — the tensor path). Used by the coverage ledger.
+/// Whether the **tensor-evaluation layer** (float lane) evaluates `op` — the six
+/// §6.11 structural atoms plus the §6.13 tensor non-primitives that decompose
+/// through them. The window family (`avg_pool`/`max_pool`/`im2col`) is a
+/// documented follow-up and is **not** listed here, so it stays `Pending`.
+///
+/// Float lane only (`f16`/`bf16`/`f32`/`f64`); the integer tensor lane is a
+/// separate follow-up.
+pub fn tensor_supported(op: Op) -> bool {
+    matches!(
+        op,
+        // the 6 structural floor atoms (§6.11)
+        Op::ElementMap
+            | Op::Reduce
+            | Op::PrefixScan
+            | Op::Gather
+            | Op::Scatter
+            | Op::SortNetwork
+        // reductions (§6.13)
+            | Op::ReduceMean
+            | Op::ReduceNorm2
+            | Op::ReduceVar
+            | Op::ReduceStd
+            | Op::Logsumexp
+            | Op::Argmax
+            | Op::Any
+            | Op::All
+        // scans
+            | Op::Cumsum
+            | Op::Cumprod
+            | Op::Cummax
+        // normalizations
+            | Op::Softmax
+            | Op::LogSoftmax
+            | Op::RmsNorm
+            | Op::LayerNorm
+        // contraction
+            | Op::Matmul
+        // gather/scatter family
+            | Op::IndexSelect
+            | Op::Embedding
+            | Op::ScatterAdd
+    )
+}
+
+/// Whether any reference path evaluates `op` (float scalar, integer scalar, or the
+/// tensor path). Used by the coverage ledger.
 pub fn implemented(op: Op) -> bool {
-    float_supported(op) || crate::int_supported(op)
+    float_supported(op) || crate::int_supported(op) || tensor_supported(op)
 }
 
 /// Coverage of `(op, dtype)` in this seed: `Done` iff a reference path evaluates
@@ -224,9 +268,11 @@ pub fn implemented(op: Op) -> bool {
 /// Drives the conformance coverage ledger.
 pub fn support(op: Op, dtype: Dtype) -> Support {
     let float_ok = match dtype {
-        Dtype::F32 | Dtype::F64 => float_supported(op),
+        Dtype::F32 | Dtype::F64 => float_supported(op) || tensor_supported(op),
         // narrow floats: same coverage as the wide floats, minus nextafter.
-        Dtype::F16 | Dtype::Bf16 => float_supported(op) && op != Op::Nextafter,
+        Dtype::F16 | Dtype::Bf16 => {
+            (float_supported(op) && op != Op::Nextafter) || tensor_supported(op)
+        }
         _ => false,
     };
     let int_ok = crate::scalar_int::int_spec(dtype).is_some() && crate::int_supported(op);

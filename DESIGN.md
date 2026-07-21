@@ -49,13 +49,22 @@ non-primitive by expanding its §6.13 decomposition to the floor** is therefore 
 op basis: every op is evaluable, so the same artifact can be a differential reference (verify
 against it) and a correctness floor (execute on it when nothing else will).
 
-**This is the design goal, not yet the seed's reach — the distinction matters.** Total cover holds
-today only over the **scalar-resolvable subset**: the elementwise float floor atoms + the
-non-primitives that decompose through them (the float path) and the integer floor atoms (the integer
-path). The **structural atoms** (`reduce`/`gather`/`scatter`/`element_map`/`prefix_scan`/
-`sort_network`) are slice→slice, and `matmul`/pooling/`softmax`/the reductions decompose *through*
-them — so completing the cover needs a **tensor-level evaluation layer that the scalar resolver nests
-inside** (with deliberate handling of the one order-sensitive op, atomic scatter-add). Until then
+**Total cover now spans the scalar floor + a tensor-evaluation layer — 103 of 106 ops.** The scalar
+path covers the elementwise float floor atoms + the non-primitives that decompose through them, and
+the integer floor atoms. The six **structural atoms** (`element_map`/`reduce`/`prefix_scan`/`gather`/
+`scatter`/`sort_network`, §6.11) are now hand-written strided-tensor kernels, and `matmul`/`softmax`/
+the reductions/scans/norms decompose *through* them via a **tensor-evaluation layer that nests the
+scalar resolver inside a row-major odometer** — `element_map`'s per-element body *is* the unchanged
+`eval_expr`, so pointwise numerics (NaN, signed-zero, refined forms) are inherited, not re-implemented,
+and a `reduce`/scan monoid combine is one `eval_op` call. The one order-sensitive op, float
+`scatter_add`, is pinned to row-major source order and tagged order-invariant/nondeterministic
+(§6.0-0004) — compared under tolerance, never byte-exact. This holds on the **float lane**
+(`f16`/`bf16`/`f32`/`f64`); the **window family** (`avg_pool`/`max_pool`/`im2col`) and the integer /
+FP8 / complex tensor lanes are the remaining `Pending` cells. Three §6.11 under-specifications
+surfaced (gather skip-read value; scatter base-state / output-shape; empty-axis for `prefix_scan`/
+`gather`/`scatter`/`sort_network`); kiss-ref pins each by local convention and files them as KISS
+RFCs, so those cells are honest but provisional — the intended §6.13-divergence signal, not a bug to
+hide. Until then
 "total cover" and "1:1 mirror of the spec" describe the *target*; the coverage ledger
 (`kiss-ref-conformance`) reports exactly which (op × dtype) cells are actually `Done`, and the prose
 should always be read against it. Baracuda's `oracle.rs` covers this structural/tensor region
@@ -77,7 +86,9 @@ kiss-ops-vocab        binds KISS-Ops §6.1/§6.3/§6.13/§6.18 — op tokens, fa
                       sibling of classify-vocab, never imports it — mirrors KISS-Ops §6.9 / DAG).
 
 kiss-ref-core         the actual reference kernels. Implements the floor atoms spec-exactly + the
-                      §6.13/§6.14 recursive-resolution engine (non-primitives evaluate for free).
+                      §6.13/§6.14 recursive-resolution engine (non-primitives evaluate for free) +
+                      the tensor layer (`tensor`/`bridge`/`kernels`/`attrs`/`tensor_ops`): the 6 §6.11
+                      structural atoms as strided-tensor kernels + the §6.13 tensor non-primitives.
                       Depends on BOTH vocab crates + libm + half. NO consumer (Fuel/Baracuda) deps.
 
 kiss-ref-conformance  the build-time (atom × legal-dtype) coverage gate that makes "always works" an
@@ -148,11 +159,18 @@ so `kiss-ref-core` returns typed errors, never panics.
 
 - **Vocab: complete.** Both vocab crates enumerate the *full* KISS op set + 20 dtypes, so the coverage
   ledger is a complete list even where a kernel is still pending.
-- **Kernels: the mandatory core across the common dtypes.** The floor atoms + resolver over the float
-  dtypes (`f32`, `f64`, and `f16`/`bf16` where applicable) and legal integer dtypes, with a
-  representative set of non-primitives resolved end-to-end.
-- **Pending (in the ledger, for Baracuda/KISS to fill):** FP8 (`e4m3`/`e5m2`), sub-byte (`s4`/`u4`/`b1`),
-  and complex (`c32`/`c64`) arithmetic; `sort_network`-backed ops; the full non-primitive table.
+- **Scalar kernels: the mandatory core across the common dtypes.** The floor atoms + resolver over the
+  float dtypes (`f32`, `f64`, `f16`, `bf16`) and every legal integer dtype (incl. packed `s4`/`u4`/`b1`),
+  with the elementwise non-primitives resolved end-to-end.
+- **Tensor layer: the 6 structural atoms + 19 tensor non-primitives on the float lane** (§6.11/§6.13).
+  `element_map`/`reduce`/`prefix_scan`/`gather`/`scatter`/`sort_network` as strided-tensor kernels; the
+  reductions, scans, normalizations (`softmax`/`log_softmax`/`rms_norm`/`layer_norm`/`logsumexp`),
+  `matmul`, `argmax`, `any`/`all`, and the gather/scatter family (`index_select`/`embedding`/
+  `scatter_add`) as spec-faithful transcriptions of their §6.13 decompositions. Lands the ledger at
+  **103/106**.
+- **Pending (in the ledger):** the window family (`avg_pool`/`max_pool`/`im2col`); the integer / FP8
+  (`e4m3`/`e5m2`) / `bool` / complex (`c32`/`c64`) **tensor** lanes; and the FP8/`bool`/complex scalar
+  dtype breadth. Plus the three §6.11 spec-gap cells held provisional pending KISS RFC rulings.
 
 The coverage gate reports DONE vs PENDING for every (atom × legal-dtype) cell, so what remains is
 machine-visible to the evaluating teams. They fill cells; this seed dictates *how*.
