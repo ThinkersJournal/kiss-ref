@@ -44,6 +44,7 @@ pub mod bridge;
 pub mod diff;
 pub mod fp8;
 pub mod kernels;
+pub mod recipe;
 pub mod resolve;
 pub mod scalar;
 pub mod scalar_int;
@@ -68,6 +69,7 @@ pub use attrs::{Combine, Direction, Monoid, OobPolicy};
 pub use boolean::{bool_supported, eval_bool_op};
 pub use bridge::{DetClass, Evaluated};
 pub use fp8::{E4m3, E5m2};
+pub use recipe::{eval_recipe, FlatDag, Node};
 pub use tensor::{IndexTensor, Tensor, View, MAX_OPERANDS, MAX_RANK};
 
 use kiss_classify_vocab::Dtype;

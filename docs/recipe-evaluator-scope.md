@@ -1,9 +1,18 @@
 # kiss-ref recipe-evaluation API — scoping note
 
-**Status:** scoping · 2026-07-21 · scoped against Baracuda's grammar extract
+**Status:** **v1 implemented** in `crates/kiss-ref-core/src/recipe.rs` · 2026-07-21 ·
+scoped against Baracuda's grammar extract
 (`baracuda/docs/kiss-ops-recipe-grammar-spec-2026-07-21.md`), which is an INPUT to
 the KISS-owned recipe grammar (Contract §2.3 / Ops §6.13/§6.19 / §6.4-0009-0010 +
 Fuel co-design + mlgheozs's 3B). Reconcile toward KISS on any divergence.
+
+**v1 covers** (float lane): the scalar atoms (via `element_map`+`eval_op`),
+`reduce`/`prefix_scan` (with `nokd` squeeze), `matmul`, and the value leaves
+(`Bind`/`const`/`runtime_scalar`/`reduced_count`), returning per-node `DetClass`.
+An iterative worklist walks the DAG (bounded to heap, never a stack overflow). End
+-to-end recipes (matmul+bias+relu, softmax) evaluate correctly.
+**v1 defers:** the index-bearing nodes (`gather`/`scatter`/`sort_network` — mixed
+float/integer operands) and `iota` (needs the §6.20 shape oracle).
 
 ## Target API
 
