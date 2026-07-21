@@ -32,8 +32,10 @@ impl Ledger {
              + integer scalar (s8..u64, s4/u4/b1) \
              + the §6.11 structural atoms, §6.13 tensor non-primitives & window family on \
              the float lane, plus the integer tensor lane (reduce/scan/gather/scatter/sort/ \
-             argmax/any/all). Every op is evaluable on at least one lane; remaining gaps are \
-             per-(op×dtype) cells — the FP8 (e4m3/e5m2) / bool / complex (c32/c64) dtype breadth.",
+             argmax/any/all). Dtype breadth: + FP8 (e4m3/e5m2, promote-to-f32) + the bool \
+             truth-valued lane; complex (c32/c64) is NotApplicable (§6.16-0007 — the deferred \
+             §6.18 op family). Cell coverage is three-state (Done/Pending/NotApplicable); \
+             only spec-legal cells form the denominator.",
             self.done.len(),
             total,
             self.pending.len()

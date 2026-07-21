@@ -15,21 +15,34 @@
 //! consumer's production/execution path (e.g. Fuel's never-panic backend
 //! contract).
 //!
-//! ## Seed scope
-//! The scalar path implements the float floor atoms + elementwise non-primitives
-//! over `f16`/`bf16`/`f32`/`f64`, and the integer floor atoms over all integer
-//! dtypes (incl. the packed `s4`/`u4`/`b1`), computed in `i128` and wrapped. The
-//! FP8 (`e4m3`/`e5m2`), `bool`, and complex (`c32`/`c64`) dtypes; the structural
-//! atoms (`element_map` … `sort_network`) and the reduction / scan / normalization
-//! / contraction non-primitives that build on them; and the tensor (`element_map`)
-//! wrapper are enumerated in the vocab and reported `Pending` by [`support`] — the
-//! next wave for the evaluating teams.
+//! ## Scope
+//! - **Scalar floor + non-primitives** over `f16`/`bf16`/`f32`/`f64` (float, via
+//!   `libm`) and every integer dtype (incl. packed `s4`/`u4`/`b1`, computed in
+//!   `i128` and wrapped).
+//! - **Tensor layer** ([`tensor`]/[`kernels`]/[`tensor_ops`]/[`window`]): the six
+//!   §6.11 structural atoms + all §6.13 tensor non-primitives on the float lane,
+//!   plus an [`tensor_int`] integer tensor lane.
+//! - **FP8** ([`fp8`]): `e4m3`/`e5m2` as `u8` newtypes with a hand-rolled f32 codec
+//!   (RNE + saturation), computed via the narrow-float promote-to-f32 lane.
+//! - **bool** ([`boolean`]): the truth-valued lane (§6.2-0006) over the integer
+//!   engine, `{0,1}`-normalized.
+//! - **complex** (`c32`/`c64`): **not applicable** — complex arithmetic is the
+//!   deferred §6.18 op family (absent from the vocab), so [`support`] reports every
+//!   `(op, c32/c64)` cell [`Support::NotApplicable`] (§6.16-0007), not `Pending`.
+//!
+//! Coverage is a three-state model — [`Support::Done`] / [`Support::Pending`] /
+//! [`Support::NotApplicable`] — driven by the spec-derived [`legality`] function;
+//! only legal cells form the denominator. The remaining `Pending` cells are the
+//! integer-tensor float-only ops (`reduce_mean`/norms/… need `div`/`sqrt`) and a
+//! few genuinely-legal-but-unimplemented edges.
 
 #![cfg_attr(not(test), no_std)]
 
 pub mod attrs;
+pub mod boolean;
 pub mod bridge;
 pub mod diff;
+pub mod fp8;
 pub mod kernels;
 pub mod resolve;
 pub mod scalar;
@@ -44,13 +57,17 @@ pub use diff::{
     reference_f64, ulp_distance_bf16, ulp_distance_f16, ulp_distance_f32, ulp_distance_f64,
     DiffReport, Tolerance,
 };
-pub use resolve::{eval_expr, eval_op, float_supported, implemented, support, tensor_supported};
+pub use resolve::{
+    eval_expr, eval_op, float_supported, implemented, legality, support, tensor_supported,
+};
 pub use scalar::ScalarFloat;
 pub use scalar_int::{eval_int_expr, eval_int_op, int_supported};
 pub use tensor_int::int_tensor_supported;
 
 pub use attrs::{Combine, Direction, Monoid, OobPolicy};
+pub use boolean::{bool_supported, eval_bool_op};
 pub use bridge::{DetClass, Evaluated};
+pub use fp8::{E4m3, E5m2};
 pub use tensor::{IndexTensor, Tensor, View, MAX_OPERANDS, MAX_RANK};
 
 use kiss_classify_vocab::Dtype;
@@ -96,14 +113,22 @@ pub enum Error {
     ShapeOverflow,
 }
 
-/// Coverage of an `(op, dtype)` cell in this seed. The conformance coverage gate
-/// enumerates every legal cell and reports the `Done` / `Pending` split.
+/// Coverage of an `(op, dtype)` cell. Three states: a cell is either
+/// spec-**legal** (and then `Done` or `Pending`) or **not applicable** — the op
+/// has no meaning on that dtype and the spec mandates a typed decline. Only legal
+/// cells (`Done` + `Pending`) form the coverage denominator; `NotApplicable` cells
+/// are excluded, not counted as a backlog.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Support {
     /// A reference kernel exists and is conformance-tested.
     Done,
-    /// Enumerated by the vocab but not yet implemented in this seed.
+    /// Spec-legal on this dtype, but no reference path in this seed yet.
     Pending,
+    /// The op is not applicable to this dtype — permanently illegal per spec
+    /// (e.g. a bitwise op on a float, `div` on an integer, any of the 106 ops on
+    /// a complex dtype whose arithmetic is the deferred §6.18 family). Excluded
+    /// from the coverage denominator.
+    NotApplicable,
 }
 
 /// Where a reference kernel came from — the provenance rule of `DESIGN.md`

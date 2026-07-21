@@ -25,14 +25,15 @@ See [DESIGN.md](DESIGN.md) for the architecture, the KISS binding, the provenanc
 
 ## Status
 
-Seed. Vocab complete (106 ops, 20 dtypes). Kernels: **78/106 ops evaluable** — the float floor +
-elementwise non-primitives over `f16`/`bf16`/`f32`/`f64` (minus `nextafter` on the narrow floats,
-§6.9-0003) and the integer floor atoms over all integer dtypes, incl. the packed `s4`/`u4`/`b1`. All
-11 §6.13-0003 refine-marked ops (incl. `pow`/`hypot` full-domain edges) are direct refined kernels.
-PENDING: the structural atoms + the reductions/scans/norms/matmul/pooling that decompose through them
-(a tensor-evaluation layer — see DESIGN.md), and the FP8 (`e4m3`/`e5m2`) / `bool` / complex
-(`c32`/`c64`) dtype breadth. Reviewed by the KISS and Baracuda agents (2026-07-17). Pre-1.0,
-following unfrozen KISS drafts.
+Vocab complete (106 ops, 20 dtypes). **All 106 ops evaluable.** The scalar floor + non-primitives over
+`f16`/`bf16`/`f32`/`f64` and every integer dtype (incl. packed `s4`/`u4`/`b1`); a full **tensor layer**
+(the 6 §6.11 structural atoms + all §6.13 tensor non-primitives incl. the window family, on the float
+lane, plus an integer tensor lane); **FP8** (`e4m3`/`e5m2`, hand-rolled f32 codec); and the truth-valued
+**bool** lane. Complex (`c32`/`c64`) is **NotApplicable** — its arithmetic is the deferred §6.18 op
+family (§6.16-0007). Cell coverage is three-state (Done / Pending / NotApplicable) driven by a
+spec-derived `legality(op, dtype)`; only legal cells count. `nextafter` is `NotApplicable` on the
+narrow/FP8 floats (§6.9-0003). Adversarially reviewed via multi-agent workflows. Pre-1.0, following
+unfrozen KISS drafts.
 
 ```
 cargo test            # runs the conformance corpus + coverage-ledger report

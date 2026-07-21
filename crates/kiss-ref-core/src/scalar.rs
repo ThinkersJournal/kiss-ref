@@ -435,6 +435,11 @@ macro_rules! impl_scalar_float_via_f32 {
 impl_scalar_float_via_f32!(half::f16);
 impl_scalar_float_via_f32!(half::bf16);
 
+// FP8 (e4m3 / e5m2) — same promote-to-f32 lane as the narrow floats (§6.16), with
+// the hand-rolled u8 codec in `crate::fp8` (the `half` crate has no FP8).
+impl_scalar_float_via_f32!(crate::fp8::E4m3);
+impl_scalar_float_via_f32!(crate::fp8::E5m2);
+
 // ---- Refined non-primitive scalar forms (§6.13-0003) --------------------------
 // The literal reference decompositions of these ops overflow to NaN for large
 // arguments while the true function is finite; the spec REQUIRES an overflow-safe

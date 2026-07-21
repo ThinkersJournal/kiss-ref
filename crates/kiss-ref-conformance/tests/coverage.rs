@@ -7,7 +7,8 @@ use kiss_ops_vocab::Op;
 use kiss_ref_conformance::ledger;
 use kiss_ref_core::scalar_int::int_spec;
 use kiss_ref_core::{
-    float_supported, int_supported, int_tensor_supported, support, tensor_supported, Support,
+    bool_supported, float_supported, int_supported, int_tensor_supported, support, tensor_supported,
+    Support,
 };
 
 const INT_DTYPES: [Dtype; 11] = [
@@ -65,13 +66,27 @@ fn coverage_tensor_layer_done_on_floats() {
     // dtype (the float lane: f16/bf16/f32/f64), Pending elsewhere in this cut.
     for &op in Op::ALL {
         if tensor_supported(op) {
-            for &d in &[Dtype::F16, Dtype::Bf16, Dtype::F32, Dtype::F64] {
+            for &d in &[Dtype::F16, Dtype::Bf16, Dtype::F32, Dtype::F64, Dtype::E4m3, Dtype::E5m2] {
                 assert_eq!(support(op, d), Support::Done, "{op:?}/{d:?}");
             }
-            // integer / FP8 / bool / complex tensor lanes are follow-ups.
-            assert_eq!(support(op, Dtype::E4m3), Support::Pending, "{op:?}/e4m3");
         }
     }
+}
+
+#[test]
+fn coverage_fp8_float_cells_done() {
+    // FP8 (e4m3/e5m2) covers the same float op-set as f16/bf16 (compute via
+    // promotion to f32): every non-nextafter float op is Done; nextafter and
+    // bitwise are NotApplicable.
+    for &op in Op::ALL {
+        for &d in &[Dtype::E4m3, Dtype::E5m2] {
+            if float_supported(op) && op != Op::Nextafter {
+                assert_eq!(support(op, d), Support::Done, "{op:?}/{d:?}");
+            }
+        }
+    }
+    assert_eq!(support(Op::Nextafter, Dtype::E4m3), Support::NotApplicable);
+    assert_eq!(support(Op::BitAnd, Dtype::E5m2), Support::NotApplicable);
 }
 
 #[test]
@@ -106,9 +121,10 @@ fn coverage_narrow_floats_match_wide_except_nextafter() {
                 assert_eq!(support(op, d), Support::Done, "{op:?}/{d:?}");
             }
         }
-        // nextafter is declined on the narrow floats.
-        assert_eq!(support(Op::Nextafter, Dtype::F16), Support::Pending);
-        assert_eq!(support(Op::Nextafter, Dtype::Bf16), Support::Pending);
+        // nextafter is NOT APPLICABLE on the narrow floats (§6.9-0003) — spec-illegal,
+        // not merely unimplemented.
+        assert_eq!(support(Op::Nextafter, Dtype::F16), Support::NotApplicable);
+        assert_eq!(support(Op::Nextafter, Dtype::Bf16), Support::NotApplicable);
         // ...but supported on the wide floats.
         assert_eq!(support(Op::Nextafter, Dtype::F32), Support::Done);
     }
@@ -122,9 +138,10 @@ fn coverage_support_consistency() {
         for &d in Dtype::ALL.iter() {
             let expect = match d {
                 Dtype::F32 | Dtype::F64 => float_supported(op) || tensor_supported(op),
-                Dtype::F16 | Dtype::Bf16 => {
+                Dtype::F16 | Dtype::Bf16 | Dtype::E4m3 | Dtype::E5m2 => {
                     (float_supported(op) && op != Op::Nextafter) || tensor_supported(op)
                 }
+                Dtype::Bool => bool_supported(op),
                 _ if int_spec(d).is_some() => {
                     int_supported(op) || int_tensor_supported(op)
                 }
@@ -136,17 +153,49 @@ fn coverage_support_consistency() {
 }
 
 #[test]
-fn coverage_dtype_breadth_still_pending() {
-    // FP8 / bool / complex have no reference path yet in the seed.
-    for &d in &[
-        Dtype::E4m3,
-        Dtype::E5m2,
-        Dtype::Bool,
-        Dtype::C32,
-        Dtype::C64,
-    ] {
+fn coverage_complex_all_not_applicable() {
+    // §6.16-0007: complex arithmetic is the deferred §6.18 op family, so NONE of
+    // the 106 vocab ops apply to a complex compute dtype — every cell is
+    // NotApplicable, not a pending backlog item.
+    for &d in &[Dtype::C32, Dtype::C64] {
         for &op in Op::ALL {
-            assert_eq!(support(op, d), Support::Pending, "{op:?}/{d:?}");
+            assert_eq!(support(op, d), Support::NotApplicable, "{op:?}/{d:?}");
         }
     }
+}
+
+#[test]
+fn coverage_illegal_cells_are_not_applicable() {
+    // Permanently-illegal (op × dtype) cells report NotApplicable, not Pending —
+    // they leave the coverage backlog entirely.
+    assert_eq!(support(Op::BitAnd, Dtype::F32), Support::NotApplicable); // bitwise×float §6.10-0001
+    assert_eq!(support(Op::BitOr, Dtype::Bool), Support::NotApplicable); // bitwise×bool
+    assert_eq!(support(Op::Div, Dtype::I32), Support::NotApplicable); // div×int §6.4-0002
+    assert_eq!(support(Op::Exp, Dtype::I32), Support::NotApplicable); // transcendental×int §6.8
+    assert_eq!(support(Op::Softmax, Dtype::U8), Support::NotApplicable); // normalization×int
+    assert_eq!(support(Op::Nextafter, Dtype::F16), Support::NotApplicable); // §6.9-0003
+    // ...FP8 float ops and the bool truth-valued ops are now Done.
+    assert_eq!(support(Op::Add, Dtype::E4m3), Support::Done);
+    assert_eq!(support(Op::LogicalAnd, Dtype::Bool), Support::Done);
+}
+
+#[test]
+fn coverage_bool_truth_cells_done() {
+    // The truth-valued bool ops (logical / eq / select / min-max / {0,1}-preserving
+    // structural + data-movement) are Done; arithmetic, bitwise, transcendental,
+    // and the sum/prod-bearing reductions are NotApplicable on bool.
+    for &op in Op::ALL {
+        if bool_supported(op) {
+            assert_eq!(support(op, Dtype::Bool), Support::Done, "{op:?}/bool");
+        }
+    }
+    assert_eq!(support(Op::Add, Dtype::Bool), Support::NotApplicable);
+    assert_eq!(support(Op::BitAnd, Dtype::Bool), Support::NotApplicable);
+    assert_eq!(support(Op::Exp, Dtype::Bool), Support::NotApplicable);
+    assert_eq!(support(Op::ReduceMean, Dtype::Bool), Support::NotApplicable);
+    assert_eq!(support(Op::ScatterAdd, Dtype::Bool), Support::NotApplicable); // sum escapes {0,1}
+    assert_eq!(support(Op::CmpLt, Dtype::Bool), Support::NotApplicable); // ordered cmp declined
+    // im2col is bool-LEGAL (data movement) but has no integer/bool kernel yet, so
+    // it is Pending — not over-claimed as Done (adversarial review).
+    assert_eq!(support(Op::Im2col, Dtype::Bool), Support::Pending);
 }

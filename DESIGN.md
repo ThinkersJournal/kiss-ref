@@ -173,9 +173,16 @@ so `kiss-ref-core` returns typed errors, never panics.
 - **Integer tensor lane:** the 6 atoms + `argmax`/`any`/`all`/`cum*` over every integer dtype (via
   `eval_int_op` two's-complement wrapping). The float-only tensor ops (`reduce_mean`/`var`/`std`/
   `norm2`, the normalizations, `matmul`, pooling — anything needing `div`/`sqrt`/`exp`) stay float.
-- **Pending (in the ledger):** the per-(op × dtype) FP8 (`e4m3`/`e5m2`) / `bool` / complex (`c32`/`c64`)
-  dtype breadth on both lanes. Plus the three §6.11 spec-gap cells held provisional pending KISS RFC
-  rulings.
+- **Dtype breadth:** **FP8** (`e4m3`/`e5m2`) as `u8` newtypes with a hand-rolled f32 codec (RNE +
+  saturation), computed via the narrow-float promote-to-f32 lane; the truth-valued **bool** lane
+  (§6.2-0006) over the integer engine, `{0,1}`-normalized. **Complex** (`c32`/`c64`) is
+  **NotApplicable** — its arithmetic is the deferred §6.18 op family (absent from the vocab), so every
+  `(op, c32/c64)` cell is `NotApplicable` (§6.16-0007), not pending.
+- **Coverage is three-state** — `Done` / `Pending` / `NotApplicable` — driven by a spec-derived
+  `legality(op, dtype)` (op family × numeric kind); only legal cells form the denominator, so
+  permanently-illegal cells (bitwise × float, `div` × int, `nextafter` × narrow, every op × complex)
+  leave the backlog entirely. Remaining `Pending`: the float-only tensor ops on the integer lane, plus
+  the three §6.11 spec-gap cells held provisional pending KISS RFC rulings.
 
 The coverage gate reports DONE vs PENDING for every (atom × legal-dtype) cell, so what remains is
 machine-visible to the evaluating teams. They fill cells; this seed dictates *how*.

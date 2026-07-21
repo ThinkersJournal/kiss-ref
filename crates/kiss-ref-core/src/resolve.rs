@@ -10,7 +10,7 @@
 extern crate alloc;
 use alloc::vec::Vec;
 
-use kiss_classify_vocab::Dtype;
+use kiss_classify_vocab::{Dtype, NumericKind};
 use kiss_ops_vocab::decomp::{parse, Expr};
 use kiss_ops_vocab::{Family, Op};
 
@@ -270,21 +270,112 @@ pub fn implemented(op: Op) -> bool {
 /// complex). `nextafter` is `Pending` on the narrow floats (§6.9-0003 decline).
 /// Drives the conformance coverage ledger.
 pub fn support(op: Op, dtype: Dtype) -> Support {
+    if !legality(op, dtype) {
+        Support::NotApplicable
+    } else if implemented_on(op, dtype) {
+        Support::Done
+    } else {
+        Support::Pending
+    }
+}
+
+/// Whether `(op, dtype)` is **spec-legal** — i.e. the op has a defined meaning on
+/// that dtype's numeric kind. Derived **only** from the spec (never from what is
+/// implemented): the op family × numeric kind, with the load-bearing per-op edges.
+/// The index-operand `{u32, i32, i64}` restriction (§6.11-0009) is a **separate**
+/// operand-role axis and is NOT folded in here.
+pub fn legality(op: Op, dtype: Dtype) -> bool {
+    let kind = dtype.numeric_kind();
+    // §6.16-0007: complex arithmetic is the deferred §6.18 family; NONE of the 106
+    // vocab ops apply to a complex compute dtype.
+    if kind == NumericKind::Complex {
+        return false;
+    }
+    // §6.9-0003: nextafter is defined only on the wide floats (stepping in a
+    // promoted f32 gives the wrong neighbor in the narrow/FP8 lattice).
+    if op == Op::Nextafter {
+        return matches!(dtype, Dtype::F32 | Dtype::F64);
+    }
+    match kind {
+        // Every non-bitwise op is defined on a float dtype; bitwise is integer-only
+        // (§6.10-0001).
+        NumericKind::Float => op.family() != Family::Bitwise,
+        NumericKind::Int | NumericKind::Uint => int_legal(op),
+        NumericKind::Bool => bool_legal(op),
+        NumericKind::Complex => false, // handled above
+    }
+}
+
+/// Whether `op` is legal on an **integer** dtype: everything except the ops that
+/// fundamentally need `div` / `sqrt` / a transcendental (float-only, §6.4-0002 /
+/// §6.7 / §6.8). Bitwise, comparisons, select, min/max, logical, `sign`, `sqr`,
+/// the structural atoms, `matmul`, `argmax`/`any`/`all`, the scans, and the
+/// gather/scatter family are all integer-meaningful.
+fn int_legal(op: Op) -> bool {
+    let float_only = matches!(
+        op.family(),
+        Family::Rounding | Family::Transcendental | Family::BinaryMath | Family::Normalization
+    ) || matches!(
+        op,
+        Op::Div
+            | Op::Recip
+            | Op::ReduceMean
+            | Op::ReduceVar
+            | Op::ReduceStd
+            | Op::ReduceNorm2
+            | Op::Logsumexp
+            | Op::AvgPool
+            | Op::Sigmoid
+            | Op::Silu
+            | Op::Softplus
+            | Op::Mish
+            | Op::Gelu
+            | Op::GeluTanh
+    );
+    !float_only
+}
+
+/// Whether `op` is legal on the truth-valued **bool** dtype (§6.2-0006): the
+/// logical family, equality, raw-bit `select`, order-preserving min/max, and the
+/// data-movement / `{0,1}`-preserving structural ops. Arithmetic, bitwise
+/// (§6.10-0001), rounding, transcendental, ordered comparisons, and the
+/// sum/prod-bearing reductions/scans are NOT applicable.
+pub(crate) fn bool_legal(op: Op) -> bool {
+    matches!(
+        op,
+        // logical predicates + equality + raw-bit select
+        Op::LogicalAnd | Op::LogicalOr | Op::LogicalNot
+            | Op::CmpEq | Op::CmpNe | Op::Select
+        // order-preserving on {0,1}
+            | Op::MaxProp | Op::MinProp
+        // structural atoms (data movement + {0,1}-preserving folds; the runtime
+        // gate rejects sum/prod monoids and scatter-add)
+            | Op::ElementMap | Op::Reduce | Op::PrefixScan | Op::Gather | Op::Scatter | Op::SortNetwork
+        // reduction/scan non-primitives that stay in {0,1}
+            | Op::Any | Op::All | Op::Cummax
+        // gather/scatter + shape data movement
+            | Op::IndexSelect | Op::Embedding | Op::Im2col
+    )
+}
+
+/// Whether a reference path evaluates `(op, dtype)` in this seed — the concrete
+/// dispatch behind `Done`. (Legality is orthogonal and comes first in [`support`].)
+fn implemented_on(op: Op, dtype: Dtype) -> bool {
     let float_ok = match dtype {
         Dtype::F32 | Dtype::F64 => float_supported(op) || tensor_supported(op),
-        // narrow floats: same coverage as the wide floats, minus nextafter.
-        Dtype::F16 | Dtype::Bf16 => {
+        // narrow floats + FP8: same coverage as the wide floats, minus nextafter
+        // (all compute via promotion to f32).
+        Dtype::F16 | Dtype::Bf16 | Dtype::E4m3 | Dtype::E5m2 => {
             (float_supported(op) && op != Op::Nextafter) || tensor_supported(op)
         }
         _ => false,
     };
     let int_ok = crate::scalar_int::int_spec(dtype).is_some()
         && (crate::int_supported(op) || crate::tensor_int::int_tensor_supported(op));
-    if float_ok || int_ok {
-        Support::Done
-    } else {
-        Support::Pending
-    }
+    // the bool truth-valued lane (scalar via eval_bool_op; tensor via the integer
+    // kernels over {0,1}).
+    let bool_ok = dtype == Dtype::Bool && crate::boolean::bool_supported(op);
+    float_ok || int_ok || bool_ok
 }
 
 #[cfg(test)]
