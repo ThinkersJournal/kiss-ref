@@ -217,34 +217,69 @@ pub fn layer_norm<T: ScalarFloat>(
 // ---- contraction -------------------------------------------------------------
 
 /// `matmul` — §6.13: `reduce(sum, axis=K) of element_map(mul(input(0), input(1)))`.
-/// This cut: 2-D `[M,K] · [K,N] → [M,N]`, contracting `K` in pinned ascending
-/// order (float sum → order-invariant/nondeterministic, §6.0-0004).
+/// **Batched:** `[..batch, M, K] · [..batch, K, N] → [..batch, M, N]` — the leading
+/// batch dims broadcast (numpy-style), the trailing two are the matrix dims; `K` is
+/// contracted in pinned ascending order (float sum → order-invariant/
+/// nondeterministic, §6.0-0004). The rank-2 case is `batch = []`.
 pub fn matmul<T: ScalarFloat>(a: &View<T>, b: &View<T>) -> Result<Tensor<T>, Error> {
     let ash = a.shape();
     let bsh = b.shape();
-    if ash.len() != 2 || bsh.len() != 2 {
-        return Err(Error::ShapeMismatch { expected: 2, got: ash.len().max(bsh.len()) });
+    if ash.len() < 2 || bsh.len() < 2 {
+        return Err(Error::ShapeMismatch { expected: 2, got: ash.len().min(bsh.len()) });
     }
-    let (m, k) = (ash[0], ash[1]);
-    let (k2, n) = (bsh[0], bsh[1]);
+    let (ar, br) = (ash.len(), bsh.len());
+    let (m, k) = (ash[ar - 2], ash[ar - 1]);
+    let (k2, n) = (bsh[br - 2], bsh[br - 1]);
     if k != k2 {
         return Err(Error::ShapeMismatch { expected: k, got: k2 });
     }
-    let count = numel(&[m, n])?;
-    let mut data: Vec<T> = Vec::with_capacity(count);
-    for i in 0..m {
-        for j in 0..n {
-            let mut acc = T::ZERO;
-            for p in 0..k {
-                let av = a.read(&[i, p])?;
-                let bv = b.read(&[p, j])?;
-                let prod = eval_op(Op::Mul, &[av, bv])?;
-                acc = eval_op(Op::Add, &[acc, prod])?;
-            }
-            data.push(acc);
-        }
+    // Broadcast the batch dims (everything but the trailing two).
+    let (batch_buf, batch_rank) = broadcast_shapes(&[&ash[..ar - 2], &bsh[..br - 2]])?;
+    let batch = &batch_buf[..batch_rank];
+    let out_rank = batch_rank + 2;
+    if out_rank > MAX_RANK {
+        return Err(Error::RankExceeded { rank: out_rank, max: MAX_RANK });
     }
-    Tensor::from_vec(data, &[m, n])
+    // Full (broadcast) operand shapes: `batch ++ [m,k]` and `batch ++ [k,n]`.
+    let mut a_full = [1usize; MAX_RANK];
+    let mut b_full = [1usize; MAX_RANK];
+    a_full[..batch_rank].copy_from_slice(batch);
+    b_full[..batch_rank].copy_from_slice(batch);
+    a_full[batch_rank] = m;
+    a_full[batch_rank + 1] = k;
+    b_full[batch_rank] = k;
+    b_full[batch_rank + 1] = n;
+    let av = a.broadcast_to(&a_full[..out_rank])?;
+    let bv = b.broadcast_to(&b_full[..out_rank])?;
+
+    let mut out_shape = [1usize; MAX_RANK];
+    out_shape[..batch_rank].copy_from_slice(batch);
+    out_shape[batch_rank] = m;
+    out_shape[batch_rank + 1] = n;
+    let out_shape = &out_shape[..out_rank];
+
+    let count = numel(out_shape)?;
+    let mut data: Vec<T> = Vec::with_capacity(count);
+    let mut acoord = [0usize; MAX_RANK];
+    let mut bcoord = [0usize; MAX_RANK];
+    let mut od = Odometer::new(out_shape)?;
+    while let Some(oc) = od.next_coord() {
+        // oc = batch(batch_rank) ++ [i, j]
+        acoord[..batch_rank].copy_from_slice(&oc[..batch_rank]);
+        bcoord[..batch_rank].copy_from_slice(&oc[..batch_rank]);
+        acoord[batch_rank] = oc[batch_rank]; // a's M index = i
+        bcoord[batch_rank + 1] = oc[batch_rank + 1]; // b's N index = j
+        let mut acc = T::ZERO;
+        for p in 0..k {
+            acoord[batch_rank + 1] = p; // a's K index
+            bcoord[batch_rank] = p; // b's K index
+            let prod =
+                eval_op(Op::Mul, &[av.read(&acoord[..out_rank])?, bv.read(&bcoord[..out_rank])?])?;
+            acc = eval_op(Op::Add, &[acc, prod])?;
+        }
+        data.push(acc);
+    }
+    Tensor::from_vec(data, out_shape)
 }
 
 // ---- gather / scatter family -------------------------------------------------
@@ -361,6 +396,23 @@ mod tests {
         assert_eq!(c.shape(), &[2, 2]);
         // [1,2,3]·[7,9,11]=58 ; [1,2,3]·[8,10,12]=64 ; [4,5,6]·[7,9,11]=139 ; ·[8,10,12]=154
         close(c.as_slice(), &[58.0, 64.0, 139.0, 154.0]);
+    }
+
+    #[test]
+    fn matmul_batched_and_broadcast() {
+        // 2 batches of [2,3]·[3,2].
+        let seq: Vec<f64> = (1..=12).map(|x| x as f64).collect();
+        let a = Tensor::from_vec(seq.clone(), &[2, 2, 3]).unwrap();
+        let b = Tensor::from_vec(seq, &[2, 3, 2]).unwrap();
+        let c = matmul(&a.view(), &b.view()).unwrap();
+        assert_eq!(c.shape(), &[2, 2, 2]);
+        // batch0 [[1,2,3],[4,5,6]]·[[1,2],[3,4],[5,6]] = [[22,28],[49,64]];
+        // batch1 [[7,8,9],[10,11,12]]·[[7,8],[9,10],[11,12]] = [[220,244],[301,334]].
+        close(c.as_slice(), &[22., 28., 49., 64., 220., 244., 301., 334.]);
+        // broadcast b's (absent) batch: [2,2,3]·[3,2] → [2,2,2].
+        let b2 = t(&[1., 0., 0., 1., 1., 1.], &[3, 2]);
+        let c2 = matmul(&a.view(), &b2.view()).unwrap();
+        assert_eq!(c2.shape(), &[2, 2, 2]);
     }
 
     #[test]

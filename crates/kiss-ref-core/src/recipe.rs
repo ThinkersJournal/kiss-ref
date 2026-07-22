@@ -1,5 +1,5 @@
-//! The **recipe evaluator**: `eval_recipe(dag, inputs, params) -> (outputs,
-//! per-node DetClass)`.
+//! The **recipe evaluator**: `eval_recipe(dag, inputs, params, indices) ->
+//! (outputs, per-node DetClass)`.
 //!
 //! kiss-ref evaluates the **logical flat-DAG** (a decoded Rust structure, [`FlatDag`]),
 //! not wire bytes — a decoder produces the DAG the evaluator walks (the §6.4-0009/
@@ -14,22 +14,26 @@
 //! computed from `(op, attrs)` joined most-permissively with the inputs' classes
 //! (§6.0-0005) for the consumer's comparator.
 //!
-//! **v1 scope (float lane):** the scalar atoms, `reduce`, `prefix_scan`, `matmul`,
-//! and the value leaves (`Bind`/`const`/`runtime_scalar`/`reduced_count`). The
-//! index-bearing nodes (`gather`/`scatter`/`sort_network` — mixed float/integer
-//! operands) and `iota` (needs the §6.20 shape oracle) are a documented follow-up.
+//! **Scope (float lane):** the scalar atoms, `reduce`/`prefix_scan`, **batched**
+//! `matmul`, the value leaves (`Bind`/`const`/`runtime_scalar`/`reduced_count`), and
+//! the index-bearing nodes `gather`/`scatter`/`sort_network` — whose integer index
+//! operands ride in the separate `indices` input array (referenced by slot), keeping
+//! the value-DAG's node results homogeneously `Tensor<T>`. **Deferred:** the
+//! `gather`-`skip` base operand (§6.11 gather-skip RFC), `sort_network`'s
+//! original-index output (needs an integer node output), and `iota` (needs the §6.20
+//! shape oracle).
 
 extern crate alloc;
 use alloc::vec::Vec;
 
 use kiss_ops_vocab::Op;
 
-use crate::attrs::Monoid;
+use crate::attrs::{Combine, Direction, Monoid, OobPolicy};
 use crate::bridge::{monoid_det, DetClass};
-use crate::kernels::{map_views, prefix_scan, reduce};
+use crate::kernels::{gather, map_views, prefix_scan, reduce, scatter, sort_network};
 use crate::resolve::eval_op;
 use crate::scalar::ScalarFloat;
-use crate::tensor::{broadcast_shapes, Tensor, View, MAX_RANK};
+use crate::tensor::{broadcast_shapes, IndexTensor, Tensor, View, MAX_RANK};
 use crate::tensor_ops::matmul;
 use crate::Error;
 
@@ -52,8 +56,19 @@ pub enum Node {
     Reduce { monoid: Monoid, axes: Vec<usize>, keepdim: bool, child: usize },
     /// A `prefix_scan` fold node.
     PrefixScan { monoid: Monoid, axis: usize, exclusive: bool, child: usize },
-    /// A `matmul` contraction node (2-D `[M,K]·[K,N]`).
+    /// A `matmul` contraction node (batched `[..b,M,K]·[..b,K,N]`).
     Matmul { lhs: usize, rhs: usize },
+    /// A `gather` node: read `data` (a node) at a runtime `index` along `axis`.
+    /// `index` is a **slot into the external `indices` inputs** (integer data rides
+    /// separately from the float value-DAG). v1 has no `base` operand — an OOB
+    /// `skip` errors; the base child edge is the §6.11 gather-skip RFC extension.
+    Gather { data: usize, index: usize, axis: usize, oob: OobPolicy },
+    /// A `scatter` node: write `updates` (a node) into `dest` (a node) at a runtime
+    /// `index` (an `indices` slot) along `axis`, combined per `combine`.
+    Scatter { dest: usize, index: usize, updates: usize, axis: usize, combine: Combine },
+    /// A `sort_network` node producing the sorted **values** along `axis`. (The
+    /// original-index output is a follow-up — it needs an integer node output.)
+    SortNetwork { keys: usize, axis: usize, dir: Direction },
 }
 
 /// A recipe: a DAG of [`Node`]s plus the output (root) node indices.
@@ -114,14 +129,16 @@ fn scalar_det(op: Op, child_dets: &[DetClass]) -> DetClass {
     child_dets.iter().fold(own, |acc, &d| acc.join(d))
 }
 
-/// Evaluate a recipe DAG on `inputs` (`Bind(i) → inputs[i]`) and `params`
-/// (`runtime_scalar(slot) → params[slot]`), returning the output tensor(s) and the
-/// **per-node** [`DetClass`]. Float lane. Never panics — every failure is an
-/// [`Error`].
+/// Evaluate a recipe DAG on `inputs` (`Bind(i) → inputs[i]`), `params`
+/// (`runtime_scalar(slot) → params[slot]`), and `indices` (the integer index
+/// operands of `gather`/`scatter` nodes, referenced by slot), returning the output
+/// tensor(s) and the **per-node** [`DetClass`]. Float lane. Never panics — every
+/// failure is an [`Error`].
 pub fn eval_recipe<T: ScalarFloat>(
     dag: &FlatDag,
     inputs: &[Tensor<T>],
     params: &[T],
+    indices: &[IndexTensor],
 ) -> Result<(Vec<Tensor<T>>, Vec<DetClass>), Error> {
     let n = dag.nodes.len();
     let mut memo: Vec<Option<(Tensor<T>, DetClass)>> = (0..n).map(|_| None).collect();
@@ -145,7 +162,7 @@ pub fn eval_recipe<T: ScalarFloat>(
             }
             if expanded {
                 // children are all computed (post-order): compute this node.
-                let result = compute_node(dag, idx, inputs, params, &memo)?;
+                let result = compute_node(dag, idx, inputs, params, indices, &memo)?;
                 memo[idx] = Some(result);
                 state[idx] = 2;
             } else {
@@ -211,6 +228,13 @@ fn children_of(node: &Node) -> Vec<usize> {
             v.push(*lhs);
             v.push(*rhs);
         }
+        // index inputs are external (the `indices` array), not node children.
+        Node::Gather { data, .. } => v.push(*data),
+        Node::Scatter { dest, updates, .. } => {
+            v.push(*dest);
+            v.push(*updates);
+        }
+        Node::SortNetwork { keys, .. } => v.push(*keys),
     }
     v
 }
@@ -222,6 +246,7 @@ fn compute_node<T: ScalarFloat>(
     idx: usize,
     inputs: &[Tensor<T>],
     params: &[T],
+    indices: &[IndexTensor],
     memo: &[Option<(Tensor<T>, DetClass)>],
 ) -> Result<(Tensor<T>, DetClass), Error> {
     match &dag.nodes[idx] {
@@ -266,6 +291,29 @@ fn compute_node<T: ScalarFloat>(
             // float sum contraction → order-invariant/nondeterministic (§6.0-0004).
             Ok((r, DetClass::OrderInvariantNondeterministic.join(ds[0]).join(ds[1])))
         }
+        Node::Gather { data, index, axis, oob } => {
+            let (ts, ds) = read_children(core::slice::from_ref(data), memo)?;
+            let idx = indices.get(*index).ok_or(Error::MissingInput(*index as u8))?;
+            // v1: no base operand (the §6.11 gather-skip RFC extension) — skip on OOB errors.
+            let r = gather(&ts[0].view(), idx, *axis, *oob, None)?;
+            Ok((r, DetClass::ExactByte.join(ds[0]))) // raw-bit move
+        }
+        Node::Scatter { dest, index, updates, axis, combine } => {
+            let (ts, ds) = read_children(&[*dest, *updates], memo)?;
+            let idx = indices.get(*index).ok_or(Error::MissingInput(*index as u8))?;
+            let r = scatter(ts[0].clone(), idx, &ts[1].view(), *axis, *combine)?;
+            // float atomic_add → order-invariant/nondeterministic; else exact-byte.
+            let own = match combine {
+                Combine::AtomicAdd => DetClass::OrderInvariantNondeterministic,
+                _ => DetClass::ExactByte,
+            };
+            Ok((r, own.join(ds[0]).join(ds[1])))
+        }
+        Node::SortNetwork { keys, axis, dir } => {
+            let (ts, ds) = read_children(core::slice::from_ref(keys), memo)?;
+            let (vals, _idx) = sort_network(&ts[0].view(), *axis, *dir)?;
+            Ok((vals, DetClass::ExactByte.join(ds[0]))) // total order + raw-bit move
+        }
     }
 }
 
@@ -303,7 +351,7 @@ mod tests {
         let a = t(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], &[2, 3]);
         let b = t(&[1.0, 0.0, 0.0, 1.0, 1.0, 1.0], &[3, 2]);
         let bias = t(&[-10.0, 0.0], &[2]);
-        let (outs, dets) = eval_recipe(&dag, &[a, b, bias], &[]).unwrap();
+        let (outs, dets) = eval_recipe(&dag, &[a, b, bias], &[], &[]).unwrap();
         // matmul: row0=[1+0+3, 0+2+3]=[4,5]; row1=[4+0+6, 0+5+6]=[10,11].
         // +bias[-10,0]: [-6,5],[0,11]; relu: [0,5],[0,11].
         assert_eq!(outs[0].shape(), &[2, 2]);
@@ -330,7 +378,7 @@ mod tests {
             outputs: vec![5],
         };
         let x = t(&[1.0, 2.0, 3.0, 1.0, 1.0, 1.0], &[2, 3]);
-        let (outs, dets) = eval_recipe(&dag, &[x], &[]).unwrap();
+        let (outs, dets) = eval_recipe(&dag, &[x], &[], &[]).unwrap();
         let s = outs[0].as_slice();
         close(&[s[0] + s[1] + s[2]], &[1.0]);
         close(&[s[3] + s[4] + s[5]], &[1.0]);
@@ -357,10 +405,45 @@ mod tests {
             outputs: vec![5],
         };
         let x = t(&[1.0, 2.0, 3.0, 4.0], &[4]);
-        let (outs, _) = eval_recipe(&dag, &[x], &[10.0]).unwrap();
+        let (outs, _) = eval_recipe(&dag, &[x], &[10.0], &[]).unwrap();
         // mean = 2.5, + 10 = 12.5; nokd → rank-0 scalar.
         assert_eq!(outs[0].shape(), &[] as &[usize]);
         close(outs[0].as_slice(), &[12.5]);
+    }
+
+    #[test]
+    fn gather_scatter_recipe_nodes() {
+        use kiss_classify_vocab::Dtype;
+        // gather(data, index=indices[0], axis 0, zero_fill).
+        let dag = FlatDag {
+            nodes: vec![
+                Node::Bind(0),
+                Node::Gather { data: 0, index: 0, axis: 0, oob: OobPolicy::ZeroFill },
+            ],
+            outputs: vec![1],
+        };
+        let data = t(&[10.0, 20.0, 30.0], &[3]);
+        let idx = IndexTensor::new(vec![2, 0, 9], &[3], Dtype::I64).unwrap();
+        let (outs, dets) = eval_recipe(&dag, &[data], &[], &[idx]).unwrap();
+        close(outs[0].as_slice(), &[30.0, 10.0, 0.0]); // idx 9 OOB → zero-fill
+        assert_eq!(dets[1], DetClass::ExactByte); // raw-bit move
+
+        // scatter_add(dest, updates, index=indices[0], atomic_add).
+        let sdag = FlatDag {
+            nodes: vec![
+                Node::Bind(0), // dest
+                Node::Bind(1), // updates
+                Node::Scatter { dest: 0, index: 0, updates: 1, axis: 0, combine: Combine::AtomicAdd },
+            ],
+            outputs: vec![2],
+        };
+        let dest = t(&[0.0, 0.0, 0.0], &[3]);
+        let upd = t(&[5.0, 7.0, 4.0], &[3]);
+        let sidx = IndexTensor::new(vec![0, 0, 1], &[3], Dtype::I64).unwrap();
+        let (souts, sdets) = eval_recipe(&sdag, &[dest, upd], &[], &[sidx]).unwrap();
+        close(souts[0].as_slice(), &[12.0, 4.0, 0.0]); // idx0: 5+7=12, idx1: 4
+        // float atomic_add → order-invariant/nondeterministic (§6.0-0004).
+        assert_eq!(sdets[2], DetClass::OrderInvariantNondeterministic);
     }
 
     #[test]
@@ -379,7 +462,7 @@ mod tests {
         }
         let dag = FlatDag { nodes, outputs: vec![0] };
         let x = t(&[5.0], &[]);
-        let (outs, _) = eval_recipe(&dag, &[x], &[]).unwrap();
+        let (outs, _) = eval_recipe(&dag, &[x], &[], &[]).unwrap();
         // 19_999 negations (odd) of 5.0 → -5.0. No overflow, returns a value.
         close(outs[0].as_slice(), &[-5.0]);
     }
@@ -391,12 +474,12 @@ mod tests {
             nodes: vec![Node::Apply { op: Op::Add, children: vec![0, 0] }],
             outputs: vec![0],
         };
-        assert!(eval_recipe::<f64>(&dag, &[], &[]).is_err());
+        assert!(eval_recipe::<f64>(&dag, &[], &[], &[]).is_err());
         // an out-of-range child index is an error.
         let dag2 = FlatDag {
             nodes: vec![Node::Apply { op: Op::Neg, children: vec![9] }],
             outputs: vec![0],
         };
-        assert!(eval_recipe::<f64>(&dag2, &[], &[]).is_err());
+        assert!(eval_recipe::<f64>(&dag2, &[], &[], &[]).is_err());
     }
 }
