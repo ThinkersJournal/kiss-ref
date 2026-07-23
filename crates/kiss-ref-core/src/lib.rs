@@ -118,6 +118,13 @@ pub enum Error {
     /// entry referenced a node with no index-lane output, or an out-of-range node
     /// id. (`usize`, not `u8` — node ids exceed 255.)
     IndexSourceInvalid { node: usize },
+    /// A `gather` under `oob = skip` read an **actually-OOB** index with no
+    /// `base` operand supplied. Per the ruled §6.11 gather-skip semantics
+    /// (KISS PR #75, Gap 1 option 1, ruled 2026-07-23): the base requirement is
+    /// **dynamic** — `skip` + `base: None` is legal while every index is in
+    /// range (§6.13 `index_select` relies on exactly that), and only an actual
+    /// OOB read declines.
+    GatherSkipNoBase,
 }
 
 /// Coverage of an `(op, dtype)` cell. Three states: a cell is either

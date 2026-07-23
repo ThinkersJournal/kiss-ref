@@ -543,8 +543,8 @@ fn test_recipe_nonexact_index_escalation() {
 
 #[test]
 fn test_recipe_bincount_scalar_updates() {
-    // R10 — bincount (the scatter broadcast-updates ruling item, KISS PR #75
-    // companion; implemented Provisional on operator greenlight 2026-07-23):
+    // R10 — bincount (KISS PR #75 companion, RULED general-broadcast
+    // 2026-07-23; the cross-implementation witness golden):
     // scatter[0, atomic-add, skip, i32](const(1), in0) — Baracuda's exact 2c
     // emit shape. Rank-0 updates broadcast over the index count (§6.11-0001).
     // x = [0,2,0,3,2,2] over 4 zeroed bins → hand fold: bin0←{0,0}=2,
@@ -936,8 +936,8 @@ fn test_recipe_fuzz_mutations_decline_typed() {
                 // its variant must not silently drift (adversarial-review find:
                 // this was a catch-all `is_some` that no test in the repo backed).
                 10 => assert!(
-                    matches!(err, Some(Error::Unsupported(Op::Gather))),
-                    "{tag}: want Unsupported(Gather), got {err:?}"
+                    matches!(err, Some(Error::GatherSkipNoBase)),
+                    "{tag}: want GatherSkipNoBase, got {err:?}"
                 ),
                 _ => assert!(err.is_some(), "{tag}: mutation must decline, got Ok"),
             }

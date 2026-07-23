@@ -285,8 +285,9 @@ pub fn matmul<T: ScalarFloat>(a: &View<T>, b: &View<T>) -> Result<Tensor<T>, Err
 // ---- gather / scatter family -------------------------------------------------
 
 /// `index_select` — §6.13: `gather(oob=skip)` with a 1-D index along `axis`.
-/// (Skip on an in-range index is a plain read; an OOB index under skip with no
-/// base is an error — the gather-skip RFC gap.)
+/// (Skip on an in-range index is a plain read — legal with no base under the
+/// ruled DYNAMIC base requirement; an actually-OOB index with no base is the
+/// typed [`Error::GatherSkipNoBase`] decline.)
 pub fn index_select<T: ScalarFloat>(
     data: &View<T>,
     index: &IndexTensor,

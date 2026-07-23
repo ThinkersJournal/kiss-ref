@@ -82,11 +82,12 @@ pub enum Node {
     /// A `matmul` contraction node (batched `[..b,M,K]·[..b,K,N]`).
     Matmul { lhs: usize, rhs: usize },
     /// A `gather` node: read `data` (a node) at a runtime `index` along `axis`.
-    /// `base` is the cosigned §6.11 gather-skip RFC operand: an optional
-    /// value-lane child node, broadcast to the output shape, whose value is kept
-    /// (raw-bit) at a `Skip`ped OOB position. `Skip` + `base: None` on an
-    /// actually-OOB index stays the kernel's typed error — the RFC awaits the
-    /// KISS ruling, so the affected cells stay Provisional.
+    /// `base` is the §6.11 gather-skip operand (KISS PR #75 Gap 1, **ruled**
+    /// option 1, 2026-07-23): an optional value-lane child node, broadcast to
+    /// the output shape, whose value is kept (raw-bit) at a `Skip`ped OOB
+    /// position. The base requirement is **dynamic**: `Skip` + `base: None` is
+    /// legal until an index is actually OOB, which is the typed
+    /// [`Error::GatherSkipNoBase`] decline.
     Gather { data: usize, index: IndexRef, axis: usize, oob: OobPolicy, base: Option<usize> },
     /// A `scatter` node: write `updates` (a node) into `dest` (a node) at a runtime
     /// `index` along `axis`, combined per `combine`.

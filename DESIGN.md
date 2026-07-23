@@ -64,9 +64,12 @@ and a `reduce`/scan monoid combine is one `eval_op` call. The one order-sensitiv
 dtypes (via `eval_int_op` wrapping). The remaining `Pending` cells are per-(op × dtype): the FP8
 (`e4m3`/`e5m2`) / `bool` / complex (`c32`/`c64`) dtype breadth, on both lanes. Three §6.11
 under-specifications surfaced (gather skip-read value; scatter base-state / output-shape; empty-axis
-for `prefix_scan`/`gather`/`scatter`/`sort_network`); kiss-ref pins each by local convention and files
-them as KISS RFCs, so those cells are honest but provisional — the intended §6.13-divergence signal,
-not a bug to hide. Even so,
+for `prefix_scan`/`gather`/`scatter`/`sort_network`); kiss-ref pinned each by local convention, filed
+them as a KISS RFC (PR #75), and **all three were ruled kiss-ref's way 2026-07-23** (gather-skip =
+option-1 base operand with a dynamic requirement; scatter = explicit dest, output shape = dest.shape;
+empty-axis = the shape-implied behaviors) — plus the companion scatter broadcast-updates (general
+§6.11-0001 broadcast). The provisional flags are lifted; this was the intended §6.13-divergence
+signal working end-to-end. Even so,
 "total cover" and "1:1 mirror of the spec" describe the *target*; the coverage ledger
 (`kiss-ref-conformance`) reports exactly which (op × dtype) cells are actually `Done`, and the prose
 should always be read against it. Baracuda's `oracle.rs` covers this structural/tensor region
@@ -181,8 +184,9 @@ so `kiss-ref-core` returns typed errors, never panics.
 - **Coverage is three-state** — `Done` / `Pending` / `NotApplicable` — driven by a spec-derived
   `legality(op, dtype)` (op family × numeric kind); only legal cells form the denominator, so
   permanently-illegal cells (bitwise × float, `div` × int, `nextafter` × narrow, every op × complex)
-  leave the backlog entirely. Remaining `Pending`: the float-only tensor ops on the integer lane, plus
-  the three §6.11 spec-gap cells held provisional pending KISS RFC rulings.
+  leave the backlog entirely. Remaining `Pending`: the float-only tensor ops on the integer lane. (The
+  three §6.11 spec-gap cells were held provisional until the KISS PR #75 rulings landed — 2026-07-23,
+  all three kiss-ref's way — and are no longer flagged.)
 
 The coverage gate reports DONE vs PENDING for every (atom × legal-dtype) cell, so what remains is
 machine-visible to the evaluating teams. They fill cells; this seed dictates *how*.

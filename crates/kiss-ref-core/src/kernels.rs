@@ -277,7 +277,7 @@ pub fn gather<T: ScalarFloat>(
             Resolved::Zero => T::ZERO,
             Resolved::Skip => match &base_v {
                 Some(b) => b.read(oc)?,
-                None => return Err(Error::Unsupported(kiss_ops_vocab::Op::Gather)),
+                None => return Err(Error::GatherSkipNoBase),
             },
         };
         buf.push(val);
@@ -289,9 +289,9 @@ pub fn gather<T: ScalarFloat>(
 /// along `axis`, indexed by a 1-D `index`, combined per `combine`. The write
 /// shape is `dest.shape` with `[axis] = index.len()`; `updates` is **broadcast**
 /// to it under the ordinary §6.11-0001 rules — a rank-0 updates writes one
-/// scalar per index element (the bincount/histogram form; scatter-updates
-/// broadcast ruling item on KISS PR #75, implemented Provisional on operator
-/// greenlight). OOB writes are skipped; `dest` positions never written keep
+/// scalar per index element (the bincount/histogram form; KISS PR #75 companion,
+/// **ruled** general-broadcast 2026-07-23). OOB writes are skipped; `dest`
+/// positions never written keep
 /// their value. Assign tie-break = highest row-major source wins; float
 /// `atomic_add` folds colliding contributions in pinned row-major source order.
 pub fn scatter<T: ScalarFloat>(

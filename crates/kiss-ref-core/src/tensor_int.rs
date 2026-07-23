@@ -286,7 +286,7 @@ pub fn gather(
             None => 0, // zero_fill
             Some(s) if oob == OobPolicy::Skip && s == usize::MAX => match &base_v {
                 Some(b) => b.read(oc)?,
-                None => return Err(Error::Unsupported(Op::Gather)),
+                None => return Err(Error::GatherSkipNoBase),
             },
             Some(s) => {
                 for k in 0..axis {
@@ -308,7 +308,7 @@ pub fn gather(
 /// 1-D index, combined per `combine` (via [`eval_int_op`]). Integer `atomic_add`
 /// is deterministic (integer add is associative). `updates` broadcasts to the
 /// write shape (§6.11-0001; rank-0 = the bincount form) — lane parity with the
-/// float scatter's broadcast-updates ruling item (KISS PR #75, Provisional).
+/// float scatter (KISS PR #75 companion, ruled general-broadcast 2026-07-23).
 pub fn scatter(
     dest: Tensor<i128>,
     dtype: Dtype,

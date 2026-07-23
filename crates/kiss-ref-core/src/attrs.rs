@@ -25,8 +25,10 @@ pub enum Monoid {
 /// is always out of bounds (no from-end wrap).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OobPolicy {
-    /// Leave the caller-provided base value at that output position (RFC-pinned;
-    /// the spec under-specifies the skip-read value — §6.11-0004 gather-skip RFC).
+    /// Leave the caller-provided base value at that output position (§6.11
+    /// gather-skip semantics, ruled option 1 on KISS PR #75, 2026-07-23; base
+    /// requirement is dynamic — no base + an actually-OOB read is the typed
+    /// [`crate::Error::GatherSkipNoBase`] decline).
     Skip,
     /// Read the index clamped into `[0, extent)`.
     Clamp,
