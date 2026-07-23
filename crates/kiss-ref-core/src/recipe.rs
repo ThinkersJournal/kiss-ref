@@ -41,7 +41,7 @@ use crate::kernels::{gather, map_views, prefix_scan, reduce, scatter, sort_netwo
 use crate::resolve::eval_op;
 use crate::scalar::ScalarFloat;
 use crate::tensor::{broadcast_shapes, numel, IndexTensor, Tensor, View, MAX_RANK};
-use crate::tensor_ops::matmul;
+use crate::tensor_ops::{flip, matmul};
 use crate::Error;
 
 /// A reference to an integer index operand of `gather`/`scatter`: either an
@@ -107,6 +107,11 @@ pub enum Node {
     /// round deterministically (RNE) — §6.12 exactness is a routed validator
     /// question.
     Iota { like: usize, axis: usize },
+    /// A `flip` node: reverse `child` along `axis` (`out[c] = in[c′]`,
+    /// `c′[axis] = extent−1−c[axis]`). A pure raw-bit move — exact-byte, NaN
+    /// payload / −0 preserved. Added for the reverse-scan emission need
+    /// (KISS #76 flip routing; grammar row rides the #67 consolidation).
+    Flip { child: usize, axis: usize },
 }
 
 /// A recipe: a DAG of [`Node`]s plus the output (root) node indices.
@@ -392,6 +397,7 @@ fn children_of(node: &Node) -> Vec<usize> {
         }
         Node::SortNetwork { keys, .. } => v.push(*keys),
         Node::Iota { like, .. } => v.push(*like),
+        Node::Flip { child, .. } => v.push(*child),
     }
     v
 }
@@ -519,6 +525,11 @@ fn compute_node<T: ScalarFloat>(
                 buf.push(T::from_f64(((i / stride) % extent) as f64));
             }
             Ok((Tensor::from_vec(buf, shape)?, DetClass::ExactByte, None))
+        }
+        Node::Flip { child, axis } => {
+            let (ts, ds) = read_children(core::slice::from_ref(child), memo)?;
+            let r = flip(&ts[0].view(), *axis)?;
+            Ok((r, DetClass::ExactByte.join(ds[0]), None)) // raw-bit move
         }
     }
 }
@@ -817,6 +828,40 @@ mod tests {
         assert!(matches!(skip.dets[3], DetClass::Ulp(_)));
         let zf = eval_recipe(&mk(OobPolicy::ZeroFill), &[data], &[], &[idx]).unwrap();
         assert_eq!(zf.dets[3], DetClass::ExactByte);
+    }
+
+    #[test]
+    fn scatter_updates_broadcast() {
+        use kiss_classify_vocab::Dtype;
+        // updates broadcast to the write shape (§6.11-0001 general rules —
+        // scatter broadcast-updates ruling item, Provisional): rank-0 writes one
+        // scalar per index element (bincount form); extent-1 broadcasts too; an
+        // incompatible extent stays a typed decline.
+        let scat = Node::Scatter {
+            dest: 0,
+            index: IndexRef::Slot(0),
+            updates: 1,
+            axis: 0,
+            combine: Combine::AtomicAdd,
+        };
+        let dest = t(&[0.0, 0.0, 0.0], &[3]);
+        let idx = IndexTensor::new(vec![0, 1, 1, 9], &[4], Dtype::I64).unwrap(); // 9 OOB → skipped
+        // rank-0 const updates.
+        let dag = FlatDag::new(vec![Node::Bind(0), Node::Const(2.0), scat.clone()], vec![2]);
+        let r = eval_recipe(&dag, &[dest.clone()], &[], &[idx.clone()]).unwrap();
+        close(r.outputs[0].as_slice(), &[2.0, 4.0, 0.0]);
+        // extent-1 input updates (general broadcast, not a rank-0 carve-out).
+        let dag1 = FlatDag::new(vec![Node::Bind(0), Node::Bind(1), scat.clone()], vec![2]);
+        let one = t(&[3.0], &[1]);
+        let r1 = eval_recipe(&dag1, &[dest.clone(), one], &[], &[idx.clone()]).unwrap();
+        close(r1.outputs[0].as_slice(), &[3.0, 6.0, 0.0]);
+        // extent 2 vs write shape [4]: not broadcast-compatible → typed decline.
+        let dag2 = FlatDag::new(vec![Node::Bind(0), Node::Bind(1), scat], vec![2]);
+        let bad = t(&[1.0, 1.0], &[2]);
+        assert!(matches!(
+            eval_recipe(&dag2, &[dest, bad], &[], &[idx]),
+            Err(Error::BroadcastIncompatible)
+        ));
     }
 
     #[test]

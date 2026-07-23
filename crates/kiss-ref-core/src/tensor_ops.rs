@@ -314,6 +314,31 @@ pub fn scatter_add<T: ScalarFloat>(
     scatter(dest, index, updates, axis, Combine::AtomicAdd)
 }
 
+/// `flip` — reverse along `axis`: `out[c] = in[c′]` with `c′[axis] =
+/// extent−1−c[axis]`. A pure raw-bit move (NaN payload / −0 preserved), so its
+/// determinism class is exact-byte. Structural-family placement per the KISS #76
+/// flip routing (two-consumer status: the recipe grammar's reverse-scan need);
+/// the grammar row lives with the #67 consolidation.
+pub fn flip<T: ScalarFloat>(data: &View<T>, axis: usize) -> Result<Tensor<T>, Error> {
+    let shape = data.shape();
+    let rank = shape.len();
+    if axis >= rank {
+        return Err(Error::AxisOutOfRange { axis, rank });
+    }
+    let n = numel(shape)?;
+    let extent = shape[axis];
+    let mut buf = Vec::with_capacity(n);
+    let mut src = [0usize; MAX_RANK];
+    let mut od = Odometer::new(shape)?;
+    while let Some(oc) = od.next_coord() {
+        src[..rank].copy_from_slice(oc);
+        // inside the loop extent >= 1 (an empty axis yields no coordinates).
+        src[axis] = extent - 1 - oc[axis];
+        buf.push(data.read(&src[..rank])?);
+    }
+    Tensor::from_vec(buf, shape)
+}
+
 // ---- determinism classification ----------------------------------------------
 
 /// The determinism class of a tensor non-primitive on the **float** lane (§6.0):

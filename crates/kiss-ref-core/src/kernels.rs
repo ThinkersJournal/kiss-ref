@@ -286,9 +286,13 @@ pub fn gather<T: ScalarFloat>(
 }
 
 /// **scatter** (§6.11-0005/-0006): data-dependent write into an explicit `dest`
-/// along `axis`, indexed by a 1-D `index` (`index.len() == updates.shape[axis]`),
-/// combined per `combine`. OOB writes are skipped; `dest` positions never written
-/// keep their value. Assign tie-break = highest row-major source wins; float
+/// along `axis`, indexed by a 1-D `index`, combined per `combine`. The write
+/// shape is `dest.shape` with `[axis] = index.len()`; `updates` is **broadcast**
+/// to it under the ordinary §6.11-0001 rules — a rank-0 updates writes one
+/// scalar per index element (the bincount/histogram form; scatter-updates
+/// broadcast ruling item on KISS PR #75, implemented Provisional on operator
+/// greenlight). OOB writes are skipped; `dest` positions never written keep
+/// their value. Assign tie-break = highest row-major source wins; float
 /// `atomic_add` folds colliding contributions in pinned row-major source order.
 pub fn scatter<T: ScalarFloat>(
     dest: Tensor<T>,
@@ -307,16 +311,13 @@ pub fn scatter<T: ScalarFloat>(
         // This cut supports a 1-D index aligned to `axis` (the scatter_add form).
         return Err(Error::ShapeMismatch { expected: 1, got: index.rank() });
     }
+    // The write shape; updates broadcast to it (stride-0 axes read the same
+    // element repeatedly — a raw-bit move either way).
+    let mut wshape = [0usize; MAX_RANK];
+    wshape[..drank].copy_from_slice(&dshape[..drank]);
+    wshape[axis] = index.as_slice().len();
+    let updates = updates.broadcast_to(&wshape[..drank])?;
     let ushape = updates.shape();
-    if ushape.len() != drank {
-        return Err(Error::ShapeMismatch { expected: drank, got: ushape.len() });
-    }
-    for k in 0..drank {
-        let want = if k == axis { index.as_slice().len() } else { dshape[k] };
-        if ushape[k] != want {
-            return Err(Error::ShapeMismatch { expected: want, got: ushape[k] });
-        }
-    }
     let dest_extent = dshape[axis];
 
     let mut data = dest.into_data();

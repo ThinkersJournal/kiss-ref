@@ -541,6 +541,82 @@ fn test_recipe_nonexact_index_escalation() {
     assert!(r.index_outputs.is_empty());
 }
 
+#[test]
+fn test_recipe_bincount_scalar_updates() {
+    // R10 — bincount (the scatter broadcast-updates ruling item, KISS PR #75
+    // companion; implemented Provisional on operator greenlight 2026-07-23):
+    // scatter[0, atomic-add, skip, i32](const(1), in0) — Baracuda's exact 2c
+    // emit shape. Rank-0 updates broadcast over the index count (§6.11-0001).
+    // x = [0,2,0,3,2,2] over 4 zeroed bins → hand fold: bin0←{0,0}=2,
+    // bin1←{}=0, bin2←{2,2,2}=3, bin3←{3}=1 → [2,0,3,1].
+    let dag = FlatDag::new(
+        vec![
+            Node::Bind(0), // dest: zeros[4]
+            Node::Const(1.0),
+            Node::Scatter {
+                dest: 0,
+                index: IndexRef::Slot(0),
+                updates: 1,
+                axis: 0,
+                combine: Combine::AtomicAdd,
+            },
+        ],
+        vec![2],
+    );
+    let dest = t64(&[0.0, 0.0, 0.0, 0.0], &[4]);
+    // i32 index dtype per the emit; values widened per §6.11-0009.
+    let idx = IndexTensor::new(vec![0, 2, 0, 3, 2, 2], &[6], Dtype::I32)
+        .unwrap_or_else(|e| panic!("bincount index fixture failed: {e:?}"));
+    let r = eval_recipe(&dag, &[dest], &[], &[idx]).expect("R10 must evaluate");
+    // Root class OIN (float atomic_add) → tolerance compare per §6.0-0004,
+    // never byte-exact — even though small-int sums are exact under any order.
+    assert_close(&r.outputs[0], &[2.0, 0.0, 3.0, 1.0], &[4], 1e-12);
+    assert_eq!(r.dets, vec![EB, EB, OIN]);
+    assert!(r.index_outputs.is_empty());
+}
+
+#[test]
+fn test_recipe_flip_reverse() {
+    // R11 — flip (reverse along axis; two-consumer add per the KISS #76 flip
+    // routing): out[c] = in[c′], c′[axis] = extent−1−c[axis]. A raw-bit move:
+    // −0.0 and the NaN payload must cross unchanged → root ExactByte,
+    // bit-exact compare. x=[1,−0,NaN / 4,5,6] flip axis1 → [NaN,−0,1 / 6,5,4].
+    let dag = FlatDag::new(
+        vec![Node::Bind(0), Node::Flip { child: 0, axis: 1 }],
+        vec![1],
+    );
+    let x = t64(&[1.0, -0.0, f64::NAN, 4.0, 5.0, 6.0], &[2, 3]);
+    let r = eval_recipe(&dag, &[x.clone()], &[], &[]).expect("R11 must evaluate");
+    assert_bits(
+        &r.outputs[0],
+        &[f64::NAN, -0.0, 1.0, 6.0, 5.0, 4.0],
+        &[2, 3],
+    );
+    assert_eq!(r.dets, vec![EB, EB]);
+    // flip∘flip = identity, bit-for-bit (raw-bit move both ways).
+    let dag2 = FlatDag::new(
+        vec![
+            Node::Bind(0),
+            Node::Flip { child: 0, axis: 1 },
+            Node::Flip { child: 1, axis: 1 },
+        ],
+        vec![2],
+    );
+    let r2 = eval_recipe(&dag2, &[x.clone()], &[], &[]).expect("R11 involution must evaluate");
+    for (a, b) in r2.outputs[0].as_slice().iter().zip(x.as_slice()) {
+        assert_eq!(a.to_bits(), b.to_bits(), "flip∘flip must be bit-identity");
+    }
+    // axis OOR is the typed decline.
+    let bad = FlatDag::new(
+        vec![Node::Bind(0), Node::Flip { child: 0, axis: 2 }],
+        vec![1],
+    );
+    assert!(matches!(
+        eval_recipe(&bad, &[x], &[], &[]),
+        Err(Error::AxisOutOfRange { axis: 2, rank: 2 })
+    ));
+}
+
 // ---- invariant D: self-determinism ------------------------------------------
 
 #[test]
@@ -611,7 +687,8 @@ fn edge_count(node: &Node) -> usize {
         Node::Reduce { .. }
         | Node::PrefixScan { .. }
         | Node::SortNetwork { .. }
-        | Node::Iota { .. } => 1,
+        | Node::Iota { .. }
+        | Node::Flip { .. } => 1,
         Node::Matmul { .. } | Node::Scatter { .. } => 2,
         Node::Gather { base, .. } => 1 + usize::from(base.is_some()),
     }
@@ -644,6 +721,7 @@ fn set_edge(node: &mut Node, slot: usize, target: usize) {
         }
         Node::SortNetwork { keys, .. } => *keys = target,
         Node::Iota { like, .. } => *like = target,
+        Node::Flip { child, .. } => *child = target,
         _ => {}
     }
 }
@@ -657,7 +735,8 @@ fn axis_site_count(node: &Node) -> usize {
         | Node::Gather { .. }
         | Node::Scatter { .. }
         | Node::SortNetwork { .. }
-        | Node::Iota { .. } => 1,
+        | Node::Iota { .. }
+        | Node::Flip { .. } => 1,
         _ => 0,
     }
 }

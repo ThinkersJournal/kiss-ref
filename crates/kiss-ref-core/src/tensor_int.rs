@@ -306,7 +306,9 @@ pub fn gather(
 
 /// **scatter** (integer lane): write into an explicit `dest` along `axis` with a
 /// 1-D index, combined per `combine` (via [`eval_int_op`]). Integer `atomic_add`
-/// is deterministic (integer add is associative).
+/// is deterministic (integer add is associative). `updates` broadcasts to the
+/// write shape (§6.11-0001; rank-0 = the bincount form) — lane parity with the
+/// float scatter's broadcast-updates ruling item (KISS PR #75, Provisional).
 pub fn scatter(
     dest: Tensor<i128>,
     dtype: Dtype,
@@ -324,16 +326,11 @@ pub fn scatter(
     if index.rank() != 1 {
         return Err(Error::ShapeMismatch { expected: 1, got: index.rank() });
     }
+    let mut wshape = [0usize; MAX_RANK];
+    wshape[..drank].copy_from_slice(&dshape[..drank]);
+    wshape[axis] = index.as_slice().len();
+    let updates = updates.broadcast_to(&wshape[..drank])?;
     let ushape = updates.shape();
-    if ushape.len() != drank {
-        return Err(Error::ShapeMismatch { expected: drank, got: ushape.len() });
-    }
-    for k in 0..drank {
-        let want = if k == axis { index.as_slice().len() } else { dshape[k] };
-        if ushape[k] != want {
-            return Err(Error::ShapeMismatch { expected: want, got: ushape[k] });
-        }
-    }
     let dest_extent = dshape[axis];
     let mut data = dest.into_data();
     let dlen = data.len();

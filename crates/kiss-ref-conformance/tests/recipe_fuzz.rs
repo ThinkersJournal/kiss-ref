@@ -342,7 +342,7 @@ fn gen_valid_node(
     indices: &mut Vec<IndexTensor>,
 ) {
     let i = nodes.len(); // >= 1 (a leaf is always seeded first)
-    let mut w = rng.below(22);
+    let mut w = rng.below(23);
     // Near the hard node cap, degrade helper-appending variants to Const/Apply.
     if nodes.len() >= MAX_NODES_HARD - 3 && (11..=20).contains(&w) {
         w = if rng.chance(50) { 2 } else { 6 };
@@ -620,7 +620,7 @@ fn gen_valid_node(
             metas.push(Meta { shape: ks, sortlike: true });
         }
         // Iota (weight 1)
-        _ => {
+        21 => {
             let like = rng.below(i);
             let rank = metas[like].shape.len();
             let axis = if rng.chance(90) {
@@ -630,6 +630,19 @@ fn gen_valid_node(
             };
             let shape = metas[like].shape.clone();
             nodes.push(Node::Iota { like, axis });
+            metas.push(Meta { shape, sortlike: false });
+        }
+        // Flip (weight 1)
+        _ => {
+            let child = rng.below(i);
+            let rank = metas[child].shape.len();
+            let axis = if rng.chance(90) {
+                rng.below(rank.max(1))
+            } else {
+                rank + rng.below(2) // deliberate OOR; rank-0 child always declines
+            };
+            let shape = metas[child].shape.clone();
+            nodes.push(Node::Flip { child, axis });
             metas.push(Meta { shape, sortlike: false });
         }
     }
@@ -711,6 +724,7 @@ fn child_slots(node: &mut Node) -> Vec<&mut usize> {
         }
         Node::SortNetwork { keys, .. } => v.push(keys),
         Node::Iota { like, .. } => v.push(like),
+        Node::Flip { child, .. } => v.push(child),
     }
     v
 }
@@ -1608,6 +1622,7 @@ fn variant_bit(node: &Node) -> u16 {
         Node::Scatter { .. } => 9,
         Node::SortNetwork { .. } => 10,
         Node::Iota { .. } => 11,
+        Node::Flip { .. } => 12,
     }
 }
 
@@ -1801,8 +1816,8 @@ fn fuzz_mostly_valid_f64() {
         "generator-health guard: only {ok_count}/{VALID_F64_ITERS} cases returned Ok (floor 400)"
     );
     assert_eq!(
-        variant_mask, 0xFFF,
-        "generator-health guard: Node-variant Ok-coverage mask {variant_mask:#014b} != 0xFFF (all 12 variants)"
+        variant_mask, 0x1FFF,
+        "generator-health guard: Node-variant Ok-coverage mask {variant_mask:#015b} != 0x1FFF (all 13 variants)"
     );
     assert!(
         ok_index_outputs,
