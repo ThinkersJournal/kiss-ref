@@ -7,21 +7,31 @@ the KISS-owned recipe grammar (Contract §2.3 / Ops §6.13/§6.19 / §6.4-0009-0
 Fuel co-design + mlgheozs's 3B). Reconcile toward KISS on any divergence.
 
 **v1 covers** (float lane): the scalar atoms (via `element_map`+`eval_op`),
-`reduce`/`prefix_scan` (with `nokd` squeeze), `matmul`, and the value leaves
-(`Bind`/`const`/`runtime_scalar`/`reduced_count`), returning per-node `DetClass`.
-An iterative worklist walks the DAG (bounded to heap, never a stack overflow). End
--to-end recipes (matmul+bias+relu, softmax) evaluate correctly.
-**v1 defers:** the index-bearing nodes (`gather`/`scatter`/`sort_network` — mixed
-float/integer operands) and `iota` (needs the §6.20 shape oracle).
+`reduce`/`prefix_scan` (with `nokd` squeeze), batched `matmul`, and the value
+leaves (`Bind`/`const`/`runtime_scalar`/`reduced_count`), returning per-node
+`DetClass`. An iterative worklist walks the DAG (bounded to heap, never a stack
+overflow). End-to-end recipes (matmul+bias+relu, softmax) evaluate correctly.
+**v1.1 adds the index lane** (two parallel result lattices): the index-bearing
+nodes `gather`/`scatter`/`sort_network` with index operands as
+`IndexRef{Slot(external), Node(producer)}`, `sort_network`'s §6.11-0007
+original-index output (consumable downstream via `IndexRef::Node`, exported via
+`FlatDag::index_outputs` — a second root list symmetric with `outputs`), the
+RFC-pinned gather `base` operand (`Skip`-only DetClass join), `iota`
+(shape-of-child v1; the §6.20 shape oracle maps 1:1 onto the `like` edge when it
+lands), and the FP8 differential seam (`diff_e4m3`/`diff_e5m2`). Results return
+as `RecipeEval{outputs, index_outputs, dets}` — one `DetClass` per node covers
+both lane products.
 
 ## Target API
 
 ```rust
 pub fn eval_recipe<T: ScalarFloat>(
-    dag: &FlatDag,
+    dag: &FlatDag,          // { nodes, outputs, index_outputs }
     inputs: &[Tensor<T>],
-    params: &[T],          // runtime_scalar slots
-) -> Result<(Vec<Tensor<T>>, Vec<DetClass>), Error>
+    params: &[T],           // runtime_scalar slots
+    indices: &[IndexTensor],// external index operands (IndexRef::Slot)
+) -> Result<RecipeEval<T>, Error>
+// RecipeEval { outputs: Vec<Tensor<T>>, index_outputs: Vec<IndexTensor>, dets: Vec<DetClass> }
 ```
 
 Walk the canonical flat-DAG; dispatch each `Op{name, attrs}` to a kernel; resolve

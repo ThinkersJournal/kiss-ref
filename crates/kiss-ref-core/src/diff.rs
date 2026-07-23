@@ -271,6 +271,84 @@ macro_rules! narrow_diff {
 narrow_diff!(half::f16, ulp_distance_f16, reference_f16, diff_f16);
 narrow_diff!(half::bf16, ulp_distance_bf16, reference_bf16, diff_bf16);
 
+// ---- FP8 (e4m3 / e5m2) ------------------------------------------------------
+//
+// Same sign-magnitude total-order metric on the 8-bit pattern. After NaN
+// exclusion the key is monotone for both formats: e4m3's non-NaN patterns are
+// `0x00..=0x7E` / `0x80..=0xFE` (keys `0x01..=0xFE`, max distance 253), and
+// e5m2's ±inf (`0x7C`/`0xFC`) sit just above max-finite in the key order — so
+// the one-NaN sentinel `u8::MAX` never collides with a real distance.
+
+#[inline]
+fn key_u8(bits: u8) -> u8 {
+    if bits & 0x80 != 0 {
+        !bits
+    } else {
+        bits | 0x80
+    }
+}
+
+macro_rules! fp8_diff {
+    ($t:ty, $ulp:ident, $refr:ident, $diff:ident) => {
+        /// Sign-magnitude ULP distance between two FP8 values (both-NaN → 0,
+        /// one-NaN → `u8::MAX`, `+0` vs `-0` → 1).
+        pub fn $ulp(a: $t, b: $t) -> u8 {
+            match (a.is_nan(), b.is_nan()) {
+                (true, true) => 0,
+                (true, false) | (false, true) => u8::MAX,
+                (false, false) => key_u8(a.to_bits()).abs_diff(key_u8(b.to_bits())),
+            }
+        }
+
+        /// Reference outputs of `op` over a batch of FP8 input rows.
+        pub fn $refr(op: Op, rows: &[&[$t]]) -> Result<Vec<$t>, Error> {
+            rows.iter().map(|r| crate::eval_op::<$t>(op, r)).collect()
+        }
+
+        /// Diff a candidate's FP8 outputs against this reference.
+        pub fn $diff(
+            op: Op,
+            rows: &[&[$t]],
+            candidate: &[$t],
+            tol: Tolerance,
+        ) -> Result<DiffReport, Error> {
+            let reference = $refr(op, rows)?;
+            if candidate.len() != reference.len() {
+                return Err(Error::LengthMismatch {
+                    expected: reference.len(),
+                    got: candidate.len(),
+                });
+            }
+            let mut report = DiffReport {
+                n: reference.len(),
+                mismatches: 0,
+                max_ulp: 0,
+                first_mismatch: None,
+            };
+            for (i, (&e, &g)) in reference.iter().zip(candidate).enumerate() {
+                let d = $ulp(e, g) as u64;
+                if d > report.max_ulp {
+                    report.max_ulp = d;
+                }
+                let ok = match tol {
+                    Tolerance::Exact => d == 0,
+                    Tolerance::Ulp(n) => d <= n,
+                };
+                if !ok {
+                    report.mismatches += 1;
+                    if report.first_mismatch.is_none() {
+                        report.first_mismatch = Some((i, e.to_f32() as f64, g.to_f32() as f64));
+                    }
+                }
+            }
+            Ok(report)
+        }
+    };
+}
+
+fp8_diff!(crate::fp8::E4m3, ulp_distance_e4m3, reference_e4m3, diff_e4m3);
+fp8_diff!(crate::fp8::E5m2, ulp_distance_e5m2, reference_e5m2, diff_e5m2);
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -327,6 +405,43 @@ mod tests {
         let pos_min = f64::from_bits(1);
         let neg_min = f64::from_bits(0x8000_0000_0000_0001);
         assert_eq!(ulp_distance_f64(pos_min, neg_min), 3);
+    }
+
+    #[test]
+    fn fp8_seam_edges() {
+        use crate::fp8::{E4m3, E5m2};
+        // signed zero is 1 ULP on 8 bits too.
+        assert_eq!(ulp_distance_e4m3(E4m3::from_bits(0x00), E4m3::from_bits(0x80)), 1);
+        assert_eq!(ulp_distance_e5m2(E5m2::from_bits(0x00), E5m2::from_bits(0x80)), 1);
+        // e4m3: both NaN codes (0x7F / 0xFF) match at 0; one-NaN is the sentinel.
+        assert_eq!(ulp_distance_e4m3(E4m3::from_bits(0x7F), E4m3::from_bits(0xFF)), 0);
+        assert_eq!(ulp_distance_e4m3(E4m3::from_bits(0x7F), E4m3::ONE), u8::MAX);
+        // e4m3 full-range: -448 (0xFE) to +448 (0x7E) spans 253 — below the sentinel.
+        assert_eq!(ulp_distance_e4m3(E4m3::from_bits(0xFE), E4m3::from_bits(0x7E)), 253);
+        // adjacent codes are 1 ULP.
+        assert_eq!(ulp_distance_e4m3(E4m3::ONE, E4m3::from_bits(0x39)), 1);
+        // e5m2: +inf (0x7C) matches itself at 0, sits 1 ULP above max finite
+        // (0x7B = 57344), and any-NaN (exp=31, m≠0) hits the sentinel.
+        assert_eq!(ulp_distance_e5m2(E5m2::from_bits(0x7C), E5m2::from_bits(0x7C)), 0);
+        assert_eq!(ulp_distance_e5m2(E5m2::from_bits(0x7C), E5m2::from_bits(0x7B)), 1);
+        assert_eq!(ulp_distance_e5m2(E5m2::from_bits(0x7D), E5m2::from_bits(0xFE)), 0);
+        assert_eq!(ulp_distance_e5m2(E5m2::from_bits(0x7E), E5m2::ONE), u8::MAX);
+    }
+
+    #[test]
+    fn fp8_diff_run_catches_planted_error() {
+        use crate::fp8::E4m3;
+        let one = E4m3::from_f32(1.0);
+        let two = E4m3::from_f32(2.0);
+        let rows: [&[E4m3]; 2] = [&[one], &[two]];
+        let reference = reference_e4m3(Op::Sqr, &rows).unwrap();
+        // a 1-code perturbation is caught at Exact, tolerated at Ulp(1).
+        let cand: Vec<E4m3> = reference
+            .iter()
+            .map(|&x| E4m3::from_bits(x.to_bits() + 1))
+            .collect();
+        assert!(!diff_e4m3(Op::Sqr, &rows, &cand, Tolerance::Exact).unwrap().conforms());
+        assert!(diff_e4m3(Op::Sqr, &rows, &cand, Tolerance::Ulp(1)).unwrap().conforms());
     }
 
     #[test]

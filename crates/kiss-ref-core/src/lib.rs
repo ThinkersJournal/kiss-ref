@@ -54,9 +54,10 @@ pub mod tensor_ops;
 pub mod window;
 
 pub use diff::{
-    diff_bf16, diff_f16, diff_f32, diff_f64, reference_bf16, reference_f16, reference_f32,
-    reference_f64, ulp_distance_bf16, ulp_distance_f16, ulp_distance_f32, ulp_distance_f64,
-    DiffReport, Tolerance,
+    diff_bf16, diff_e4m3, diff_e5m2, diff_f16, diff_f32, diff_f64, reference_bf16,
+    reference_e4m3, reference_e5m2, reference_f16, reference_f32, reference_f64,
+    ulp_distance_bf16, ulp_distance_e4m3, ulp_distance_e5m2, ulp_distance_f16,
+    ulp_distance_f32, ulp_distance_f64, DiffReport, Tolerance,
 };
 pub use resolve::{
     eval_expr, eval_op, float_supported, implemented, legality, support, tensor_supported,
@@ -69,7 +70,7 @@ pub use attrs::{Combine, Direction, Monoid, OobPolicy};
 pub use boolean::{bool_supported, eval_bool_op};
 pub use bridge::{DetClass, Evaluated};
 pub use fp8::{E4m3, E5m2};
-pub use recipe::{eval_recipe, FlatDag, Node};
+pub use recipe::{eval_recipe, FlatDag, IndexRef, Node, RecipeEval};
 pub use tensor::{IndexTensor, Tensor, View, MAX_OPERANDS, MAX_RANK};
 
 use kiss_classify_vocab::Dtype;
@@ -113,6 +114,10 @@ pub enum Error {
     EmptyAxesMask,
     /// Shape element-count arithmetic overflowed `usize`.
     ShapeOverflow,
+    /// A recipe's [`recipe::IndexRef::Node`] or [`recipe::FlatDag::index_outputs`]
+    /// entry referenced a node with no index-lane output, or an out-of-range node
+    /// id. (`usize`, not `u8` — node ids exceed 255.)
+    IndexSourceInvalid { node: usize },
 }
 
 /// Coverage of an `(op, dtype)` cell. Three states: a cell is either

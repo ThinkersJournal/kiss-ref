@@ -1,5 +1,5 @@
 //! The **recipe evaluator**: `eval_recipe(dag, inputs, params, indices) ->
-//! (outputs, per-node DetClass)`.
+//! RecipeEval { outputs, index_outputs, dets }`.
 //!
 //! kiss-ref evaluates the **logical flat-DAG** (a decoded Rust structure, [`FlatDag`]),
 //! not wire bytes — a decoder produces the DAG the evaluator walks (the §6.4-0009/
@@ -15,13 +15,20 @@
 //! (§6.0-0005) for the consumer's comparator.
 //!
 //! **Scope (float lane):** the scalar atoms, `reduce`/`prefix_scan`, **batched**
-//! `matmul`, the value leaves (`Bind`/`const`/`runtime_scalar`/`reduced_count`), and
-//! the index-bearing nodes `gather`/`scatter`/`sort_network` — whose integer index
-//! operands ride in the separate `indices` input array (referenced by slot), keeping
-//! the value-DAG's node results homogeneously `Tensor<T>`. **Deferred:** the
-//! `gather`-`skip` base operand (§6.11 gather-skip RFC), `sort_network`'s
-//! original-index output (needs an integer node output), and `iota` (needs the §6.20
-//! shape oracle).
+//! `matmul`, the value leaves (`Bind`/`const`/`runtime_scalar`/`reduced_count`),
+//! the index-bearing nodes `gather`/`scatter`/`sort_network` (incl. the RFC-pinned
+//! gather `base` operand), and `iota` (§6.12 `coord` leaf; shape-of-child v1).
+//!
+//! **Two lattices.** The DAG carries two parallel result lattices: the **float
+//! value lattice** (every node; homogeneously `Tensor<T>`, the memo) and a sparse
+//! **integer index lattice** (`IndexTensor`; today populated only by
+//! `sort_network`'s §6.11-0007 original-index output). Integer data never rides
+//! the float lane. An index operand of `gather`/`scatter` is an [`IndexRef`]:
+//! either an external `indices[slot]` input or the index-lane output of another
+//! node (a real scheduling edge). Index-lane results leave the evaluator via
+//! [`FlatDag::index_outputs`], a second root list symmetric with `outputs`
+//! (§6.19-encodable as a second varint root list; `IndexRef` as tag + varint).
+//! One [`DetClass`] per node covers **both** lane products of that node.
 
 extern crate alloc;
 use alloc::vec::Vec;
@@ -33,9 +40,25 @@ use crate::bridge::{monoid_det, DetClass};
 use crate::kernels::{gather, map_views, prefix_scan, reduce, scatter, sort_network};
 use crate::resolve::eval_op;
 use crate::scalar::ScalarFloat;
-use crate::tensor::{broadcast_shapes, IndexTensor, Tensor, View, MAX_RANK};
+use crate::tensor::{broadcast_shapes, numel, IndexTensor, Tensor, View, MAX_RANK};
 use crate::tensor_ops::matmul;
 use crate::Error;
+
+/// A reference to an integer index operand of `gather`/`scatter`: either an
+/// external `indices[slot]` input or the **index-lane output** of another node.
+/// §6.19-encodable as tag + varint. (The extended-flat-slot-space alternative —
+/// node-produced indices numbered above `indices.len()` — was rejected: a slot's
+/// meaning would depend on the runtime `indices.len()`, which the DAG cannot see.)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IndexRef {
+    /// The external `indices[slot]` input.
+    Slot(usize),
+    /// The index-lane output of node `.0` (today: `SortNetwork`'s original-index
+    /// permutation). A real scheduling edge — the evaluator computes that node
+    /// first, and the cycle guard covers it. Referencing a node with no
+    /// index-lane output is [`Error::IndexSourceInvalid`], never a panic.
+    Node(usize),
+}
 
 /// A node in the canonical flat-DAG (the logical, decoded form).
 #[derive(Clone, Debug)]
@@ -59,16 +82,31 @@ pub enum Node {
     /// A `matmul` contraction node (batched `[..b,M,K]·[..b,K,N]`).
     Matmul { lhs: usize, rhs: usize },
     /// A `gather` node: read `data` (a node) at a runtime `index` along `axis`.
-    /// `index` is a **slot into the external `indices` inputs** (integer data rides
-    /// separately from the float value-DAG). v1 has no `base` operand — an OOB
-    /// `skip` errors; the base child edge is the §6.11 gather-skip RFC extension.
-    Gather { data: usize, index: usize, axis: usize, oob: OobPolicy },
+    /// `base` is the cosigned §6.11 gather-skip RFC operand: an optional
+    /// value-lane child node, broadcast to the output shape, whose value is kept
+    /// (raw-bit) at a `Skip`ped OOB position. `Skip` + `base: None` on an
+    /// actually-OOB index stays the kernel's typed error — the RFC awaits the
+    /// KISS ruling, so the affected cells stay Provisional.
+    Gather { data: usize, index: IndexRef, axis: usize, oob: OobPolicy, base: Option<usize> },
     /// A `scatter` node: write `updates` (a node) into `dest` (a node) at a runtime
-    /// `index` (an `indices` slot) along `axis`, combined per `combine`.
-    Scatter { dest: usize, index: usize, updates: usize, axis: usize, combine: Combine },
-    /// A `sort_network` node producing the sorted **values** along `axis`. (The
-    /// original-index output is a follow-up — it needs an integer node output.)
+    /// `index` along `axis`, combined per `combine`.
+    Scatter { dest: usize, index: IndexRef, updates: usize, axis: usize, combine: Combine },
+    /// A `sort_network` node. **Value lane:** the sorted values along `axis` (a
+    /// raw-bit permutation). **Index lane** (same node id): the §6.11-0007
+    /// original-index permutation (`i64`, stable total order), consumable
+    /// downstream via [`IndexRef::Node`] and exportable via
+    /// [`FlatDag::index_outputs`].
     SortNetwork { keys: usize, axis: usize, dir: Direction },
+    /// An `iota` node (the §6.12-0001 `coord(axis)` leaf): the row-major
+    /// coordinate along `axis` of the **shape** of node `like`, as `T`. The
+    /// `like` edge is SHAPE-ONLY — its values are never read, so its [`DetClass`]
+    /// does not propagate. v1 shape source = shape-of-child (the §6.20 shape
+    /// oracle's expected primitive, pending that grammar); `axis >= rank(like)`
+    /// is [`Error::AxisOutOfRange`]. Value-lane only; index-lane publication is a
+    /// reserved additive follow-up. Coordinates beyond `T`'s exact-integer range
+    /// round deterministically (RNE) — §6.12 exactness is a routed validator
+    /// question.
+    Iota { like: usize, axis: usize },
 }
 
 /// A recipe: a DAG of [`Node`]s plus the output (root) node indices.
@@ -77,8 +115,38 @@ pub struct FlatDag {
     /// The nodes (child edges reference these by index; may be in any order — the
     /// evaluator resolves dependencies with memoization + a cycle guard).
     pub nodes: Vec<Node>,
-    /// The output (root) node indices, in output order.
+    /// The output (root) node indices, in output order (the value lane).
     pub outputs: Vec<usize>,
+    /// Node ids whose **index-lane** result is exported, in output order — a
+    /// second root list symmetric with `outputs` (§6.19: a second varint root
+    /// list). Listing a node with no index-lane output is
+    /// [`Error::IndexSourceInvalid`]. Empty = value-lane-only (the pre-index-lane
+    /// behavior).
+    pub index_outputs: Vec<usize>,
+}
+
+impl FlatDag {
+    /// A value-lane-only DAG — `index_outputs` defaults to empty (the pre-
+    /// index-lane constructor shape).
+    pub fn new(nodes: Vec<Node>, outputs: Vec<usize>) -> Self {
+        FlatDag { nodes, outputs, index_outputs: Vec::new() }
+    }
+}
+
+/// The result of evaluating a recipe.
+#[derive(Clone, Debug)]
+pub struct RecipeEval<T> {
+    /// The value-lane outputs, in `dag.outputs` order.
+    pub outputs: Vec<Tensor<T>>,
+    /// The index-lane outputs, in `dag.index_outputs` order (`i64`-widened,
+    /// dtype-tagged). Empty when the DAG declares none.
+    pub index_outputs: Vec<IndexTensor>,
+    /// Per-node [`DetClass`], in node order. One class per node covers **both**
+    /// lane products of that node — for `sort_network`, `ExactByte ⊔ det(keys)`
+    /// applies to the index permutation too (ULP-different keys may permute
+    /// differently), so a comparator consuming index outputs must not
+    /// under-classify.
+    pub dets: Vec<DetClass>,
 }
 
 /// A rank-0 (scalar) tensor holding `v` — broadcasts to any shape in an
@@ -129,19 +197,86 @@ fn scalar_det(op: Op, child_dets: &[DetClass]) -> DetClass {
     child_dets.iter().fold(own, |acc, &d| acc.join(d))
 }
 
+/// True iff `node` produces an index-lane result (consumable via
+/// [`IndexRef::Node`] / exportable via [`FlatDag::index_outputs`]).
+fn has_index_lane(node: &Node) -> bool {
+    matches!(node, Node::SortNetwork { .. })
+}
+
+/// Resolve an index operand: an external `indices[slot]` input or the index-lane
+/// output of an already-evaluated node.
+fn resolve_index_ref<'a>(
+    r: IndexRef,
+    indices: &'a [IndexTensor],
+    imemo: &'a [Option<IndexTensor>],
+) -> Result<&'a IndexTensor, Error> {
+    match r {
+        IndexRef::Slot(s) => indices.get(s).ok_or(Error::MissingInput(s as u8)),
+        IndexRef::Node(m) => imemo
+            .get(m)
+            .and_then(|x| x.as_ref())
+            .ok_or(Error::IndexSourceInvalid { node: m }),
+    }
+}
+
+/// The [`DetClass`] contribution of an index operand to its CONSUMER's
+/// value-lane class. An external slot is a given (exact, shared byte-identically
+/// by reference and candidate). A node-produced index is exact only if its
+/// producer is: a non-exact producer (ULP-classed sort keys) can permute
+/// **differently** within its own tolerance, and a changed permutation relocates
+/// whole data elements — a deviation that is NOT ULP-boundable. So anything
+/// short of `ExactByte` escalates to the most-permissive class rather than
+/// forwarding a `Ulp(k)` the consumer's output cannot honor (which would
+/// falsely fail conforming candidates in the differential comparator).
+fn index_ref_det<T: Clone>(r: IndexRef, memo: &[Option<(Tensor<T>, DetClass)>]) -> DetClass {
+    match r {
+        IndexRef::Slot(_) => DetClass::ExactByte,
+        IndexRef::Node(m) => match memo
+            .get(m)
+            .and_then(|x| x.as_ref())
+            .map(|(_, d)| *d)
+            .unwrap_or(DetClass::ExactByte)
+        {
+            DetClass::ExactByte => DetClass::ExactByte,
+            _ => DetClass::OrderInvariantNondeterministic,
+        },
+    }
+}
+
 /// Evaluate a recipe DAG on `inputs` (`Bind(i) → inputs[i]`), `params`
-/// (`runtime_scalar(slot) → params[slot]`), and `indices` (the integer index
-/// operands of `gather`/`scatter` nodes, referenced by slot), returning the output
-/// tensor(s) and the **per-node** [`DetClass`]. Float lane. Never panics — every
+/// (`runtime_scalar(slot) → params[slot]`), and `indices` (the external integer
+/// index operands of `gather`/`scatter` nodes, addressed by [`IndexRef::Slot`]),
+/// returning a [`RecipeEval`]: the value-lane output tensor(s), the index-lane
+/// outputs, and the **per-node** [`DetClass`]. Float lane. Never panics — every
 /// failure is an [`Error`].
 pub fn eval_recipe<T: ScalarFloat>(
     dag: &FlatDag,
     inputs: &[Tensor<T>],
     params: &[T],
     indices: &[IndexTensor],
-) -> Result<(Vec<Tensor<T>>, Vec<DetClass>), Error> {
+) -> Result<RecipeEval<T>, Error> {
     let n = dag.nodes.len();
+    // Pre-validate every index-lane reference against the DAG's static shape, so
+    // a bad reference is the dedicated typed error rather than a generic decline.
+    for node in &dag.nodes {
+        let r = match node {
+            Node::Gather { index, .. } | Node::Scatter { index, .. } => *index,
+            _ => continue,
+        };
+        if let IndexRef::Node(m) = r {
+            if m >= n || !has_index_lane(&dag.nodes[m]) {
+                return Err(Error::IndexSourceInvalid { node: m });
+            }
+        }
+    }
+    for &r in &dag.index_outputs {
+        if r >= n || !has_index_lane(&dag.nodes[r]) {
+            return Err(Error::IndexSourceInvalid { node: r });
+        }
+    }
     let mut memo: Vec<Option<(Tensor<T>, DetClass)>> = (0..n).map(|_| None).collect();
+    // The sparse index-lane memo (today only `SortNetwork` populates it).
+    let mut imemo: Vec<Option<IndexTensor>> = (0..n).map(|_| None).collect();
     // Iterative post-order over an explicit HEAP worklist (not the call stack), so a
     // deep dependency chain is bounded to O(n) heap and returns a result/Error rather
     // than overflowing the stack (never-panic). `state`: 0 unvisited, 1 active (on the
@@ -162,8 +297,9 @@ pub fn eval_recipe<T: ScalarFloat>(
             }
             if expanded {
                 // children are all computed (post-order): compute this node.
-                let result = compute_node(dag, idx, inputs, params, indices, &memo)?;
-                memo[idx] = Some(result);
+                let (t, d, ix) = compute_node(dag, idx, inputs, params, indices, &memo, &imemo)?;
+                memo[idx] = Some((t, d));
+                imemo[idx] = ix;
                 state[idx] = 2;
             } else {
                 if state[idx] == 1 {
@@ -191,11 +327,19 @@ pub fn eval_recipe<T: ScalarFloat>(
             .ok_or(Error::MissingInput(0))?;
         outputs.push(t.clone());
     }
+    let mut index_outputs = Vec::with_capacity(dag.index_outputs.len());
+    for &r in &dag.index_outputs {
+        let ix = imemo
+            .get(r)
+            .and_then(|x| x.as_ref())
+            .ok_or(Error::IndexSourceInvalid { node: r })?;
+        index_outputs.push(ix.clone());
+    }
     let dets = memo
         .iter()
         .map(|x| x.as_ref().map(|(_, d)| *d).unwrap_or(DetClass::ExactByte))
         .collect();
-    Ok((outputs, dets))
+    Ok(RecipeEval { outputs, index_outputs, dets })
 }
 
 /// Read the memoized results of `children` (each already evaluated), cloning the
@@ -228,19 +372,35 @@ fn children_of(node: &Node) -> Vec<usize> {
             v.push(*lhs);
             v.push(*rhs);
         }
-        // index inputs are external (the `indices` array), not node children.
-        Node::Gather { data, .. } => v.push(*data),
-        Node::Scatter { dest, updates, .. } => {
+        // a Slot index operand is external (the `indices` array), not a child;
+        // a Node index operand IS a scheduling edge (the producer runs first).
+        Node::Gather { data, index, base, .. } => {
+            v.push(*data);
+            if let Some(b) = base {
+                v.push(*b);
+            }
+            if let IndexRef::Node(m) = index {
+                v.push(*m);
+            }
+        }
+        Node::Scatter { dest, updates, index, .. } => {
             v.push(*dest);
             v.push(*updates);
+            if let IndexRef::Node(m) = index {
+                v.push(*m);
+            }
         }
         Node::SortNetwork { keys, .. } => v.push(*keys),
+        Node::Iota { like, .. } => v.push(*like),
     }
     v
 }
 
 /// Compute node `idx` from its already-memoized children (the worklist guarantees
-/// they are `Some`). No recursion — the driver walks the DAG iteratively.
+/// they are `Some`). No recursion — the driver walks the DAG iteratively. Returns
+/// the value-lane result, the node's [`DetClass`] (covering both lanes), and the
+/// index-lane result (`Some` only for index-producing nodes).
+#[allow(clippy::type_complexity)]
 fn compute_node<T: ScalarFloat>(
     dag: &FlatDag,
     idx: usize,
@@ -248,16 +408,17 @@ fn compute_node<T: ScalarFloat>(
     params: &[T],
     indices: &[IndexTensor],
     memo: &[Option<(Tensor<T>, DetClass)>],
-) -> Result<(Tensor<T>, DetClass), Error> {
+    imemo: &[Option<IndexTensor>],
+) -> Result<(Tensor<T>, DetClass, Option<IndexTensor>), Error> {
     match &dag.nodes[idx] {
         Node::Bind(i) => {
             let t = inputs.get(*i).cloned().ok_or(Error::MissingInput(*i as u8))?;
-            Ok((t, DetClass::ExactByte))
+            Ok((t, DetClass::ExactByte, None))
         }
-        Node::Const(v) => Ok((rank0(T::from_f64(*v))?, DetClass::ExactByte)),
+        Node::Const(v) => Ok((rank0(T::from_f64(*v))?, DetClass::ExactByte, None)),
         Node::RuntimeScalar(s) => {
             let v = params.get(*s).copied().ok_or(Error::MissingInput(*s as u8))?;
-            Ok((rank0(v)?, DetClass::ExactByte))
+            Ok((rank0(v)?, DetClass::ExactByte, None))
         }
         Node::ReducedCount(axes) => {
             let x0 = inputs.first().ok_or(Error::MissingInput(0))?;
@@ -268,51 +429,96 @@ fn compute_node<T: ScalarFloat>(
                     .checked_mul(*shape.get(a).ok_or(Error::AxisOutOfRange { axis: a, rank: shape.len() })?)
                     .ok_or(Error::ShapeOverflow)?;
             }
-            Ok((rank0(T::from_f64(c as f64))?, DetClass::ExactByte))
+            Ok((rank0(T::from_f64(c as f64))?, DetClass::ExactByte, None))
         }
         Node::Apply { op, children } => {
             let (ts, ds) = read_children(children, memo)?;
-            Ok((apply_elementwise(*op, &ts)?, scalar_det(*op, &ds)))
+            Ok((apply_elementwise(*op, &ts)?, scalar_det(*op, &ds), None))
         }
         Node::Reduce { monoid, axes, keepdim, child } => {
             let (ts, ds) = read_children(core::slice::from_ref(child), memo)?;
             let r = reduce(&ts[0].view(), *monoid, axes)?;
             let r = if *keepdim { r } else { squeeze(r, axes)? };
-            Ok((r, monoid_det(*monoid).join(ds[0])))
+            Ok((r, monoid_det(*monoid).join(ds[0]), None))
         }
         Node::PrefixScan { monoid, axis, exclusive, child } => {
             let (ts, ds) = read_children(core::slice::from_ref(child), memo)?;
             let r = prefix_scan(&ts[0].view(), *monoid, *axis, *exclusive)?;
-            Ok((r, monoid_det(*monoid).join(ds[0])))
+            Ok((r, monoid_det(*monoid).join(ds[0]), None))
         }
         Node::Matmul { lhs, rhs } => {
             let (ts, ds) = read_children(&[*lhs, *rhs], memo)?;
             let r = matmul(&ts[0].view(), &ts[1].view())?;
             // float sum contraction → order-invariant/nondeterministic (§6.0-0004).
-            Ok((r, DetClass::OrderInvariantNondeterministic.join(ds[0]).join(ds[1])))
+            Ok((r, DetClass::OrderInvariantNondeterministic.join(ds[0]).join(ds[1]), None))
         }
-        Node::Gather { data, index, axis, oob } => {
+        Node::Gather { data, index, axis, oob, base } => {
             let (ts, ds) = read_children(core::slice::from_ref(data), memo)?;
-            let idx = indices.get(*index).ok_or(Error::MissingInput(*index as u8))?;
-            // v1: no base operand (the §6.11 gather-skip RFC extension) — skip on OOB errors.
-            let r = gather(&ts[0].view(), idx, *axis, *oob, None)?;
-            Ok((r, DetClass::ExactByte.join(ds[0]))) // raw-bit move
+            let idx = resolve_index_ref(*index, indices, imemo)?;
+            let basem = match base {
+                Some(b) => Some(
+                    memo.get(*b)
+                        .and_then(|x| x.as_ref())
+                        .ok_or(Error::MissingInput(0))?,
+                ),
+                None => None,
+            };
+            let bview = basem.map(|(t, _)| t.view());
+            let r = gather(&ts[0].view(), idx, *axis, *oob, bview.as_ref())?;
+            // raw-bit move ⊔ data ⊔ index producer; the base's class joins ONLY
+            // under `Skip` — that is the only arm whose output can carry base
+            // bits (a static, policy-conditioned join, never index-conditioned).
+            let mut det = DetClass::ExactByte.join(ds[0]).join(index_ref_det(*index, memo));
+            if *oob == OobPolicy::Skip {
+                if let Some((_, bd)) = basem {
+                    det = det.join(*bd);
+                }
+            }
+            Ok((r, det, None))
         }
         Node::Scatter { dest, index, updates, axis, combine } => {
             let (ts, ds) = read_children(&[*dest, *updates], memo)?;
-            let idx = indices.get(*index).ok_or(Error::MissingInput(*index as u8))?;
+            let idx = resolve_index_ref(*index, indices, imemo)?;
             let r = scatter(ts[0].clone(), idx, &ts[1].view(), *axis, *combine)?;
             // float atomic_add → order-invariant/nondeterministic; else exact-byte.
             let own = match combine {
                 Combine::AtomicAdd => DetClass::OrderInvariantNondeterministic,
                 _ => DetClass::ExactByte,
             };
-            Ok((r, own.join(ds[0]).join(ds[1])))
+            Ok((r, own.join(ds[0]).join(ds[1]).join(index_ref_det(*index, memo)), None))
         }
         Node::SortNetwork { keys, axis, dir } => {
             let (ts, ds) = read_children(core::slice::from_ref(keys), memo)?;
-            let (vals, _idx) = sort_network(&ts[0].view(), *axis, *dir)?;
-            Ok((vals, DetClass::ExactByte.join(ds[0]))) // total order + raw-bit move
+            let (vals, perm) = sort_network(&ts[0].view(), *axis, *dir)?;
+            // total order + raw-bit move; the one class covers BOTH lanes (ULP-
+            // different keys may permute differently).
+            Ok((vals, DetClass::ExactByte.join(ds[0]), Some(perm)))
+        }
+        Node::Iota { like, axis } => {
+            // shape-only edge: read the child's SHAPE, never its values (so its
+            // DetClass deliberately does not join — shapes are static per run).
+            let (lt, _) = memo
+                .get(*like)
+                .and_then(|x| x.as_ref())
+                .ok_or(Error::MissingInput(0))?;
+            let shape = lt.shape();
+            let rank = shape.len();
+            if *axis >= rank {
+                return Err(Error::AxisOutOfRange { axis: *axis, rank });
+            }
+            let count = numel(shape)?;
+            // row-major stride of `axis`; if a trailing extent is 0 then
+            // count == 0 and the loop below never divides.
+            let mut stride = 1usize;
+            for &d in &shape[*axis + 1..] {
+                stride = stride.checked_mul(d).ok_or(Error::ShapeOverflow)?;
+            }
+            let extent = shape[*axis];
+            let mut buf = Vec::with_capacity(count);
+            for i in 0..count {
+                buf.push(T::from_f64(((i / stride) % extent) as f64));
+            }
+            Ok((Tensor::from_vec(buf, shape)?, DetClass::ExactByte, None))
         }
     }
 }
@@ -337,8 +543,8 @@ mod tests {
         // out = relu(matmul(a, b) + bias), a=[2,3] b=[3,2] bias=[2] (broadcast).
         // nodes: 0=Bind(0)=a, 1=Bind(1)=b, 2=matmul(0,1), 3=Bind(2)=bias,
         //        4=add(2,3), 5=relu(4).
-        let dag = FlatDag {
-            nodes: vec![
+        let dag = FlatDag::new(
+            vec![
                 Node::Bind(0),
                 Node::Bind(1),
                 Node::Matmul { lhs: 0, rhs: 1 },
@@ -346,19 +552,20 @@ mod tests {
                 Node::Apply { op: Op::Add, children: vec![2, 3] },
                 Node::Apply { op: Op::Relu, children: vec![4] },
             ],
-            outputs: vec![5],
-        };
+            vec![5],
+        );
         let a = t(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], &[2, 3]);
         let b = t(&[1.0, 0.0, 0.0, 1.0, 1.0, 1.0], &[3, 2]);
         let bias = t(&[-10.0, 0.0], &[2]);
-        let (outs, dets) = eval_recipe(&dag, &[a, b, bias], &[], &[]).unwrap();
+        let r = eval_recipe(&dag, &[a, b, bias], &[], &[]).unwrap();
         // matmul: row0=[1+0+3, 0+2+3]=[4,5]; row1=[4+0+6, 0+5+6]=[10,11].
         // +bias[-10,0]: [-6,5],[0,11]; relu: [0,5],[0,11].
-        assert_eq!(outs[0].shape(), &[2, 2]);
-        close(outs[0].as_slice(), &[0.0, 5.0, 0.0, 11.0]);
+        assert_eq!(r.outputs[0].shape(), &[2, 2]);
+        close(r.outputs[0].as_slice(), &[0.0, 5.0, 0.0, 11.0]);
+        assert!(r.index_outputs.is_empty());
         // matmul node (index 2) is nondeterministic; the relu root inherits it.
-        assert_eq!(dets[2], DetClass::OrderInvariantNondeterministic);
-        assert_eq!(dets[5], DetClass::OrderInvariantNondeterministic);
+        assert_eq!(r.dets[2], DetClass::OrderInvariantNondeterministic);
+        assert_eq!(r.dets[5], DetClass::OrderInvariantNondeterministic);
     }
 
     #[test]
@@ -366,8 +573,8 @@ mod tests {
         // softmax(x, axis=1) = e/sum(e), e=exp(x - max(x)); keepdim reduces broadcast.
         // 0=Bind(0)=x, 1=reduce(max,axis1,keepdim), 2=sub(0,1), 3=exp(2),
         // 4=reduce(sum,axis1,keepdim,3), 5=div(3,4).
-        let dag = FlatDag {
-            nodes: vec![
+        let dag = FlatDag::new(
+            vec![
                 Node::Bind(0),
                 Node::Reduce { monoid: Monoid::Max, axes: vec![1], keepdim: true, child: 0 },
                 Node::Apply { op: Op::Sub, children: vec![0, 1] },
@@ -375,17 +582,17 @@ mod tests {
                 Node::Reduce { monoid: Monoid::Sum, axes: vec![1], keepdim: true, child: 3 },
                 Node::Apply { op: Op::Div, children: vec![3, 4] },
             ],
-            outputs: vec![5],
-        };
+            vec![5],
+        );
         let x = t(&[1.0, 2.0, 3.0, 1.0, 1.0, 1.0], &[2, 3]);
-        let (outs, dets) = eval_recipe(&dag, &[x], &[], &[]).unwrap();
-        let s = outs[0].as_slice();
+        let r = eval_recipe(&dag, &[x], &[], &[]).unwrap();
+        let s = r.outputs[0].as_slice();
         close(&[s[0] + s[1] + s[2]], &[1.0]);
         close(&[s[3] + s[4] + s[5]], &[1.0]);
         close(&s[3..6], &[1.0 / 3.0; 3]);
         // exp node carries a ULP class; the div root is nondeterministic (sum inside).
-        assert!(matches!(dets[3], DetClass::Ulp(_)));
-        assert_eq!(dets[5], DetClass::OrderInvariantNondeterministic);
+        assert!(matches!(r.dets[3], DetClass::Ulp(_)));
+        assert_eq!(r.dets[5], DetClass::OrderInvariantNondeterministic);
     }
 
     #[test]
@@ -393,8 +600,8 @@ mod tests {
         // mean(x) via reduce(sum)/reduced_count, then + a runtime scalar param.
         // 0=Bind(0), 1=reduce(sum,axis0,nokd), 2=reduced_count([0]),
         // 3=div(1,2), 4=runtime_scalar(0), 5=add(3,4).
-        let dag = FlatDag {
-            nodes: vec![
+        let dag = FlatDag::new(
+            vec![
                 Node::Bind(0),
                 Node::Reduce { monoid: Monoid::Sum, axes: vec![0], keepdim: false, child: 0 },
                 Node::ReducedCount(vec![0]),
@@ -402,48 +609,278 @@ mod tests {
                 Node::RuntimeScalar(0),
                 Node::Apply { op: Op::Add, children: vec![3, 4] },
             ],
-            outputs: vec![5],
-        };
+            vec![5],
+        );
         let x = t(&[1.0, 2.0, 3.0, 4.0], &[4]);
-        let (outs, _) = eval_recipe(&dag, &[x], &[10.0], &[]).unwrap();
+        let r = eval_recipe(&dag, &[x], &[10.0], &[]).unwrap();
         // mean = 2.5, + 10 = 12.5; nokd → rank-0 scalar.
-        assert_eq!(outs[0].shape(), &[] as &[usize]);
-        close(outs[0].as_slice(), &[12.5]);
+        assert_eq!(r.outputs[0].shape(), &[] as &[usize]);
+        close(r.outputs[0].as_slice(), &[12.5]);
     }
 
     #[test]
     fn gather_scatter_recipe_nodes() {
         use kiss_classify_vocab::Dtype;
         // gather(data, index=indices[0], axis 0, zero_fill).
-        let dag = FlatDag {
-            nodes: vec![
+        let dag = FlatDag::new(
+            vec![
                 Node::Bind(0),
-                Node::Gather { data: 0, index: 0, axis: 0, oob: OobPolicy::ZeroFill },
+                Node::Gather {
+                    data: 0,
+                    index: IndexRef::Slot(0),
+                    axis: 0,
+                    oob: OobPolicy::ZeroFill,
+                    base: None,
+                },
             ],
-            outputs: vec![1],
-        };
+            vec![1],
+        );
         let data = t(&[10.0, 20.0, 30.0], &[3]);
         let idx = IndexTensor::new(vec![2, 0, 9], &[3], Dtype::I64).unwrap();
-        let (outs, dets) = eval_recipe(&dag, &[data], &[], &[idx]).unwrap();
-        close(outs[0].as_slice(), &[30.0, 10.0, 0.0]); // idx 9 OOB → zero-fill
-        assert_eq!(dets[1], DetClass::ExactByte); // raw-bit move
+        let r = eval_recipe(&dag, &[data], &[], &[idx]).unwrap();
+        close(r.outputs[0].as_slice(), &[30.0, 10.0, 0.0]); // idx 9 OOB → zero-fill
+        assert_eq!(r.dets[1], DetClass::ExactByte); // raw-bit move
 
         // scatter_add(dest, updates, index=indices[0], atomic_add).
-        let sdag = FlatDag {
-            nodes: vec![
+        let sdag = FlatDag::new(
+            vec![
                 Node::Bind(0), // dest
                 Node::Bind(1), // updates
-                Node::Scatter { dest: 0, index: 0, updates: 1, axis: 0, combine: Combine::AtomicAdd },
+                Node::Scatter {
+                    dest: 0,
+                    index: IndexRef::Slot(0),
+                    updates: 1,
+                    axis: 0,
+                    combine: Combine::AtomicAdd,
+                },
             ],
-            outputs: vec![2],
-        };
+            vec![2],
+        );
         let dest = t(&[0.0, 0.0, 0.0], &[3]);
         let upd = t(&[5.0, 7.0, 4.0], &[3]);
         let sidx = IndexTensor::new(vec![0, 0, 1], &[3], Dtype::I64).unwrap();
-        let (souts, sdets) = eval_recipe(&sdag, &[dest, upd], &[], &[sidx]).unwrap();
-        close(souts[0].as_slice(), &[12.0, 4.0, 0.0]); // idx0: 5+7=12, idx1: 4
+        let sr = eval_recipe(&sdag, &[dest, upd], &[], &[sidx]).unwrap();
+        close(sr.outputs[0].as_slice(), &[12.0, 4.0, 0.0]); // idx0: 5+7=12, idx1: 4
         // float atomic_add → order-invariant/nondeterministic (§6.0-0004).
-        assert_eq!(sdets[2], DetClass::OrderInvariantNondeterministic);
+        assert_eq!(sr.dets[2], DetClass::OrderInvariantNondeterministic);
+    }
+
+    #[test]
+    fn sort_index_lane_exports_permutation() {
+        // sort asc: values via the value lane, the §6.11-0007 original-index
+        // permutation via index_outputs (same node id).
+        let dag = FlatDag {
+            nodes: vec![
+                Node::Bind(0),
+                Node::SortNetwork { keys: 0, axis: 0, dir: Direction::Asc },
+            ],
+            outputs: vec![1],
+            index_outputs: vec![1],
+        };
+        let keys = t(&[3.0, 1.0, 2.0], &[3]);
+        let r = eval_recipe(&dag, &[keys], &[], &[]).unwrap();
+        close(r.outputs[0].as_slice(), &[1.0, 2.0, 3.0]);
+        assert_eq!(r.index_outputs.len(), 1);
+        assert_eq!(r.index_outputs[0].as_slice(), &[1, 2, 0]);
+        assert_eq!(r.dets[1], DetClass::ExactByte); // one class covers both lanes
+    }
+
+    #[test]
+    fn sort_gather_chain_composes() {
+        // argsort-then-gather: reorder `data` by the sort permutation of `keys`
+        // via IndexRef::Node — a real scheduling edge, no external index input.
+        let dag = FlatDag::new(
+            vec![
+                Node::Bind(0), // keys
+                Node::Bind(1), // data
+                Node::SortNetwork { keys: 0, axis: 0, dir: Direction::Asc },
+                Node::Gather {
+                    data: 1,
+                    index: IndexRef::Node(2),
+                    axis: 0,
+                    oob: OobPolicy::ZeroFill,
+                    base: None,
+                },
+            ],
+            vec![3],
+        );
+        let keys = t(&[3.0, 1.0, 2.0], &[3]);
+        let data = t(&[30.0, 10.0, 20.0], &[3]);
+        let r = eval_recipe(&dag, &[keys, data], &[], &[]).unwrap();
+        // perm [1,2,0] applied to data → [10,20,30].
+        close(r.outputs[0].as_slice(), &[10.0, 20.0, 30.0]);
+        assert_eq!(r.dets[3], DetClass::ExactByte); // exact chain end-to-end
+    }
+
+    #[test]
+    fn nonexact_index_producer_escalates_consumer_det() {
+        // Keys through exp carry Ulp(k); a ≤k-ULP key change can FLIP the sort
+        // permutation, relocating whole data values — a deviation unbounded in
+        // ULP. The gather consuming that permutation must therefore escalate to
+        // the most-permissive class, NOT forward Ulp(k) (which would falsely
+        // fail conforming candidates — adversarial-review regression).
+        let dag = FlatDag::new(
+            vec![
+                Node::Bind(0), // x
+                Node::Bind(1), // data
+                Node::Apply { op: Op::Exp, children: vec![0] },
+                Node::SortNetwork { keys: 2, axis: 0, dir: Direction::Asc },
+                Node::Gather {
+                    data: 1,
+                    index: IndexRef::Node(3),
+                    axis: 0,
+                    oob: OobPolicy::ZeroFill,
+                    base: None,
+                },
+            ],
+            vec![4],
+        );
+        let x = t(&[0.0, 1.0], &[2]);
+        let data = t(&[5.0, 7.0], &[2]);
+        let r = eval_recipe(&dag, &[x, data], &[], &[]).unwrap();
+        // the sort node itself stays ULP-classed (its VALUE lane is ULP-sound);
+        // the index-mediated gather is order-invariant/nondeterministic.
+        assert!(matches!(r.dets[3], DetClass::Ulp(_)));
+        assert_eq!(r.dets[4], DetClass::OrderInvariantNondeterministic);
+    }
+
+    #[test]
+    fn gather_base_skip_keeps_base_value() {
+        use kiss_classify_vocab::Dtype;
+        // gather(skip) with a rank-0 Const base: the OOB position keeps the
+        // base's (broadcast) value — the cosigned §6.11 gather-skip RFC surface.
+        let dag = FlatDag::new(
+            vec![
+                Node::Bind(0),
+                Node::Const(-1.0),
+                Node::Gather {
+                    data: 0,
+                    index: IndexRef::Slot(0),
+                    axis: 0,
+                    oob: OobPolicy::Skip,
+                    base: Some(1),
+                },
+            ],
+            vec![2],
+        );
+        let data = t(&[10.0, 20.0, 30.0], &[3]);
+        let idx = IndexTensor::new(vec![2, 9, 0], &[3], Dtype::I64).unwrap();
+        let r = eval_recipe(&dag, &[data], &[], &[idx]).unwrap();
+        close(r.outputs[0].as_slice(), &[30.0, -1.0, 10.0]);
+        assert_eq!(r.dets[2], DetClass::ExactByte);
+
+        // Skip + no base on an actually-OOB index stays a typed decline.
+        let bad = FlatDag::new(
+            vec![
+                Node::Bind(0),
+                Node::Gather {
+                    data: 0,
+                    index: IndexRef::Slot(0),
+                    axis: 0,
+                    oob: OobPolicy::Skip,
+                    base: None,
+                },
+            ],
+            vec![1],
+        );
+        let data2 = t(&[10.0, 20.0, 30.0], &[3]);
+        let idx2 = IndexTensor::new(vec![2, 9, 0], &[3], Dtype::I64).unwrap();
+        assert!(eval_recipe(&bad, &[data2], &[], &[idx2]).is_err());
+    }
+
+    #[test]
+    fn gather_base_det_joins_only_under_skip() {
+        use kiss_classify_vocab::Dtype;
+        // base = exp(const) carries a ULP class. Under Skip the gather joins it;
+        // under ZeroFill the base's bits can never reach the output, so the
+        // class must NOT join (precision the differential comparator relies on).
+        let mk = |oob| {
+            FlatDag::new(
+                vec![
+                    Node::Bind(0),
+                    Node::Const(1.0),
+                    Node::Apply { op: Op::Exp, children: vec![1] },
+                    Node::Gather {
+                        data: 0,
+                        index: IndexRef::Slot(0),
+                        axis: 0,
+                        oob,
+                        base: Some(2),
+                    },
+                ],
+                vec![3],
+            )
+        };
+        let data = t(&[10.0, 20.0, 30.0], &[3]);
+        let idx = IndexTensor::new(vec![0, 1, 2], &[3], Dtype::I64).unwrap();
+        let skip = eval_recipe(&mk(OobPolicy::Skip), &[data.clone()], &[], &[idx.clone()]).unwrap();
+        assert!(matches!(skip.dets[3], DetClass::Ulp(_)));
+        let zf = eval_recipe(&mk(OobPolicy::ZeroFill), &[data], &[], &[idx]).unwrap();
+        assert_eq!(zf.dets[3], DetClass::ExactByte);
+    }
+
+    #[test]
+    fn iota_materializes_coordinates() {
+        // iota over the shape of Bind(0) ([2,3]): axis 1 → column ids, axis 0 →
+        // row ids; an out-of-range axis declines.
+        let mk = |axis| {
+            FlatDag::new(
+                vec![Node::Bind(0), Node::Iota { like: 0, axis }],
+                vec![1],
+            )
+        };
+        let x = t(&[0.0; 6], &[2, 3]);
+        let r1 = eval_recipe(&mk(1), &[x.clone()], &[], &[]).unwrap();
+        close(r1.outputs[0].as_slice(), &[0.0, 1.0, 2.0, 0.0, 1.0, 2.0]);
+        assert_eq!(r1.dets[1], DetClass::ExactByte);
+        let r0 = eval_recipe(&mk(0), &[x.clone()], &[], &[]).unwrap();
+        close(r0.outputs[0].as_slice(), &[0.0, 0.0, 0.0, 1.0, 1.0, 1.0]);
+        assert!(matches!(
+            eval_recipe(&mk(2), &[x], &[], &[]),
+            Err(Error::AxisOutOfRange { axis: 2, rank: 2 })
+        ));
+    }
+
+    #[test]
+    fn index_source_invalid_is_typed() {
+        // IndexRef::Node naming a node with no index lane → the dedicated error.
+        let dag = FlatDag::new(
+            vec![
+                Node::Bind(0),
+                Node::Gather {
+                    data: 0,
+                    index: IndexRef::Node(0), // Bind has no index-lane output
+                    axis: 0,
+                    oob: OobPolicy::ZeroFill,
+                    base: None,
+                },
+            ],
+            vec![1],
+        );
+        let data = t(&[1.0], &[1]);
+        assert!(matches!(
+            eval_recipe(&dag, &[data.clone()], &[], &[]),
+            Err(Error::IndexSourceInvalid { node: 0 })
+        ));
+        // index_outputs naming a non-index node (or out of range) → same error.
+        let dag2 = FlatDag {
+            nodes: vec![Node::Bind(0)],
+            outputs: vec![0],
+            index_outputs: vec![0],
+        };
+        assert!(matches!(
+            eval_recipe(&dag2, &[data.clone()], &[], &[]),
+            Err(Error::IndexSourceInvalid { node: 0 })
+        ));
+        let dag3 = FlatDag {
+            nodes: vec![Node::Bind(0)],
+            outputs: vec![0],
+            index_outputs: vec![9],
+        };
+        assert!(matches!(
+            eval_recipe(&dag3, &[data], &[], &[]),
+            Err(Error::IndexSourceInvalid { node: 9 })
+        ));
     }
 
     #[test]
@@ -460,26 +897,20 @@ mod tests {
                 nodes.push(Node::Bind(0));
             }
         }
-        let dag = FlatDag { nodes, outputs: vec![0] };
+        let dag = FlatDag::new(nodes, vec![0]);
         let x = t(&[5.0], &[]);
-        let (outs, _) = eval_recipe(&dag, &[x], &[], &[]).unwrap();
+        let r = eval_recipe(&dag, &[x], &[], &[]).unwrap();
         // 19_999 negations (odd) of 5.0 → -5.0. No overflow, returns a value.
-        close(outs[0].as_slice(), &[-5.0]);
+        close(r.outputs[0].as_slice(), &[-5.0]);
     }
 
     #[test]
     fn cycle_and_bad_index_decline_not_panic() {
         // a self-referential node must decline, not loop forever.
-        let dag = FlatDag {
-            nodes: vec![Node::Apply { op: Op::Add, children: vec![0, 0] }],
-            outputs: vec![0],
-        };
+        let dag = FlatDag::new(vec![Node::Apply { op: Op::Add, children: vec![0, 0] }], vec![0]);
         assert!(eval_recipe::<f64>(&dag, &[], &[], &[]).is_err());
         // an out-of-range child index is an error.
-        let dag2 = FlatDag {
-            nodes: vec![Node::Apply { op: Op::Neg, children: vec![9] }],
-            outputs: vec![0],
-        };
+        let dag2 = FlatDag::new(vec![Node::Apply { op: Op::Neg, children: vec![9] }], vec![0]);
         assert!(eval_recipe::<f64>(&dag2, &[], &[], &[]).is_err());
     }
 }
