@@ -54,10 +54,11 @@ pub mod tensor_ops;
 pub mod window;
 
 pub use diff::{
-    diff_bf16, diff_e4m3, diff_e5m2, diff_expr, diff_expr_f32, diff_f16, diff_f32, diff_f64,
-    reference_bf16, reference_e4m3, reference_e5m2, reference_expr, reference_expr_f32,
-    reference_f16, reference_f32, reference_f64, ulp_distance_bf16, ulp_distance_e4m3,
-    ulp_distance_e5m2, ulp_distance_f16, ulp_distance_f32, ulp_distance_f64, DiffReport, Tolerance,
+    diff_bf16, diff_e4m3, diff_e5m2, diff_expr, diff_expr_bf16, diff_expr_f16, diff_expr_f32,
+    diff_f16, diff_f32, diff_f64, reference_bf16, reference_e4m3, reference_e5m2, reference_expr,
+    reference_expr_bf16, reference_expr_f16, reference_expr_f32, reference_f16, reference_f32,
+    reference_f64, ulp_distance_bf16, ulp_distance_e4m3, ulp_distance_e5m2, ulp_distance_f16,
+    ulp_distance_f32, ulp_distance_f64, DiffReport, Tolerance,
 };
 pub use resolve::{
     eval_expr, eval_op, float_supported, implemented, legality, support, tensor_supported,

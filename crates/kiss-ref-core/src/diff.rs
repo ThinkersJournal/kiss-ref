@@ -415,6 +415,67 @@ macro_rules! narrow_diff {
 narrow_diff!(half::f16, ulp_distance_f16, reference_f16, diff_f16);
 narrow_diff!(half::bf16, ulp_distance_bf16, reference_bf16, diff_bf16);
 
+// The composed-[`Expr`] seam over the narrow lanes — the multi-node analogue of
+// `reference_f16`/`diff_f16`, reusing the same `ulp_distance_*` narrow metric.
+// Fuel's advisory covers f16/bf16, so migrating those region lanes onto
+// `reference_expr` needs these mirrors (the `Expr` evaluates through the same
+// `eval_expr` engine in the narrow compute lane — numbers are identical to a
+// hand-rolled per-node narrow reference).
+macro_rules! narrow_expr {
+    ($t:ty, $ulp:ident, $refr:ident, $diff:ident) => {
+        /// Reference outputs of a composed [`Expr`] over a batch of narrow-float
+        /// input rows — the narrow mirror of [`reference_expr`] (each row through
+        /// [`eval_expr`] in the narrow compute lane).
+        pub fn $refr(expr: &Expr, rows: &[&[$t]]) -> Result<Vec<$t>, Error> {
+            rows.iter().map(|r| eval_expr::<$t>(expr, r)).collect()
+        }
+
+        /// Diff a candidate's narrow-float outputs against this reference for a
+        /// composed [`Expr`]. The advisory-tolerance caveat on [`diff_expr`]
+        /// applies unchanged — the caller owns the band.
+        pub fn $diff(
+            expr: &Expr,
+            rows: &[&[$t]],
+            candidate: &[$t],
+            tol: Tolerance,
+        ) -> Result<DiffReport, Error> {
+            let reference = $refr(expr, rows)?;
+            if candidate.len() != reference.len() {
+                return Err(Error::LengthMismatch {
+                    expected: reference.len(),
+                    got: candidate.len(),
+                });
+            }
+            let mut report = DiffReport {
+                n: reference.len(),
+                mismatches: 0,
+                max_ulp: 0,
+                first_mismatch: None,
+            };
+            for (i, (&e, &g)) in reference.iter().zip(candidate).enumerate() {
+                let d = $ulp(e, g) as u64;
+                if d > report.max_ulp {
+                    report.max_ulp = d;
+                }
+                let ok = match tol {
+                    Tolerance::Exact => d == 0,
+                    Tolerance::Ulp(n) => d <= n,
+                };
+                if !ok {
+                    report.mismatches += 1;
+                    if report.first_mismatch.is_none() {
+                        report.first_mismatch = Some((i, e.to_f32() as f64, g.to_f32() as f64));
+                    }
+                }
+            }
+            Ok(report)
+        }
+    };
+}
+
+narrow_expr!(half::f16, ulp_distance_f16, reference_expr_f16, diff_expr_f16);
+narrow_expr!(half::bf16, ulp_distance_bf16, reference_expr_bf16, diff_expr_bf16);
+
 // ---- FP8 (e4m3 / e5m2) ------------------------------------------------------
 //
 // Same sign-magnitude total-order metric on the 8-bit pattern. After NaN
@@ -701,6 +762,34 @@ mod tests {
         assert_eq!(reference, [5.0f32]); // 3^2 - 2^2 = 5
         let r = diff_expr_f32(&e, &rows, &reference, Tolerance::Exact).unwrap();
         assert!(r.conforms() && r.max_ulp == 0);
+    }
+
+    #[test]
+    fn composed_expr_seam_narrow_f16_bf16() {
+        use half::{bf16, f16};
+        use kiss_ops_vocab::decomp::parse;
+        // a*a - b*b over the narrow lanes: a=3,b=2 => 5, exactly representable in
+        // both f16 and bf16, so the exact-op chain is byte-exact.
+        let e = parse("sub(mul(a, a), mul(b, b))").unwrap();
+        // f16 lane.
+        let rf: [&[f16]; 1] = [&[f16::from_f32(3.0), f16::from_f32(2.0)]];
+        let reff = reference_expr_f16(&e, &rf).unwrap();
+        assert_eq!(reff, [f16::from_f32(5.0)]);
+        // a planted 1-ULP error is caught at Exact, tolerated at Ulp(1).
+        let cand: Vec<f16> = reff.iter().map(|&x| f16::from_bits(x.to_bits() + 1)).collect();
+        assert!(!diff_expr_f16(&e, &rf, &cand, Tolerance::Exact).unwrap().conforms());
+        assert!(diff_expr_f16(&e, &rf, &cand, Tolerance::Ulp(1)).unwrap().conforms());
+        // bf16 lane.
+        let rb: [&[bf16]; 1] = [&[bf16::from_f32(3.0), bf16::from_f32(2.0)]];
+        let refb = reference_expr_bf16(&e, &rb).unwrap();
+        assert_eq!(refb, [bf16::from_f32(5.0)]);
+        let cb: Vec<bf16> = refb.iter().map(|&x| bf16::from_bits(x.to_bits() + 1)).collect();
+        assert!(!diff_expr_bf16(&e, &rb, &cb, Tolerance::Exact).unwrap().conforms());
+        assert!(diff_expr_bf16(&e, &rb, &cb, Tolerance::Ulp(1)).unwrap().conforms());
+        // a MissingInput propagates on the narrow lanes too.
+        let e2 = parse("add(a, b)").unwrap();
+        let short: [&[f16]; 1] = [&[f16::from_f32(1.0)]];
+        assert_eq!(reference_expr_f16(&e2, &short), Err(Error::MissingInput(1)));
     }
 
     // ---- FP8 exhaustive key-monotonicity ---------------------------------------
