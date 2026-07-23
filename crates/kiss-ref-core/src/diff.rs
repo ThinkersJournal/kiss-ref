@@ -21,9 +21,10 @@
 extern crate alloc;
 use alloc::vec::Vec;
 
+use kiss_ops_vocab::decomp::Expr;
 use kiss_ops_vocab::Op;
 
-use crate::{eval_op, Error};
+use crate::{eval_expr, eval_op, Error};
 
 /// Map an `f64` bit pattern to a monotone total order (IEEE 754 totalOrder):
 /// negatives reverse, positives shift above zero, so integer subtraction on the
@@ -174,6 +175,139 @@ pub fn diff_f32(
     tol: Tolerance,
 ) -> Result<DiffReport, Error> {
     let reference = reference_f32(op, rows)?;
+    if candidate.len() != reference.len() {
+        return Err(Error::LengthMismatch {
+            expected: reference.len(),
+            got: candidate.len(),
+        });
+    }
+    let mut report = DiffReport {
+        n: reference.len(),
+        mismatches: 0,
+        max_ulp: 0,
+        first_mismatch: None,
+    };
+    for (i, (&e, &g)) in reference.iter().zip(candidate).enumerate() {
+        let d = ulp_distance_f32(e, g) as u64;
+        if d > report.max_ulp {
+            report.max_ulp = d;
+        }
+        let ok = match tol {
+            Tolerance::Exact => d == 0,
+            Tolerance::Ulp(n) => d <= n,
+        };
+        if !ok {
+            report.mismatches += 1;
+            if report.first_mismatch.is_none() {
+                report.first_mismatch = Some((i, e as f64, g as f64));
+            }
+        }
+    }
+    Ok(report)
+}
+
+// ---- composed expressions (fused elementwise regions) -----------------------
+//
+// Fuel fuses adjacent elementwise ops into one region; to diff a region against
+// this reference, express it as a §6.13 `Expr` AST and evaluate it row-wise with
+// `eval_expr` — the SAME scalar engine the per-op seam uses, so NaN-propagation,
+// signed zero, and the refined forms are inherited node-for-node.
+// `reference_expr`/`diff_expr` are the multi-node analogue of
+// `reference_f64`/`diff_f64`.
+
+/// Reference `f64` outputs of a composed [`Expr`] over a batch of input rows —
+/// each row is the operand tuple the expression's `input(i)` leaves read
+/// (`input(0)` = `row[0]`, `input(1)` = `row[1]`, …), evaluated through
+/// [`eval_expr`]. This is the multi-node analogue of [`reference_f64`]: where
+/// that seam exports one op's reference outputs, this exports a whole fused
+/// elementwise region's, row by row. Errors if the expression is not scalar-
+/// evaluable on a row (e.g. an `input(i)` with no value supplied —
+/// [`Error::MissingInput`] — or a structural/tensor op inside it).
+pub fn reference_expr(expr: &Expr, rows: &[&[f64]]) -> Result<Vec<f64>, Error> {
+    rows.iter().map(|r| eval_expr::<f64>(expr, r)).collect()
+}
+
+/// Diff a candidate's `f64` outputs against this reference for a composed
+/// [`Expr`] over `rows`, under `tol`. Same shape as [`diff_f64`]; the candidate
+/// slice must have one entry per row.
+///
+/// **The determinism class of a composed `Expr` is the CALLER's to own, so the
+/// ULP tolerance here is advisory — this seam deliberately does not pick one:**
+/// - A chain of only exact ops (`+ - * /`, comparison, `select`, rounding,
+///   `copysign`) is `DetClass::ExactByte`: every node is bit-reproducible, so the
+///   region is, and `Tolerance::Exact` is the honest comparison.
+/// - A chain that passes through a §6.8 transcendental is `DetClass::Ulp` **only
+///   insofar as per-node ULP error adds linearly** — a bound that holds while
+///   each node's relative error stays small and the composition does not amplify
+///   it. `diff_expr` faithfully applies whatever `Tolerance::Ulp(n)` the caller
+///   supplies, but it cannot know that `n`.
+/// - **CANCELLATION defeats any linear band:** subtracting two near-equal
+///   intermediates (e.g. `sub(add(x, eps), x)`) blows up the *relative* error of
+///   the result without bound, so a candidate that reassociates or reorders the
+///   region can land arbitrarily many ULP from this reference while each
+///   evaluation is legitimate. No fixed per-region ULP is correct for such a chain.
+///
+/// So this module supplies the **mechanism** (row-wise reference + the ULP
+/// comparator) and refuses to invent a tolerance: `diff_expr` applies exactly the
+/// `Tolerance` it is given, and the `DetClass` / advisory band lives with the
+/// caller (Fuel), which alone has the region's provenance to compute it — the
+/// analogue of the most-permissive `bridge::DetClass::join` the tensor layer
+/// already performs.
+pub fn diff_expr(
+    expr: &Expr,
+    rows: &[&[f64]],
+    candidate: &[f64],
+    tol: Tolerance,
+) -> Result<DiffReport, Error> {
+    let reference = reference_expr(expr, rows)?;
+    if candidate.len() != reference.len() {
+        return Err(Error::LengthMismatch {
+            expected: reference.len(),
+            got: candidate.len(),
+        });
+    }
+    let mut report = DiffReport {
+        n: reference.len(),
+        mismatches: 0,
+        max_ulp: 0,
+        first_mismatch: None,
+    };
+    for (i, (&e, &g)) in reference.iter().zip(candidate).enumerate() {
+        let d = ulp_distance_f64(e, g);
+        if d > report.max_ulp {
+            report.max_ulp = d;
+        }
+        let ok = match tol {
+            Tolerance::Exact => d == 0,
+            Tolerance::Ulp(n) => d <= n,
+        };
+        if !ok {
+            report.mismatches += 1;
+            if report.first_mismatch.is_none() {
+                report.first_mismatch = Some((i, e, g));
+            }
+        }
+    }
+    Ok(report)
+}
+
+/// Reference `f32` outputs of a composed [`Expr`] over a batch of input rows —
+/// the `f32` mirror of [`reference_expr`] (evaluates each row through
+/// [`eval_expr`] in the `f32` compute lane).
+pub fn reference_expr_f32(expr: &Expr, rows: &[&[f32]]) -> Result<Vec<f32>, Error> {
+    rows.iter().map(|r| eval_expr::<f32>(expr, r)).collect()
+}
+
+/// Diff a candidate's `f32` outputs against this reference for a composed
+/// [`Expr`] — the `f32` mirror of [`diff_expr`] (ULP distances use the `f32`
+/// metric). The advisory-tolerance caveat on [`diff_expr`] applies unchanged.
+pub fn diff_expr_f32(
+    expr: &Expr,
+    rows: &[&[f32]],
+    candidate: &[f32],
+    tol: Tolerance,
+) -> Result<DiffReport, Error> {
+    let reference = reference_expr_f32(expr, rows)?;
     if candidate.len() != reference.len() {
         return Err(Error::LengthMismatch {
             expected: reference.len(),
@@ -470,5 +604,153 @@ mod tests {
             .collect();
         assert!(!diff_f16(Op::Sqr, &rows, &cand, Tolerance::Exact).unwrap().conforms());
         assert!(diff_f16(Op::Sqr, &rows, &cand, Tolerance::Ulp(1)).unwrap().conforms());
+    }
+
+    // ---- composed-expression seam --------------------------------------------
+
+    #[test]
+    fn diff_expr_exact_chain_is_byte_exact() {
+        use kiss_ops_vocab::decomp::parse;
+        // (a*a) - (b*b): a pure exact-op chain => DetClass::ExactByte.
+        let e = parse("sub(mul(a, a), mul(b, b))").unwrap();
+        let rows: [&[f64]; 2] = [&[3.0, 2.0], &[5.0, 1.0]];
+        // 3^2 - 2^2 = 5 ; 5^2 - 1^2 = 24 (both exact in f64).
+        let reference = reference_expr(&e, &rows).unwrap();
+        assert_eq!(reference, [5.0, 24.0]);
+        // an exact candidate conforms at Exact with 0 ULP.
+        let r = diff_expr(&e, &rows, &reference, Tolerance::Exact).unwrap();
+        assert!(r.conforms() && r.max_ulp == 0);
+        // a planted 1-ULP error on row 1 is caught at Exact, tolerated at Ulp(1).
+        let mut cand = reference.clone();
+        cand[1] = f64::from_bits(cand[1].to_bits() + 1);
+        let bad = diff_expr(&e, &rows, &cand, Tolerance::Exact).unwrap();
+        assert!(!bad.conforms());
+        assert_eq!(bad.mismatches, 1);
+        assert_eq!(bad.first_mismatch.unwrap().0, 1);
+        assert!(diff_expr(&e, &rows, &cand, Tolerance::Ulp(1)).unwrap().conforms());
+    }
+
+    #[test]
+    fn diff_expr_agrees_with_single_op_seam() {
+        use kiss_ops_vocab::decomp::parse;
+        // mul(x,x) is exactly Sqr's §6.13 decomposition, so the composed seam and the
+        // per-op seam MUST return the identical reference (cross-check of the two seams).
+        let e = parse("mul(x, x)").unwrap();
+        let rows: [&[f64]; 3] = [&[1.0], &[2.0], &[3.0]];
+        let via_expr = reference_expr(&e, &rows).unwrap();
+        let via_op = reference_f64(Op::Sqr, &rows).unwrap();
+        assert_eq!(via_expr, via_op);
+        assert_eq!(via_expr, [1.0, 4.0, 9.0]);
+    }
+
+    #[test]
+    fn diff_expr_transcendental_chain_applies_caller_ulp_band() {
+        use kiss_ops_vocab::decomp::parse;
+        // exp(x) - exp(-x): a transcendental-bearing chain. We do NOT hard-code the
+        // transcendental value (libm-version-sensitive); we perturb the reference by
+        // 1 ULP and show the caller-supplied band governs (the advisory mechanism),
+        // exactly like `diff_conforms_within_ulp_tolerance` does for the per-op seam.
+        let e = parse("sub(exp(x), exp(neg(x)))").unwrap();
+        let rows: [&[f64]; 2] = [&[0.5], &[1.0]];
+        let reference = reference_expr(&e, &rows).unwrap();
+        let cand: Vec<f64> = reference
+            .iter()
+            .map(|&x| f64::from_bits(x.to_bits() + 1))
+            .collect();
+        // every row is 1 ULP off: caught at Exact, tolerated at Ulp(4).
+        let exact = diff_expr(&e, &rows, &cand, Tolerance::Exact).unwrap();
+        assert!(!exact.conforms());
+        assert_eq!(exact.mismatches, 2);
+        assert_eq!(exact.first_mismatch.unwrap().0, 0);
+        let toler = diff_expr(&e, &rows, &cand, Tolerance::Ulp(4)).unwrap();
+        assert!(toler.conforms());
+        assert_eq!(toler.max_ulp, 1);
+    }
+
+    #[test]
+    fn diff_expr_length_mismatch_is_typed_error() {
+        use kiss_ops_vocab::decomp::parse;
+        let e = parse("mul(x, x)").unwrap();
+        let rows: [&[f64]; 2] = [&[1.0], &[2.0]];
+        let cand = [1.0]; // one short of the 2 reference rows
+        assert_eq!(
+            diff_expr(&e, &rows, &cand, Tolerance::Exact),
+            Err(Error::LengthMismatch { expected: 2, got: 1 })
+        );
+    }
+
+    #[test]
+    fn diff_expr_propagates_eval_error() {
+        use kiss_ops_vocab::decomp::parse;
+        // add(a, b) reads input(1), but the rows supply only input(0) => MissingInput.
+        let e = parse("add(a, b)").unwrap();
+        let rows: [&[f64]; 1] = [&[1.0]];
+        assert_eq!(reference_expr(&e, &rows), Err(Error::MissingInput(1)));
+        assert_eq!(
+            diff_expr(&e, &rows, &[0.0], Tolerance::Exact),
+            Err(Error::MissingInput(1))
+        );
+    }
+
+    #[test]
+    fn diff_expr_f32_mirror_is_byte_exact() {
+        use kiss_ops_vocab::decomp::parse;
+        let e = parse("sub(mul(a, a), mul(b, b))").unwrap();
+        let rows: [&[f32]; 1] = [&[3.0, 2.0]];
+        let reference = reference_expr_f32(&e, &rows).unwrap();
+        assert_eq!(reference, [5.0f32]); // 3^2 - 2^2 = 5
+        let r = diff_expr_f32(&e, &rows, &reference, Tolerance::Exact).unwrap();
+        assert!(r.conforms() && r.max_ulp == 0);
+    }
+
+    // ---- FP8 exhaustive key-monotonicity ---------------------------------------
+
+    macro_rules! fp8_total_order_case {
+        ($t:ty, $ulp:ident, $expected_nonnan:expr, $expected_max:expr) => {{
+            // All non-NaN byte patterns of the format.
+            let nonnan: Vec<u8> = (0u16..=255)
+                .map(|b| b as u8)
+                .filter(|&b| !<$t>::from_bits(b).is_nan())
+                .collect();
+            assert_eq!(nonnan.len(), $expected_nonnan);
+
+            // key_u8 is a correct total order: sort the codes by key, then assert the
+            // decoded value is monotone non-decreasing and the keys are strictly
+            // increasing (i.e. distinct — a genuine total order, no collisions).
+            let mut by_key = nonnan.clone();
+            by_key.sort_by_key(|&b| key_u8(b));
+            for w in by_key.windows(2) {
+                assert!(key_u8(w[0]) < key_u8(w[1]), "keys must be a strict total order");
+                assert!(
+                    <$t>::from_bits(w[0]).to_f32() <= <$t>::from_bits(w[1]).to_f32(),
+                    "value must be monotone across the key order"
+                );
+            }
+
+            // The one-NaN sentinel u8::MAX is unreachable by any finite/inf pair: the
+            // widest real ULP distance over ALL non-NaN pairs stays strictly below it.
+            let mut max_dist = 0u8;
+            for &a in &nonnan {
+                for &b in &nonnan {
+                    let d = $ulp(<$t>::from_bits(a), <$t>::from_bits(b));
+                    if d > max_dist {
+                        max_dist = d;
+                    }
+                }
+            }
+            assert_eq!(max_dist, $expected_max);
+            assert!(max_dist < u8::MAX, "a real distance must never reach the one-NaN sentinel");
+        }};
+    }
+
+    #[test]
+    fn fp8_key_is_total_order_and_sentinel_unreachable() {
+        use crate::fp8::{E4m3, E5m2};
+        // e4m3: 2 NaN codes (0x7F/0xFF, mask (b & 0x7F) == 0x7F) => 254 non-NaN,
+        // keys span [1, 254], so the widest real distance is 253 (-448 <-> +448).
+        fp8_total_order_case!(E4m3, ulp_distance_e4m3, 254, 253);
+        // e5m2: 6 NaN codes (exp=31 & mant!=0 => 0x7D/0x7E/0x7F/0xFD/0xFE/0xFF)
+        // => 250 non-NaN, keys span [3, 252], widest real distance 249 (-inf <-> +inf).
+        fp8_total_order_case!(E5m2, ulp_distance_e5m2, 250, 249);
     }
 }
