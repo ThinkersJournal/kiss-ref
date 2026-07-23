@@ -229,3 +229,39 @@ fn test_ops_min_max_prop_nan() {
     assert_eq!(ev(Op::MaxProp, &[2.0, 1.0]), 2.0);
     assert_eq!(ev(Op::FmaxIeee, &[f64::NAN, 1.0]), 1.0);
 }
+
+#[test]
+fn test_ops_minmax_tie_quartet_signed_zero() {
+    // KISS #74 vectors: on any ±0 tie, ALL FOUR minmax forms return operand A
+    // **bit-for-bit** — the §6.13 decompositions share the identical innermost
+    // `cmp_ge → a` / `cmp_le → a` select (the NaN arms are the family's only
+    // difference), and cmp_ge/cmp_le are both true under signed-zero equality
+    // (§6.6). A value-compare (0.0 == -0.0) would pass vacuously, so these
+    // assert RAW BITS. The max_prop cell is the seam that caught Baracuda's
+    // a>b tie in all three of its backends (fixed at their 7297f17d); the
+    // narrow dtypes prove the sign bit survives promote-compute-round.
+    use kiss_ref_core::E4m3;
+    let ops = [Op::MaxProp, Op::MinProp, Op::FmaxIeee, Op::FminIeee];
+    let pairs = [(0.0f32, -0.0f32), (-0.0, 0.0), (0.0, 0.0), (-0.0, -0.0)];
+    macro_rules! quartet {
+        ($t:ty, $mk:expr, $bits:expr) => {
+            for op in ops {
+                for (a, b) in pairs {
+                    let (ta, tb): ($t, $t) = ($mk(a), $mk(b));
+                    let got: $t = eval_op(op, &[ta, tb])
+                        .unwrap_or_else(|e| panic!("{op:?} on {} failed: {e:?}", stringify!($t)));
+                    assert_eq!(
+                        $bits(got),
+                        $bits(ta),
+                        "{op:?}({a:?}, {b:?}) as {} must return A bit-for-bit",
+                        stringify!($t)
+                    );
+                }
+            }
+        };
+    }
+    quartet!(f64, |v: f32| v as f64, |x: f64| x.to_bits());
+    quartet!(f32, |v: f32| v, |x: f32| x.to_bits());
+    quartet!(half::f16, half::f16::from_f32, |x: half::f16| x.to_bits());
+    quartet!(E4m3, E4m3::from_f32, |x: E4m3| x.to_bits());
+}

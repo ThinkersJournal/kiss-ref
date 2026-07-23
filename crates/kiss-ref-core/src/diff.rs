@@ -7,6 +7,16 @@
 //! is that seam. Distances use a **sign-magnitude IEEE total-order** ULP metric
 //! (faithful near zero and across the signed-zero boundary — unlike a relative
 //! epsilon), so signed zero reads as 1 ULP and both-NaN reads as 0.
+//!
+//! **Why both-NaN → 0 (NaN payload is class, not bits):** raw-bit *moves*
+//! (`select`, compare-driven picks, gather/sort) carry a NaN's payload intact,
+//! but *arithmetic* ops may re-mint the payload per device — a live cross-
+//! hardware witness: an sm_89 float `add` producing NaN canonicalizes it to
+//! `0x7fffffff` while x86 propagates the input's `0x7fc00000` (Baracuda device
+//! diff, 2026-07-23). So the comparator must treat any-NaN-vs-any-NaN as a
+//! match (class equality), while ±0 stays 1 ULP apart — that asymmetry is what
+//! keeps the metric NaN-portable without losing signed-zero sensitivity (the
+//! `max_prop` tie-bug catcher).
 
 extern crate alloc;
 use alloc::vec::Vec;
