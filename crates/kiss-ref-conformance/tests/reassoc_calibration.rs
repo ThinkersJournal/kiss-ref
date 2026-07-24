@@ -1,7 +1,8 @@
 //! PRELIMINARY reassociation-tolerance calibration for RFC #92 direction b
 //! (C4 / KISS-CONTRACT-6.8-0012).
 //!
-//! Band under calibration (ratified SHAPE; clause TEXT pending KISS PR #96 merge):
+//! Band NOW NORMATIVE (KISS-CONTRACT-6.8-0012, merged in KISS PR #96 2026-07-24
+//! @ 46e69a8 — incl. the absolute-band usage note this calibration surfaced):
 //! for a `(compute S, accumulator A)` reduction / scan / contraction cell,
 //!
 //!     tol = k(S,A) * N * eps_A * |max partial sum|          (a ULP-of-A band)
@@ -27,10 +28,11 @@
 //! ascending-index narrowed result MUST equal `reduce_ref::<S>(x, Sum, [0], A)`
 //! bit-for-bit, certifying the reconstruction against the shipped kernel.
 //!
-//! STATUS: **preliminary-pending-#96-merge**; also pending Baracuda step-3b real
-//! value sets / tensor shapes / true K ceiling (those can only SHARPEN — raise —
-//! the worst case). Do NOT freeze interop on these numbers. See the module
-//! `emit_preliminary_k_table` test output for the computed table.
+//! STATUS: #96 is merged, so the clause SHAPE is final; the k(S,A) NUMBERS remain
+//! **preliminary-pending-Baracuda-step-3b** real value sets / tensor shapes / true
+//! K ceiling (those can only SHARPEN — raise — the worst case; the x2 margin
+//! absorbs modest sharpening). Do NOT freeze interop on the numbers. See the
+//! module `emit_preliminary_k_table` test output for the computed table.
 
 #![allow(clippy::needless_range_loop)]
 
@@ -642,7 +644,7 @@ fn emit_preliminary_k_table() {
 
     println!("\n=== PRELIMINARY k(S,A) reassociation-tolerance table (RFC #92 b / C4) ===");
     println!("band: tol = k(S,A) * N * eps_A * |max partial sum|   (ULP-of-A; eps_A = 2^-mant)");
-    println!("declared_k = max(1.0, 2 * k_measured).  STATUS: preliminary-pending-#96-merge + step-3b.\n");
+    println!("declared_k = max(1.0, 2 * k_measured).  STATUS: KISS-CONTRACT-6.8-0012 normative (#96 merged); numbers preliminary-pending-Baracuda-3b.\n");
     println!(
         "| {:<5} | {:<5} | {:>9} | {:>9} | {:>8} | {:>8} | {:>6} | {:>5} |",
         "S", "A", "k_meas", "decl_k", "ulpS_max", "straddle", "zeroMP", "sat"

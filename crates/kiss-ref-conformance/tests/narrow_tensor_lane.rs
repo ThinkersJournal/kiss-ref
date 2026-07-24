@@ -314,13 +314,14 @@ fn narrow_reduce_sum_stagnates_in_a_narrow_accumulator() {
     // KISS-declared tolerance bounding it (§6.17-0007 requires one).
 }
 
-// ---- RFC #92 (direction b, RATIFIED): accumulator-dtype tolerance cells --------
+// ---- accumulator-dtype tolerance cells (KISS-OPS-6.17-0008/-0009, RFC #92 b) ----
 //
 // The OFF-DIAGONAL companion to the stagnation goldens above: the SAME inputs,
 // SAME ascending fold order, but a WIDER accumulator dtype declared via <acc> —
-// which is the (compute, acc) tolerance cell the ratified RFC keys on. kiss-ref
-// holds these Provisional until KISS's clause-text realization PR lands; the
-// numeric reference itself is stable (the C3 per-cell reference).
+// the (compute, acc) tolerance cell of KISS-OPS-6.17-0008 (C1). These pin the
+// KISS-OPS-6.17-0009 (C3) per-cell reference (inputs->S, each atom->A, result->S).
+// NORMATIVE now: KISS PR #96 (the #92 realization) merged 2026-07-24 (KISS main
+// @ 46e69a8), so these cells are no longer Provisional — they BACK 6.17-0008/-0009.
 
 #[test]
 fn narrow_reduce_f32_accumulator_recovers_the_true_sum() {

@@ -998,9 +998,9 @@ mod tests {
     fn scatter_updates_broadcast() {
         use kiss_classify_vocab::Dtype;
         // updates broadcast to the write shape (§6.11-0001 general rules —
-        // scatter broadcast-updates ruling item, Provisional): rank-0 writes one
-        // scalar per index element (bincount form); extent-1 broadcasts too; an
-        // incompatible extent stays a typed decline.
+        // scatter broadcast-updates, ruled general-broadcast 2026-07-23): rank-0
+        // writes one scalar per index element (bincount form); extent-1 broadcasts
+        // too; an incompatible extent stays a typed decline.
         let scat = Node::Scatter {
             dest: 0,
             index: IndexRef::Slot(0),
