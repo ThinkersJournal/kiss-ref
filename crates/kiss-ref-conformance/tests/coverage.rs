@@ -7,8 +7,8 @@ use kiss_ops_vocab::Op;
 use kiss_ref_conformance::ledger;
 use kiss_ref_core::scalar_int::int_spec;
 use kiss_ref_core::{
-    bool_supported, float_supported, int_supported, int_tensor_supported, support, tensor_supported,
-    Support,
+    bool_supported, float_supported, int_supported, int_tensor_supported, support,
+    tensor_supported, Support,
 };
 
 const INT_DTYPES: [Dtype; 11] = [
@@ -31,7 +31,11 @@ fn coverage_ledger_reports_done_and_pending() {
     // Visible with `cargo test -- --nocapture` — the machine-readable ledger the
     // evaluating teams read to see what remains.
     println!("{}", l.summary());
-    println!("PENDING ops ({}): {:?}", l.pending.len(), l.pending_tokens());
+    println!(
+        "PENDING ops ({}): {:?}",
+        l.pending.len(),
+        l.pending_tokens()
+    );
 
     assert_eq!(l.done.len() + l.pending.len(), Op::ALL.len());
     // Every op is now evaluable on at least the float (or integer scalar) lane —
@@ -44,7 +48,11 @@ fn coverage_ledger_reports_done_and_pending() {
         "every op should be evaluable; still pending: {:?}",
         l.pending_tokens()
     );
-    assert!(l.pending.is_empty(), "no op should remain pending: {:?}", l.pending_tokens());
+    assert!(
+        l.pending.is_empty(),
+        "no op should remain pending: {:?}",
+        l.pending_tokens()
+    );
 }
 
 #[test]
@@ -66,7 +74,14 @@ fn coverage_tensor_layer_done_on_floats() {
     // dtype (the float lane: f16/bf16/f32/f64), Pending elsewhere in this cut.
     for &op in Op::ALL {
         if tensor_supported(op) {
-            for &d in &[Dtype::F16, Dtype::Bf16, Dtype::F32, Dtype::F64, Dtype::E4m3, Dtype::E5m2] {
+            for &d in &[
+                Dtype::F16,
+                Dtype::Bf16,
+                Dtype::F32,
+                Dtype::F64,
+                Dtype::E4m3,
+                Dtype::E5m2,
+            ] {
                 assert_eq!(support(op, d), Support::Done, "{op:?}/{d:?}");
             }
         }
@@ -142,9 +157,7 @@ fn coverage_support_consistency() {
                     (float_supported(op) && op != Op::Nextafter) || tensor_supported(op)
                 }
                 Dtype::Bool => bool_supported(op),
-                _ if int_spec(d).is_some() => {
-                    int_supported(op) || int_tensor_supported(op)
-                }
+                _ if int_spec(d).is_some() => int_supported(op) || int_tensor_supported(op),
                 _ => false,
             };
             assert_eq!(support(op, d) == Support::Done, expect, "{op:?}/{d:?}");
@@ -174,7 +187,7 @@ fn coverage_illegal_cells_are_not_applicable() {
     assert_eq!(support(Op::Exp, Dtype::I32), Support::NotApplicable); // transcendental×int §6.8
     assert_eq!(support(Op::Softmax, Dtype::U8), Support::NotApplicable); // normalization×int
     assert_eq!(support(Op::Nextafter, Dtype::F16), Support::NotApplicable); // §6.9-0003
-    // ...FP8 float ops and the bool truth-valued ops are now Done.
+                                                                            // ...FP8 float ops and the bool truth-valued ops are now Done.
     assert_eq!(support(Op::Add, Dtype::E4m3), Support::Done);
     assert_eq!(support(Op::LogicalAnd, Dtype::Bool), Support::Done);
 }
@@ -195,7 +208,7 @@ fn coverage_bool_truth_cells_done() {
     assert_eq!(support(Op::ReduceMean, Dtype::Bool), Support::NotApplicable);
     assert_eq!(support(Op::ScatterAdd, Dtype::Bool), Support::NotApplicable); // sum escapes {0,1}
     assert_eq!(support(Op::CmpLt, Dtype::Bool), Support::NotApplicable); // ordered cmp declined
-    // im2col is bool-LEGAL (data movement) but has no integer/bool kernel yet, so
-    // it is Pending — not over-claimed as Done (adversarial review).
+                                                                         // im2col is bool-LEGAL (data movement) but has no integer/bool kernel yet, so
+                                                                         // it is Pending — not over-claimed as Done (adversarial review).
     assert_eq!(support(Op::Im2col, Dtype::Bool), Support::Pending);
 }

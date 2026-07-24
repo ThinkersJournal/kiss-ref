@@ -34,12 +34,18 @@ pub(crate) fn map_views<T: ScalarFloat>(
 ) -> Result<Tensor<T>, Error> {
     let n = inputs.len();
     if n > MAX_OPERANDS {
-        return Err(Error::RankExceeded { rank: n, max: MAX_OPERANDS });
+        return Err(Error::RankExceeded {
+            rank: n,
+            max: MAX_OPERANDS,
+        });
     }
     // Guard the output rank directly: with zero inputs the broadcast loop below
     // never runs, so this is the only rank check on `out_shape` (never-panic).
     if out_shape.len() > MAX_RANK {
-        return Err(Error::RankExceeded { rank: out_shape.len(), max: MAX_RANK });
+        return Err(Error::RankExceeded {
+            rank: out_shape.len(),
+            max: MAX_RANK,
+        });
     }
     let mut bviews: Vec<View<T>> = Vec::with_capacity(n);
     for v in inputs {
@@ -84,7 +90,11 @@ fn decode_reduced(mut r: usize, reduced: &[usize], in_shape: &[usize], coord: &m
 /// **reduce** (§6.11-0002/-0008): fold `x` over the axis set `axes` with `monoid`,
 /// keepdim fixed (each reduced axis becomes extent-1). Empty axis → monoid
 /// identity; `max`/`min` NaN-propagate; the combine is one [`eval_op`] call.
-pub fn reduce<T: ScalarFloat>(x: &View<T>, monoid: Monoid, axes: &[usize]) -> Result<Tensor<T>, Error> {
+pub fn reduce<T: ScalarFloat>(
+    x: &View<T>,
+    monoid: Monoid,
+    axes: &[usize],
+) -> Result<Tensor<T>, Error> {
     if axes.is_empty() {
         return Err(Error::EmptyAxesMask);
     }
@@ -165,7 +175,10 @@ pub(crate) fn guard_accumulator<T: ScalarFloat>(acc: Dtype) -> Result<(), Error>
     match (float_format(T::DTYPE), float_format(acc)) {
         (Some((se, sm)), Some((ae, am))) => {
             if ae < se || am < sm {
-                Err(Error::AccumulatorTooNarrow { storage: T::DTYPE, acc })
+                Err(Error::AccumulatorTooNarrow {
+                    storage: T::DTYPE,
+                    acc,
+                })
             } else {
                 // Every admitted accumulator now narrows in a single correctly-
                 // rounded RNE: narrow() routes the (narrow storage, f64 accumulator)
@@ -269,7 +282,10 @@ pub(crate) fn prefix_scan_acc<T: ScalarFloat, A: ScalarFloat>(
             coord[axis] = j;
             let xv: A = widen::<T, A>(x.read(&coord[..rank])?);
             let lin = row_major_index(&coord[..rank], in_shape);
-            let slot = data.get_mut(lin).ok_or(Error::ShapeMismatch { expected: count, got: lin })?;
+            let slot = data.get_mut(lin).ok_or(Error::ShapeMismatch {
+                expected: count,
+                got: lin,
+            })?;
             if exclusive {
                 *slot = narrow::<A, T>(acc);
                 acc = eval_op::<A>(op, &[acc, xv])?;
@@ -369,7 +385,10 @@ pub fn prefix_scan<T: ScalarFloat>(
             coord[axis] = j;
             let xv = x.read(&coord[..rank])?;
             let lin = row_major_index(&coord[..rank], in_shape);
-            let slot = data.get_mut(lin).ok_or(Error::ShapeMismatch { expected: count, got: lin })?;
+            let slot = data.get_mut(lin).ok_or(Error::ShapeMismatch {
+                expected: count,
+                got: lin,
+            })?;
             if exclusive {
                 *slot = acc;
                 acc = eval_op(op, &[acc, xv])?;
@@ -431,7 +450,10 @@ pub fn gather<T: ScalarFloat>(
     let irank = ishape.len();
     let out_rank = drank - 1 + irank;
     if out_rank > MAX_RANK {
-        return Err(Error::RankExceeded { rank: out_rank, max: MAX_RANK });
+        return Err(Error::RankExceeded {
+            rank: out_rank,
+            max: MAX_RANK,
+        });
     }
     let extent = dshape[axis];
 
@@ -469,9 +491,7 @@ pub fn gather<T: ScalarFloat>(
         })?;
         let val = match resolve_index(ival, extent, oob)? {
             Resolved::In(s) => {
-                for k in 0..axis {
-                    src[k] = oc[k];
-                }
+                src[..axis].copy_from_slice(&oc[..axis]);
                 src[axis] = s;
                 for k in 0..(drank - 1 - axis) {
                     src[axis + 1 + k] = oc[axis + irank + k];
@@ -513,7 +533,10 @@ pub fn scatter<T: ScalarFloat>(
     }
     if index.rank() != 1 {
         // This cut supports a 1-D index aligned to `axis` (the scatter_add form).
-        return Err(Error::ShapeMismatch { expected: 1, got: index.rank() });
+        return Err(Error::ShapeMismatch {
+            expected: 1,
+            got: index.rank(),
+        });
     }
     // The write shape; updates broadcast to it (stride-0 axes read the same
     // element repeatedly — a raw-bit move either way).
@@ -542,14 +565,20 @@ pub fn scatter<T: ScalarFloat>(
         dcoord[axis] = ival as usize;
         let dlin = row_major_index(&dcoord[..drank], &dshape[..drank]);
         let u = updates.read(uc)?;
-        let cur = *data.get(dlin).ok_or(Error::ShapeMismatch { expected: dlen, got: dlin })?;
+        let cur = *data.get(dlin).ok_or(Error::ShapeMismatch {
+            expected: dlen,
+            got: dlin,
+        })?;
         let next = match combine {
             Combine::Assign => u,
             Combine::AtomicAdd => eval_op(kiss_ops_vocab::Op::Add, &[cur, u])?,
             Combine::AtomicMax => eval_op(kiss_ops_vocab::Op::MaxProp, &[cur, u])?,
             Combine::AtomicMin => eval_op(kiss_ops_vocab::Op::MinProp, &[cur, u])?,
         };
-        *data.get_mut(dlin).ok_or(Error::ShapeMismatch { expected: dlen, got: dlin })? = next;
+        *data.get_mut(dlin).ok_or(Error::ShapeMismatch {
+            expected: dlen,
+            got: dlin,
+        })? = next;
     }
     Tensor::from_vec(data, &dshape[..drank])
 }
@@ -561,7 +590,10 @@ fn cmp_key<T: ScalarFloat>(a: T, b: T) -> Ordering {
         (true, true) => Ordering::Equal,
         (true, false) => Ordering::Greater,
         (false, true) => Ordering::Less,
-        (false, false) => a.to_f64().partial_cmp(&b.to_f64()).unwrap_or(Ordering::Equal),
+        (false, false) => a
+            .to_f64()
+            .partial_cmp(&b.to_f64())
+            .unwrap_or(Ordering::Equal),
     }
 }
 
@@ -612,8 +644,14 @@ pub fn sort_network<T: ScalarFloat>(
         for (r, &(orig, val)) in pairs.iter().enumerate() {
             coord[axis] = r;
             let lin = row_major_index(&coord[..rank], in_shape);
-            *vals.get_mut(lin).ok_or(Error::ShapeMismatch { expected: count, got: lin })? = val;
-            *idxs.get_mut(lin).ok_or(Error::ShapeMismatch { expected: count, got: lin })? = orig;
+            *vals.get_mut(lin).ok_or(Error::ShapeMismatch {
+                expected: count,
+                got: lin,
+            })? = val;
+            *idxs.get_mut(lin).ok_or(Error::ShapeMismatch {
+                expected: count,
+                got: lin,
+            })? = orig;
         }
     }
     let vals = Tensor::from_vec(vals, in_shape)?;

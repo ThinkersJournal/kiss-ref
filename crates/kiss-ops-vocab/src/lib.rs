@@ -241,11 +241,49 @@ mod tests {
 
     /// The exact §6.3-0001 primitive-floor token set.
     const FLOOR_SPEC: &[&str] = &[
-        "add", "sub", "mul", "div", "neg", "abs", "select", "cmp_eq", "cmp_ne", "cmp_lt", "cmp_le",
-        "cmp_gt", "cmp_ge", "floor", "ceil", "trunc", "round_even", "exp", "log", "sin", "cos",
-        "sqrt", "erf", "atan", "lgamma", "atan2", "copysign", "nextafter", "bit_and", "bit_or",
-        "bit_xor", "bit_not", "shl", "shr", "popcount", "clz", "ctz", "element_map", "reduce",
-        "prefix_scan", "gather", "scatter", "sort_network",
+        "add",
+        "sub",
+        "mul",
+        "div",
+        "neg",
+        "abs",
+        "select",
+        "cmp_eq",
+        "cmp_ne",
+        "cmp_lt",
+        "cmp_le",
+        "cmp_gt",
+        "cmp_ge",
+        "floor",
+        "ceil",
+        "trunc",
+        "round_even",
+        "exp",
+        "log",
+        "sin",
+        "cos",
+        "sqrt",
+        "erf",
+        "atan",
+        "lgamma",
+        "atan2",
+        "copysign",
+        "nextafter",
+        "bit_and",
+        "bit_or",
+        "bit_xor",
+        "bit_not",
+        "shl",
+        "shr",
+        "popcount",
+        "clz",
+        "ctz",
+        "element_map",
+        "reduce",
+        "prefix_scan",
+        "gather",
+        "scatter",
+        "sort_network",
     ];
 
     fn floor_tokens() -> Vec<&'static str> {
@@ -283,7 +321,10 @@ mod tests {
     fn ops_full_set_size() {
         // 43 floor + 63 non-primitive = 106 (complex §6.18 deferred).
         assert_eq!(Op::ALL.len(), 106);
-        assert_eq!(Op::ALL.iter().filter(|o| !o.is_primitive_floor()).count(), 63);
+        assert_eq!(
+            Op::ALL.iter().filter(|o| !o.is_primitive_floor()).count(),
+            63
+        );
     }
 
     #[test]

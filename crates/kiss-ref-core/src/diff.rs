@@ -58,11 +58,7 @@ pub fn ulp_distance_f64(a: f64, b: f64) -> u64 {
         (true, false) | (false, true) => u64::MAX,
         (false, false) => {
             let (x, y) = (key_f64(a), key_f64(b));
-            if x >= y {
-                x - y
-            } else {
-                y - x
-            }
+            x.abs_diff(y)
         }
     }
 }
@@ -74,11 +70,7 @@ pub fn ulp_distance_f32(a: f32, b: f32) -> u32 {
         (true, false) | (false, true) => u32::MAX,
         (false, false) => {
             let (x, y) = (key_f32(a), key_f32(b));
-            if x >= y {
-                x - y
-            } else {
-                y - x
-            }
+            x.abs_diff(y)
         }
     }
 }
@@ -473,8 +465,18 @@ macro_rules! narrow_expr {
     };
 }
 
-narrow_expr!(half::f16, ulp_distance_f16, reference_expr_f16, diff_expr_f16);
-narrow_expr!(half::bf16, ulp_distance_bf16, reference_expr_bf16, diff_expr_bf16);
+narrow_expr!(
+    half::f16,
+    ulp_distance_f16,
+    reference_expr_f16,
+    diff_expr_f16
+);
+narrow_expr!(
+    half::bf16,
+    ulp_distance_bf16,
+    reference_expr_bf16,
+    diff_expr_bf16
+);
 
 // ---- FP8 (e4m3 / e5m2) ------------------------------------------------------
 //
@@ -551,8 +553,18 @@ macro_rules! fp8_diff {
     };
 }
 
-fp8_diff!(crate::fp8::E4m3, ulp_distance_e4m3, reference_e4m3, diff_e4m3);
-fp8_diff!(crate::fp8::E5m2, ulp_distance_e5m2, reference_e5m2, diff_e5m2);
+fp8_diff!(
+    crate::fp8::E4m3,
+    ulp_distance_e4m3,
+    reference_e4m3,
+    diff_e4m3
+);
+fp8_diff!(
+    crate::fp8::E5m2,
+    ulp_distance_e5m2,
+    reference_e5m2,
+    diff_e5m2
+);
 
 // ---- accumulator-parameterized reduction reference (RFC #92 direction b) ------
 //
@@ -671,20 +683,41 @@ mod tests {
     fn fp8_seam_edges() {
         use crate::fp8::{E4m3, E5m2};
         // signed zero is 1 ULP on 8 bits too.
-        assert_eq!(ulp_distance_e4m3(E4m3::from_bits(0x00), E4m3::from_bits(0x80)), 1);
-        assert_eq!(ulp_distance_e5m2(E5m2::from_bits(0x00), E5m2::from_bits(0x80)), 1);
+        assert_eq!(
+            ulp_distance_e4m3(E4m3::from_bits(0x00), E4m3::from_bits(0x80)),
+            1
+        );
+        assert_eq!(
+            ulp_distance_e5m2(E5m2::from_bits(0x00), E5m2::from_bits(0x80)),
+            1
+        );
         // e4m3: both NaN codes (0x7F / 0xFF) match at 0; one-NaN is the sentinel.
-        assert_eq!(ulp_distance_e4m3(E4m3::from_bits(0x7F), E4m3::from_bits(0xFF)), 0);
+        assert_eq!(
+            ulp_distance_e4m3(E4m3::from_bits(0x7F), E4m3::from_bits(0xFF)),
+            0
+        );
         assert_eq!(ulp_distance_e4m3(E4m3::from_bits(0x7F), E4m3::ONE), u8::MAX);
         // e4m3 full-range: -448 (0xFE) to +448 (0x7E) spans 253 — below the sentinel.
-        assert_eq!(ulp_distance_e4m3(E4m3::from_bits(0xFE), E4m3::from_bits(0x7E)), 253);
+        assert_eq!(
+            ulp_distance_e4m3(E4m3::from_bits(0xFE), E4m3::from_bits(0x7E)),
+            253
+        );
         // adjacent codes are 1 ULP.
         assert_eq!(ulp_distance_e4m3(E4m3::ONE, E4m3::from_bits(0x39)), 1);
         // e5m2: +inf (0x7C) matches itself at 0, sits 1 ULP above max finite
         // (0x7B = 57344), and any-NaN (exp=31, m≠0) hits the sentinel.
-        assert_eq!(ulp_distance_e5m2(E5m2::from_bits(0x7C), E5m2::from_bits(0x7C)), 0);
-        assert_eq!(ulp_distance_e5m2(E5m2::from_bits(0x7C), E5m2::from_bits(0x7B)), 1);
-        assert_eq!(ulp_distance_e5m2(E5m2::from_bits(0x7D), E5m2::from_bits(0xFE)), 0);
+        assert_eq!(
+            ulp_distance_e5m2(E5m2::from_bits(0x7C), E5m2::from_bits(0x7C)),
+            0
+        );
+        assert_eq!(
+            ulp_distance_e5m2(E5m2::from_bits(0x7C), E5m2::from_bits(0x7B)),
+            1
+        );
+        assert_eq!(
+            ulp_distance_e5m2(E5m2::from_bits(0x7D), E5m2::from_bits(0xFE)),
+            0
+        );
         assert_eq!(ulp_distance_e5m2(E5m2::from_bits(0x7E), E5m2::ONE), u8::MAX);
     }
 
@@ -700,8 +733,12 @@ mod tests {
             .iter()
             .map(|&x| E4m3::from_bits(x.to_bits() + 1))
             .collect();
-        assert!(!diff_e4m3(Op::Sqr, &rows, &cand, Tolerance::Exact).unwrap().conforms());
-        assert!(diff_e4m3(Op::Sqr, &rows, &cand, Tolerance::Ulp(1)).unwrap().conforms());
+        assert!(!diff_e4m3(Op::Sqr, &rows, &cand, Tolerance::Exact)
+            .unwrap()
+            .conforms());
+        assert!(diff_e4m3(Op::Sqr, &rows, &cand, Tolerance::Ulp(1))
+            .unwrap()
+            .conforms());
     }
 
     #[test]
@@ -709,7 +746,10 @@ mod tests {
         use half::{bf16, f16};
         // signed zero is 1 ULP in the narrow lattice too.
         assert_eq!(ulp_distance_f16(f16::from_f32(0.0), f16::from_f32(-0.0)), 1);
-        assert_eq!(ulp_distance_bf16(bf16::from_f32(0.0), bf16::from_f32(-0.0)), 1);
+        assert_eq!(
+            ulp_distance_bf16(bf16::from_f32(0.0), bf16::from_f32(-0.0)),
+            1
+        );
         // an f16 differential run: a planted 1-ULP error is caught at Exact,
         // tolerated at Ulp(1).
         let rows: [&[f16]; 2] = [&[f16::from_f32(1.0)], &[f16::from_f32(2.0)]];
@@ -718,8 +758,12 @@ mod tests {
             .iter()
             .map(|&x| f16::from_bits(x.to_bits() + 1))
             .collect();
-        assert!(!diff_f16(Op::Sqr, &rows, &cand, Tolerance::Exact).unwrap().conforms());
-        assert!(diff_f16(Op::Sqr, &rows, &cand, Tolerance::Ulp(1)).unwrap().conforms());
+        assert!(!diff_f16(Op::Sqr, &rows, &cand, Tolerance::Exact)
+            .unwrap()
+            .conforms());
+        assert!(diff_f16(Op::Sqr, &rows, &cand, Tolerance::Ulp(1))
+            .unwrap()
+            .conforms());
     }
 
     // ---- composed-expression seam --------------------------------------------
@@ -743,7 +787,9 @@ mod tests {
         assert!(!bad.conforms());
         assert_eq!(bad.mismatches, 1);
         assert_eq!(bad.first_mismatch.unwrap().0, 1);
-        assert!(diff_expr(&e, &rows, &cand, Tolerance::Ulp(1)).unwrap().conforms());
+        assert!(diff_expr(&e, &rows, &cand, Tolerance::Ulp(1))
+            .unwrap()
+            .conforms());
     }
 
     #[test]
@@ -791,7 +837,10 @@ mod tests {
         let cand = [1.0]; // one short of the 2 reference rows
         assert_eq!(
             diff_expr(&e, &rows, &cand, Tolerance::Exact),
-            Err(Error::LengthMismatch { expected: 2, got: 1 })
+            Err(Error::LengthMismatch {
+                expected: 2,
+                got: 1
+            })
         );
     }
 
@@ -831,16 +880,30 @@ mod tests {
         let reff = reference_expr_f16(&e, &rf).unwrap();
         assert_eq!(reff, [f16::from_f32(5.0)]);
         // a planted 1-ULP error is caught at Exact, tolerated at Ulp(1).
-        let cand: Vec<f16> = reff.iter().map(|&x| f16::from_bits(x.to_bits() + 1)).collect();
-        assert!(!diff_expr_f16(&e, &rf, &cand, Tolerance::Exact).unwrap().conforms());
-        assert!(diff_expr_f16(&e, &rf, &cand, Tolerance::Ulp(1)).unwrap().conforms());
+        let cand: Vec<f16> = reff
+            .iter()
+            .map(|&x| f16::from_bits(x.to_bits() + 1))
+            .collect();
+        assert!(!diff_expr_f16(&e, &rf, &cand, Tolerance::Exact)
+            .unwrap()
+            .conforms());
+        assert!(diff_expr_f16(&e, &rf, &cand, Tolerance::Ulp(1))
+            .unwrap()
+            .conforms());
         // bf16 lane.
         let rb: [&[bf16]; 1] = [&[bf16::from_f32(3.0), bf16::from_f32(2.0)]];
         let refb = reference_expr_bf16(&e, &rb).unwrap();
         assert_eq!(refb, [bf16::from_f32(5.0)]);
-        let cb: Vec<bf16> = refb.iter().map(|&x| bf16::from_bits(x.to_bits() + 1)).collect();
-        assert!(!diff_expr_bf16(&e, &rb, &cb, Tolerance::Exact).unwrap().conforms());
-        assert!(diff_expr_bf16(&e, &rb, &cb, Tolerance::Ulp(1)).unwrap().conforms());
+        let cb: Vec<bf16> = refb
+            .iter()
+            .map(|&x| bf16::from_bits(x.to_bits() + 1))
+            .collect();
+        assert!(!diff_expr_bf16(&e, &rb, &cb, Tolerance::Exact)
+            .unwrap()
+            .conforms());
+        assert!(diff_expr_bf16(&e, &rb, &cb, Tolerance::Ulp(1))
+            .unwrap()
+            .conforms());
         // a MissingInput propagates on the narrow lanes too.
         let e2 = parse("add(a, b)").unwrap();
         let short: [&[f16]; 1] = [&[f16::from_f32(1.0)]];
@@ -864,7 +927,10 @@ mod tests {
             let mut by_key = nonnan.clone();
             by_key.sort_by_key(|&b| key_u8(b));
             for w in by_key.windows(2) {
-                assert!(key_u8(w[0]) < key_u8(w[1]), "keys must be a strict total order");
+                assert!(
+                    key_u8(w[0]) < key_u8(w[1]),
+                    "keys must be a strict total order"
+                );
                 assert!(
                     <$t>::from_bits(w[0]).to_f32() <= <$t>::from_bits(w[1]).to_f32(),
                     "value must be monotone across the key order"
@@ -883,7 +949,10 @@ mod tests {
                 }
             }
             assert_eq!(max_dist, $expected_max);
-            assert!(max_dist < u8::MAX, "a real distance must never reach the one-NaN sentinel");
+            assert!(
+                max_dist < u8::MAX,
+                "a real distance must never reach the one-NaN sentinel"
+            );
         }};
     }
 

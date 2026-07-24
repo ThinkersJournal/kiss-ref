@@ -101,12 +101,18 @@ const U4: DetClass = DetClass::Ulp(4.0);
 fn r1_dag() -> FlatDag {
     FlatDag::new(
         vec![
-            Node::Bind(0),                                     // 0 A
-            Node::Bind(1),                                     // 1 B
-            Node::Matmul { lhs: 0, rhs: 1 },                   // 2
-            Node::Bind(2),                                     // 3 bias
-            Node::Apply { op: Op::Add, children: vec![2, 3] }, // 4
-            Node::Apply { op: Op::Relu, children: vec![4] },   // 5
+            Node::Bind(0),                   // 0 A
+            Node::Bind(1),                   // 1 B
+            Node::Matmul { lhs: 0, rhs: 1 }, // 2
+            Node::Bind(2),                   // 3 bias
+            Node::Apply {
+                op: Op::Add,
+                children: vec![2, 3],
+            }, // 4
+            Node::Apply {
+                op: Op::Relu,
+                children: vec![4],
+            }, // 5
         ],
         vec![5],
     )
@@ -123,12 +129,31 @@ fn r1_inputs<T: ScalarFloat>() -> Vec<Tensor<T>> {
 fn r2_dag() -> FlatDag {
     FlatDag::new(
         vec![
-            Node::Bind(0),                                                                // 0
-            Node::Reduce { monoid: Monoid::Max, axes: vec![1], keepdim: true, child: 0 }, // 1
-            Node::Apply { op: Op::Sub, children: vec![0, 1] },                            // 2
-            Node::Apply { op: Op::Exp, children: vec![2] },                               // 3
-            Node::Reduce { monoid: Monoid::Sum, axes: vec![1], keepdim: true, child: 3 }, // 4
-            Node::Apply { op: Op::Div, children: vec![3, 4] },                            // 5
+            Node::Bind(0), // 0
+            Node::Reduce {
+                monoid: Monoid::Max,
+                axes: vec![1],
+                keepdim: true,
+                child: 0,
+            }, // 1
+            Node::Apply {
+                op: Op::Sub,
+                children: vec![0, 1],
+            }, // 2
+            Node::Apply {
+                op: Op::Exp,
+                children: vec![2],
+            }, // 3
+            Node::Reduce {
+                monoid: Monoid::Sum,
+                axes: vec![1],
+                keepdim: true,
+                child: 3,
+            }, // 4
+            Node::Apply {
+                op: Op::Div,
+                children: vec![3, 4],
+            }, // 5
         ],
         vec![5],
     )
@@ -143,18 +168,49 @@ fn r2_inputs() -> Vec<Tensor<f64>> {
 fn r3_dag() -> FlatDag {
     FlatDag::new(
         vec![
-            Node::Bind(0),                                                                // 0 x
-            Node::Reduce { monoid: Monoid::Sum, axes: vec![1], keepdim: true, child: 0 }, // 1
-            Node::ReducedCount(vec![1]),                                                  // 2 = 4.0
-            Node::Apply { op: Op::Div, children: vec![1, 2] },                            // 3 mean
-            Node::Apply { op: Op::Sub, children: vec![0, 3] },                            // 4 centered
-            Node::Apply { op: Op::Mul, children: vec![4, 4] },                            // 5
-            Node::Reduce { monoid: Monoid::Sum, axes: vec![1], keepdim: true, child: 5 }, // 6
-            Node::Apply { op: Op::Div, children: vec![6, 2] },                            // 7 var
-            Node::RuntimeScalar(0),                                                       // 8 eps
-            Node::Apply { op: Op::Add, children: vec![7, 8] },                            // 9
-            Node::Apply { op: Op::Sqrt, children: vec![9] },                              // 10
-            Node::Apply { op: Op::Div, children: vec![4, 10] },                           // 11
+            Node::Bind(0), // 0 x
+            Node::Reduce {
+                monoid: Monoid::Sum,
+                axes: vec![1],
+                keepdim: true,
+                child: 0,
+            }, // 1
+            Node::ReducedCount(vec![1]), // 2 = 4.0
+            Node::Apply {
+                op: Op::Div,
+                children: vec![1, 2],
+            }, // 3 mean
+            Node::Apply {
+                op: Op::Sub,
+                children: vec![0, 3],
+            }, // 4 centered
+            Node::Apply {
+                op: Op::Mul,
+                children: vec![4, 4],
+            }, // 5
+            Node::Reduce {
+                monoid: Monoid::Sum,
+                axes: vec![1],
+                keepdim: true,
+                child: 5,
+            }, // 6
+            Node::Apply {
+                op: Op::Div,
+                children: vec![6, 2],
+            }, // 7 var
+            Node::RuntimeScalar(0), // 8 eps
+            Node::Apply {
+                op: Op::Add,
+                children: vec![7, 8],
+            }, // 9
+            Node::Apply {
+                op: Op::Sqrt,
+                children: vec![9],
+            }, // 10
+            Node::Apply {
+                op: Op::Div,
+                children: vec![4, 10],
+            }, // 11
         ],
         vec![11],
     )
@@ -169,7 +225,11 @@ fn r4_dag() -> FlatDag {
         vec![
             Node::Bind(0), // keys
             Node::Bind(1), // data
-            Node::SortNetwork { keys: 0, axis: 0, dir: Direction::Asc }, // 2
+            Node::SortNetwork {
+                keys: 0,
+                axis: 0,
+                dir: Direction::Asc,
+            }, // 2
             Node::Gather {
                 data: 1,
                 index: IndexRef::Node(2),
@@ -193,7 +253,11 @@ fn r5_dag() -> FlatDag {
     FlatDag {
         nodes: vec![
             Node::Bind(0),
-            Node::SortNetwork { keys: 0, axis: 0, dir: Direction::Asc },
+            Node::SortNetwork {
+                keys: 0,
+                axis: 0,
+                dir: Direction::Asc,
+            },
         ],
         outputs: vec![1],
         index_outputs: vec![1],
@@ -235,7 +299,7 @@ fn r6_indices() -> Vec<IndexTensor> {
 fn r7_dag() -> FlatDag {
     FlatDag::new(
         vec![
-            Node::Bind(0),    // 0 data
+            Node::Bind(0),     // 0 data
             Node::Const(-0.5), // 1 base
             Node::Gather {
                 data: 0,
@@ -260,9 +324,12 @@ fn r7_indices() -> Vec<IndexTensor> {
 fn r8_dag() -> FlatDag {
     FlatDag::new(
         vec![
-            Node::Bind(0),                                     // 0 x
-            Node::Iota { like: 0, axis: 1 },                   // 1
-            Node::Apply { op: Op::Mul, children: vec![1, 0] }, // 2
+            Node::Bind(0),                   // 0 x
+            Node::Iota { like: 0, axis: 1 }, // 1
+            Node::Apply {
+                op: Op::Mul,
+                children: vec![1, 0],
+            }, // 2
         ],
         vec![2],
     )
@@ -277,8 +344,15 @@ fn r9_dag() -> FlatDag {
         vec![
             Node::Bind(0), // x
             Node::Bind(1), // data
-            Node::Apply { op: Op::Exp, children: vec![0] }, // 2
-            Node::SortNetwork { keys: 2, axis: 0, dir: Direction::Asc }, // 3
+            Node::Apply {
+                op: Op::Exp,
+                children: vec![0],
+            }, // 2
+            Node::SortNetwork {
+                keys: 2,
+                axis: 0,
+                dir: Direction::Asc,
+            }, // 3
             Node::Gather {
                 data: 1,
                 index: IndexRef::Node(3),
@@ -455,7 +529,10 @@ fn test_recipe_gather_or_default_skip_base() {
             vec![
                 Node::Bind(0),
                 Node::Const(0.0),
-                Node::Apply { op: Op::Exp, children: vec![1] },
+                Node::Apply {
+                    op: Op::Exp,
+                    children: vec![1],
+                },
                 Node::Gather {
                     data: 0,
                     index: IndexRef::Slot(0),
@@ -586,7 +663,7 @@ fn test_recipe_flip_reverse() {
         vec![1],
     );
     let x = t64(&[1.0, -0.0, f64::NAN, 4.0, 5.0, 6.0], &[2, 3]);
-    let r = eval_recipe(&dag, &[x.clone()], &[], &[]).expect("R11 must evaluate");
+    let r = eval_recipe(&dag, std::slice::from_ref(&x), &[], &[]).expect("R11 must evaluate");
     assert_bits(
         &r.outputs[0],
         &[f64::NAN, -0.0, 1.0, 6.0, 5.0, 4.0],
@@ -602,7 +679,8 @@ fn test_recipe_flip_reverse() {
         ],
         vec![2],
     );
-    let r2 = eval_recipe(&dag2, &[x.clone()], &[], &[]).expect("R11 involution must evaluate");
+    let r2 = eval_recipe(&dag2, std::slice::from_ref(&x), &[], &[])
+        .expect("R11 involution must evaluate");
     for (a, b) in r2.outputs[0].as_slice().iter().zip(x.as_slice()) {
         assert_eq!(a.to_bits(), b.to_bits(), "flip∘flip must be bit-identity");
     }

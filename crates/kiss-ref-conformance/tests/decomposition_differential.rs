@@ -79,7 +79,10 @@ use kiss_ref_core::{
 /// floor; the budget makes a spec/vocab cycle an `Err`, never a stack overflow).
 fn eval_literal<T: ScalarFloat>(e: &Expr, inputs: &[T], budget: u32) -> Result<T, Error> {
     match e {
-        Expr::Input(i) => inputs.get(*i as usize).copied().ok_or(Error::MissingInput(*i)),
+        Expr::Input(i) => inputs
+            .get(*i as usize)
+            .copied()
+            .ok_or(Error::MissingInput(*i)),
         Expr::Const(c) => Ok(T::from_f64(c.value())),
         Expr::Apply(op, args) => {
             let mut vals: Vec<T> = Vec::with_capacity(args.len());
@@ -92,8 +95,10 @@ fn eval_literal<T: ScalarFloat>(e: &Expr, inputs: &[T], budget: u32) -> Result<T
                     if budget == 0 {
                         return Err(Error::Unsupported(*op));
                     }
-                    let sub =
-                        parse(src).map_err(|pe| Error::BadDecomposition { op: *op, pos: pe.pos })?;
+                    let sub = parse(src).map_err(|pe| Error::BadDecomposition {
+                        op: *op,
+                        pos: pe.pos,
+                    })?;
                     eval_literal(&sub, &vals, budget - 1)
                 }
                 // a floor atom: the reference kernel IS the pinned semantics.
@@ -346,9 +351,17 @@ fn rows_f32(arity: usize) -> Vec<Vec<f32>> {
 fn test_decomp_bound_set_matches_the_section_6_13_scalar_table() {
     // Born-red guard: the shape of everything below depends on this partition.
     let bound = bound_scalar_nonprimitives();
-    assert_eq!(bound.len(), 41, "the §6.13 scalar (expression-body) table binds 41 ops");
+    assert_eq!(
+        bound.len(),
+        41,
+        "the §6.13 scalar (expression-body) table binds 41 ops"
+    );
     let refined: Vec<Op> = bound.iter().copied().filter(|o| is_refined(*o)).collect();
-    assert_eq!(refined.len(), 11, "§6.13-0003 marks exactly 11 ops ✓ in the Refine column");
+    assert_eq!(
+        refined.len(),
+        11,
+        "§6.13-0003 marks exactly 11 ops ✓ in the Refine column"
+    );
     assert_eq!(
         bound.len() - refined.len(),
         30,
@@ -359,7 +372,10 @@ fn test_decomp_bound_set_matches_the_section_6_13_scalar_table() {
             op.reference_decomposition_src().is_some(),
             "{op:?} is refine-marked, so it must still carry the reference string it refines"
         );
-        assert!(!op.is_primitive_floor(), "{op:?} is a non-primitive (§6.3-0003)");
+        assert!(
+            !op.is_primitive_floor(),
+            "{op:?} is a non-primitive (§6.3-0003)"
+        );
     }
     // Every bound decomposition is scalar-evaluable — the total-cover property.
     for op in bound {
@@ -377,14 +393,29 @@ fn test_decomp_scalar_total_cover_over_the_adversarial_set() {
     // decomposition at once).
     for op in bound_scalar_nonprimitives() {
         let arity = arity_of(&tree(op));
-        assert!(arity == 1 || arity == 2, "{op:?} unexpected decomposition arity {arity}");
+        assert!(
+            arity == 1 || arity == 2,
+            "{op:?} unexpected decomposition arity {arity}"
+        );
         for row in rows_f64(arity) {
-            assert!(eval_op::<f64>(op, &row).is_ok(), "{op:?}{row:?} f64 must evaluate");
-            assert!(eval_expr::<f64>(&tree(op), &row).is_ok(), "{op:?}{row:?} f64 decomposition");
+            assert!(
+                eval_op::<f64>(op, &row).is_ok(),
+                "{op:?}{row:?} f64 must evaluate"
+            );
+            assert!(
+                eval_expr::<f64>(&tree(op), &row).is_ok(),
+                "{op:?}{row:?} f64 decomposition"
+            );
         }
         for row in rows_f32(arity) {
-            assert!(eval_op::<f32>(op, &row).is_ok(), "{op:?}{row:?} f32 must evaluate");
-            assert!(eval_expr::<f32>(&tree(op), &row).is_ok(), "{op:?}{row:?} f32 decomposition");
+            assert!(
+                eval_op::<f32>(op, &row).is_ok(),
+                "{op:?}{row:?} f32 must evaluate"
+            );
+            assert!(
+                eval_expr::<f32>(&tree(op), &row).is_ok(),
+                "{op:?}{row:?} f32 decomposition"
+            );
         }
     }
 }
@@ -400,7 +431,10 @@ fn test_decomp_unmarked_ops_reproduce_the_reference_bit_for_bit() {
     // fails the moment a direct kernel is introduced for an unmarked op without the
     // spec marking it refine-permitted. Bit-equality (not ULP) is asserted, so even
     // a NaN-payload or signed-zero difference trips it.
-    for op in bound_scalar_nonprimitives().into_iter().filter(|o| !is_refined(*o)) {
+    for op in bound_scalar_nonprimitives()
+        .into_iter()
+        .filter(|o| !is_refined(*o))
+    {
         let e = tree(op);
         let arity = arity_of(&e);
         for row in rows_f64(arity) {
@@ -440,12 +474,20 @@ fn test_decomp_unmarked_ops_reproduce_the_full_floor_expansion() {
         for row in rows_f64(arity) {
             let a = pinned_f64(op, &row);
             let b = literal_f64(op, &row);
-            assert_eq!(a.to_bits(), b.to_bits(), "{op:?}{row:?} f64 floor expansion");
+            assert_eq!(
+                a.to_bits(),
+                b.to_bits(),
+                "{op:?}{row:?} f64 floor expansion"
+            );
         }
         for row in rows_f32(arity) {
             let a = pinned_f32(op, &row);
             let b = literal_f32(op, &row);
-            assert_eq!(a.to_bits(), b.to_bits(), "{op:?}{row:?} f32 floor expansion");
+            assert_eq!(
+                a.to_bits(),
+                b.to_bits(),
+                "{op:?}{row:?} f32 floor expansion"
+            );
         }
     }
 }
@@ -460,7 +502,11 @@ fn test_decomp_gelu_tanh_is_the_only_unmarked_op_over_a_refined_child() {
         .into_iter()
         .filter(|o| !is_refined(*o) && has_refined_descendant(*o, 32))
         .collect();
-    assert_eq!(composites, vec![Op::GeluTanh], "unmarked ops standing over a refined child");
+    assert_eq!(
+        composites,
+        vec![Op::GeluTanh],
+        "unmarked ops standing over a refined child"
+    );
 }
 
 #[test]
@@ -479,9 +525,15 @@ fn test_decomp_gelu_tanh_inherits_the_mandatory_tanh_refinement() {
     // `tanh` inside is inherited node-for-node, and the two are identical bits even
     // at x=±50 where a literal `tanh` would already be NaN. This is the concrete
     // meaning of "inherits the mandatory tanh refinement".
-    for &x in &[0.0f64, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 30.0, 50.0, -1.0, -5.0, -30.0, -50.0] {
+    for &x in &[
+        0.0f64, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 30.0, 50.0, -1.0, -5.0, -30.0, -50.0,
+    ] {
         let k = pinned_f64(Op::GeluTanh, &[x]);
-        assert_eq!(k.to_bits(), eval_expr::<f64>(&e, &[x]).unwrap().to_bits(), "gelu_tanh({x})");
+        assert_eq!(
+            k.to_bits(),
+            eval_expr::<f64>(&e, &[x]).unwrap().to_bits(),
+            "gelu_tanh({x})"
+        );
     }
 
     // CLAIM B (overflow): the fully-literal expansion — tanh expanded to
@@ -489,8 +541,14 @@ fn test_decomp_gelu_tanh_inherits_the_mandatory_tanh_refinement() {
     // while the pinned reference is finite. This is WHY the inheritance matters.
     for &x in &[30.0f64, 50.0, -30.0, -50.0] {
         let k = pinned_f64(Op::GeluTanh, &[x]);
-        assert!(literal_f64(Op::GeluTanh, &[x]).is_nan(), "literal gelu_tanh({x}) should be NaN");
-        assert!(!k.is_nan(), "pinned gelu_tanh({x}) must not be NaN, got {k:e}");
+        assert!(
+            literal_f64(Op::GeluTanh, &[x]).is_nan(),
+            "literal gelu_tanh({x}) should be NaN"
+        );
+        assert!(
+            !k.is_nan(),
+            "pinned gelu_tanh({x}) must not be NaN, got {k:e}"
+        );
     }
     // gelu_tanh(x) → x for large positive x, → −0.0 for large negative x.
     assert_eq!(pinned_f64(Op::GeluTanh, &[30.0]), 30.0);
@@ -503,7 +561,10 @@ fn test_decomp_gelu_tanh_inherits_the_mandatory_tanh_refinement() {
     // difference in the literal `tanh` blows up the relative error without bound;
     // that ill-conditioning is asserted as Claim D, not swept under a band.)
     for &x in &[0.0f64, 0.125, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0] {
-        let d = ulp_distance_f64(pinned_f64(Op::GeluTanh, &[x]), literal_f64(Op::GeluTanh, &[x]));
+        let d = ulp_distance_f64(
+            pinned_f64(Op::GeluTanh, &[x]),
+            literal_f64(Op::GeluTanh, &[x]),
+        );
         assert!(d <= 8, "gelu_tanh({x}) literal vs pinned = {d} ULP > 8");
     }
 
@@ -512,10 +573,18 @@ fn test_decomp_gelu_tanh_inherits_the_mandatory_tanh_refinement() {
     // reference (the outer cancellation), so the literal expansion is NOT a valid
     // differential target there — which is exactly the point of using `eval_expr`
     // (pinned children) as the reference for a composite, not `eval_literal`.
-    let d_tail =
-        ulp_distance_f64(pinned_f64(Op::GeluTanh, &[-5.0]), literal_f64(Op::GeluTanh, &[-5.0]));
-    assert!(literal_f64(Op::GeluTanh, &[-5.0]).is_finite(), "literal is finite at -5, just wrong");
-    assert!(d_tail > 1_000, "the negative-tail cancellation must be visible, got {d_tail} ULP");
+    let d_tail = ulp_distance_f64(
+        pinned_f64(Op::GeluTanh, &[-5.0]),
+        literal_f64(Op::GeluTanh, &[-5.0]),
+    );
+    assert!(
+        literal_f64(Op::GeluTanh, &[-5.0]).is_finite(),
+        "literal is finite at -5, just wrong"
+    );
+    assert!(
+        d_tail > 1_000,
+        "the negative-tail cancellation must be visible, got {d_tail} ULP"
+    );
 
     // f32 lane: the literal form fails earlier (exp overflows at ~88), and the
     // inheritance still holds bit-for-bit.
@@ -585,8 +654,16 @@ fn test_decomp_refined_agree_with_literal_in_the_well_conditioned_domain() {
     // decomposition's pinned mathematical meaning (the function it denotes) within
     // the op's declared ULP". This is the non-tautological half of the file: the
     // direct kernel and the literal §6.13 string are genuinely different code.
-    let unary =
-        [Op::Expm1, Op::Log1p, Op::Tanh, Op::Sinh, Op::Cosh, Op::Silu, Op::Softplus, Op::Mish];
+    let unary = [
+        Op::Expm1,
+        Op::Log1p,
+        Op::Tanh,
+        Op::Sinh,
+        Op::Cosh,
+        Op::Silu,
+        Op::Softplus,
+        Op::Mish,
+    ];
     for op in unary {
         for &x in UNARY_GRID {
             if !agreement_domain(op, x) {
@@ -622,9 +699,10 @@ fn test_decomp_refined_pow_agrees_with_exp_b_log_a_on_the_positive_base_domain()
             let d = ulp_distance_f64(pinned_f64(Op::Pow, &[a, b]), literal_f64(Op::Pow, &[a, b]));
             assert!(d <= band, "pow({a:e},{b}) f64: {d} ULP > band {band}");
             let (af, bf) = (a as f32, b as f32);
-            let d32 =
-                ulp_distance_f32(pinned_f32(Op::Pow, &[af, bf]), literal_f32(Op::Pow, &[af, bf]))
-                    as u64;
+            let d32 = ulp_distance_f32(
+                pinned_f32(Op::Pow, &[af, bf]),
+                literal_f32(Op::Pow, &[af, bf]),
+            ) as u64;
             assert!(d32 <= band, "pow({a:e},{b}) f32: {d32} ULP > band {band}");
         }
     }
@@ -641,8 +719,10 @@ fn test_decomp_refined_ldexp_agrees_with_mul_a_exp2_b_and_is_exact_for_integer_b
     for &a in &[1.0f64, 1.5, -3.25, 7.0] {
         for &b in &[-20.0f64, -3.0, -1.0, 0.0, 1.0, 3.0, 10.0, 20.0, 52.0, 100.0] {
             let band = chain_band(b * LN2);
-            let d =
-                ulp_distance_f64(pinned_f64(Op::Ldexp, &[a, b]), literal_f64(Op::Ldexp, &[a, b]));
+            let d = ulp_distance_f64(
+                pinned_f64(Op::Ldexp, &[a, b]),
+                literal_f64(Op::Ldexp, &[a, b]),
+            );
             assert!(d <= band, "ldexp({a},{b}) f64: {d} ULP > band {band}");
             let (af, bf) = (a as f32, b as f32);
             let d32 = ulp_distance_f32(
@@ -680,8 +760,14 @@ fn test_decomp_refined_hypot_agrees_with_sqrt_of_sum_of_squares_in_range() {
         (1e150, 1e150),
         (7.25, -0.5),
     ] {
-        let d = ulp_distance_f64(pinned_f64(Op::Hypot, &[a, b]), literal_f64(Op::Hypot, &[a, b]));
-        assert!(d <= HYPOT_BAND, "hypot({a:e},{b:e}) f64: {d} ULP > {HYPOT_BAND}");
+        let d = ulp_distance_f64(
+            pinned_f64(Op::Hypot, &[a, b]),
+            literal_f64(Op::Hypot, &[a, b]),
+        );
+        assert!(
+            d <= HYPOT_BAND,
+            "hypot({a:e},{b:e}) f64: {d} ULP > {HYPOT_BAND}"
+        );
     }
     // The pinned exact triples survive both paths identically.
     assert_eq!(pinned_f64(Op::Hypot, &[3.0, 4.0]), 5.0);
@@ -704,8 +790,16 @@ fn test_decomp_refined_diverge_where_the_literal_form_overflows() {
     let inf = f64::INFINITY;
 
     // tanh: literal inf/inf = NaN; pinned ±1 (the clause's named example).
-    for &(x, want) in &[(1000.0f64, 1.0f64), (-1000.0, -1.0), (inf, 1.0), (-inf, -1.0)] {
-        assert!(literal_f64(Op::Tanh, &[x]).is_nan(), "literal tanh({x:e}) should be NaN");
+    for &(x, want) in &[
+        (1000.0f64, 1.0f64),
+        (-1000.0, -1.0),
+        (inf, 1.0),
+        (-inf, -1.0),
+    ] {
+        assert!(
+            literal_f64(Op::Tanh, &[x]).is_nan(),
+            "literal tanh({x:e}) should be NaN"
+        );
         assert_eq!(pinned_f64(Op::Tanh, &[x]), want, "pinned tanh({x:e})");
     }
     // softplus: literal log(inf) = inf; pinned ≈ x (the clause's named example).
@@ -717,9 +811,15 @@ fn test_decomp_refined_diverge_where_the_literal_form_overflows() {
     assert!(literal_f64(Op::Mish, &[inf]).is_nan());
     assert!(pinned_f64(Op::Mish, &[inf]).is_infinite());
     // silu: literal 1/inf = 0 flushes the whole product; pinned keeps the subnormal.
-    assert_eq!(literal_f64(Op::Silu, &[-745.0]).to_bits(), (-0.0f64).to_bits());
+    assert_eq!(
+        literal_f64(Op::Silu, &[-745.0]).to_bits(),
+        (-0.0f64).to_bits()
+    );
     let s = pinned_f64(Op::Silu, &[-745.0]);
-    assert!(s < 0.0 && s > -1e-300, "pinned silu(-745) should be a tiny negative, got {s:e}");
+    assert!(
+        s < 0.0 && s > -1e-300,
+        "pinned silu(-745) should be a tiny negative, got {s:e}"
+    );
 
     // The f32 lane fails earlier (exp overflows at ~88) — same shape, different edge.
     assert!(literal_f32(Op::Tanh, &[100.0]).is_nan());
@@ -728,7 +828,10 @@ fn test_decomp_refined_diverge_where_the_literal_form_overflows() {
     assert_eq!(pinned_f32(Op::Softplus, &[100.0]), 100.0);
     assert!(literal_f32(Op::Mish, &[100.0]).is_nan());
     assert_eq!(pinned_f32(Op::Mish, &[100.0]), 100.0);
-    assert_eq!(literal_f32(Op::Silu, &[-100.0]).to_bits(), (-0.0f32).to_bits());
+    assert_eq!(
+        literal_f32(Op::Silu, &[-100.0]).to_bits(),
+        (-0.0f32).to_bits()
+    );
     assert!(pinned_f32(Op::Silu, &[-100.0]) < 0.0);
 }
 
@@ -742,8 +845,15 @@ fn test_decomp_refined_diverge_where_the_literal_form_cancels() {
             let lit = literal_f64(op, &[x]);
             let pin = pinned_f64(op, &[x]);
             // f(x) ≈ x to far below 1 ULP at these magnitudes.
-            assert!(ulp_distance_f64(pin, x) <= 1, "{op:?}({x:e}) pinned {pin:e} should be ≈ x");
-            assert_ne!(lit.to_bits(), pin.to_bits(), "{op:?}({x:e}) literal must diverge");
+            assert!(
+                ulp_distance_f64(pin, x) <= 1,
+                "{op:?}({x:e}) pinned {pin:e} should be ≈ x"
+            );
+            assert_ne!(
+                lit.to_bits(),
+                pin.to_bits(),
+                "{op:?}({x:e}) literal must diverge"
+            );
             assert!(
                 lit == 0.0 || ulp_distance_f64(lit, x) > 1_000,
                 "{op:?}({x:e}) literal {lit:e} should have collapsed"
@@ -753,8 +863,14 @@ fn test_decomp_refined_diverge_where_the_literal_form_cancels() {
     // softplus/mish cancel toward −∞ instead: log(1 + e^x) with e^x under 1's ULP.
     assert_eq!(literal_f64(Op::Softplus, &[-50.0]), 0.0);
     let sp = pinned_f64(Op::Softplus, &[-50.0]);
-    assert!(sp > 0.0 && sp < 1e-21, "pinned softplus(-50) ≈ e^-50 = 1.93e-22, got {sp:e}");
-    assert_eq!(literal_f64(Op::Mish, &[-50.0]).to_bits(), (-0.0f64).to_bits());
+    assert!(
+        sp > 0.0 && sp < 1e-21,
+        "pinned softplus(-50) ≈ e^-50 = 1.93e-22, got {sp:e}"
+    );
+    assert_eq!(
+        literal_f64(Op::Mish, &[-50.0]).to_bits(),
+        (-0.0f64).to_bits()
+    );
     assert!(pinned_f64(Op::Mish, &[-50.0]) < 0.0);
     // f32 lane.
     assert_eq!(literal_f32(Op::Softplus, &[-20.0]), 0.0);
@@ -780,12 +896,21 @@ fn test_decomp_refined_preserve_signed_zero_where_the_literal_form_loses_it() {
             "{op:?}(-0.0) pinned must stay -0.0"
         );
         // +0.0 agrees on both paths.
-        assert_eq!(literal_f64(op, &[0.0]).to_bits(), pinned_f64(op, &[0.0]).to_bits());
+        assert_eq!(
+            literal_f64(op, &[0.0]).to_bits(),
+            pinned_f64(op, &[0.0]).to_bits()
+        );
     }
     // §6.13-0005 pins the same for pow's negative-zero base: pow(-0.0, 3) = -0.0,
     // which `exp(3·log(-0.0))` cannot express (log of −0 is −inf → +0).
-    assert_eq!(literal_f64(Op::Pow, &[-0.0, 3.0]).to_bits(), (0.0f64).to_bits());
-    assert_eq!(pinned_f64(Op::Pow, &[-0.0, 3.0]).to_bits(), (-0.0f64).to_bits());
+    assert_eq!(
+        literal_f64(Op::Pow, &[-0.0, 3.0]).to_bits(),
+        (0.0f64).to_bits()
+    );
+    assert_eq!(
+        pinned_f64(Op::Pow, &[-0.0, 3.0]).to_bits(),
+        (-0.0f64).to_bits()
+    );
 }
 
 #[test]
@@ -846,10 +971,19 @@ fn test_decomp_ldexp_refined_must_not_overflow_where_the_reference_does_not() {
     //   literal: 1e-300 * exp(1024·ln2) = 1.7976931348622733e8   (finite, ~correct)
     //   exact  : 1e-300 * 2^1024        = 1.7976931348623157e8
     let lit = literal_f64(Op::Ldexp, &[1e-300, 1024.0]);
-    assert!(lit.is_finite(), "the reference form reaches this cell: {lit:e}");
+    assert!(
+        lit.is_finite(),
+        "the reference form reaches this cell: {lit:e}"
+    );
     let pin = pinned_f64(Op::Ldexp, &[1e-300, 1024.0]);
-    assert!(pin.is_finite(), "refined ldexp must not spuriously overflow, got {pin:e}");
-    assert!(ulp_distance_f64(pin, 1.7976931348623157e8) <= 4, "got {pin:e}");
+    assert!(
+        pin.is_finite(),
+        "refined ldexp must not spuriously overflow, got {pin:e}"
+    );
+    assert!(
+        ulp_distance_f64(pin, 1.7976931348623157e8) <= 4,
+        "got {pin:e}"
+    );
 }
 
 // =============================================================================
@@ -863,7 +997,11 @@ fn t(data: &[f64], shape: &[usize]) -> Tensor<f64> {
 /// Max ULP distance between two equal-length payloads.
 fn max_ulp(a: &[f64], b: &[f64]) -> u64 {
     assert_eq!(a.len(), b.len(), "payload lengths differ");
-    a.iter().zip(b).map(|(x, y)| ulp_distance_f64(*x, *y)).max().unwrap_or(0)
+    a.iter()
+        .zip(b)
+        .map(|(x, y)| ulp_distance_f64(*x, *y))
+        .max()
+        .unwrap_or(0)
 }
 
 #[test]
@@ -965,7 +1103,11 @@ fn test_decomp_tensor_matmul_equals_element_map_then_reduce() {
     assert_eq!(direct.shape(), &[m, n]);
     assert_eq!(recomposed.shape(), &[m, n, 1]); // keepdim on the contracted axis
     for (x, y) in direct.as_slice().iter().zip(recomposed.as_slice()) {
-        assert_eq!(x.to_bits(), y.to_bits(), "matmul {x:e} vs atom recomposition {y:e}");
+        assert_eq!(
+            x.to_bits(),
+            y.to_bits(),
+            "matmul {x:e} vs atom recomposition {y:e}"
+        );
     }
     // A hand-computed row, so the pair cannot be jointly wrong:
     // a = [[-2.5,-2,-1.5,-1],[-0.5,0,0.5,1],[1.5,2,2.5,3]],
@@ -981,12 +1123,23 @@ fn test_decomp_tensor_reduce_mean_divisor_is_the_product_of_reduced_extents() {
     // where a transcription goes wrong (dividing by one extent, or by the output
     // element count), so the divisor is recomputed independently here.
     let y = Tensor::from_vec((1..=24).map(|i| i as f64).collect::<Vec<_>>(), &[2, 3, 4]).unwrap();
-    for axes in [vec![0usize], vec![1], vec![2], vec![0, 2], vec![1, 2], vec![0, 1, 2]] {
+    for axes in [
+        vec![0usize],
+        vec![1],
+        vec![2],
+        vec![0, 2],
+        vec![1, 2],
+        vec![0, 1, 2],
+    ] {
         let mean = tops::reduce_mean(&y.view(), &axes).unwrap();
         let sum = reduce(&y.view(), Monoid::Sum, &axes).unwrap();
         let count: f64 = axes.iter().map(|&a| y.shape()[a] as f64).product();
         let expect: Vec<f64> = sum.as_slice().iter().map(|s| s / count).collect();
-        assert_eq!(mean.as_slice(), expect.as_slice(), "reduce_mean over {axes:?}");
+        assert_eq!(
+            mean.as_slice(),
+            expect.as_slice(),
+            "reduce_mean over {axes:?}"
+        );
     }
     // hand-computed: axes [0,2] of 1..24 shaped [2,3,4] → divisor 8, rows
     // {1..4,13..16}=68/8, {5..8,17..20}=100/8, {9..12,21..24}=132/8.
@@ -1011,15 +1164,25 @@ fn test_decomp_tensor_reduce_var_equals_the_centered_form_and_where_it_stops() {
         let mu: f64 = row.iter().sum::<f64>() / 4.0;
         let centered: Vec<f64> = row.iter().map(|q| (q - mu) * (q - mu)).collect();
         let cv = tops::reduce_mean(&t(&centered, &[4]).view(), &[0]).unwrap();
-        assert_eq!(max_ulp(v.as_slice(), cv.as_slice()), 0, "reduce_var {row:?}");
+        assert_eq!(
+            max_ulp(v.as_slice(), cv.as_slice()),
+            0,
+            "reduce_var {row:?}"
+        );
     }
     // hand-computed population variance of 1,2,3,4 = 1.25; std = sqrt(1.25).
     assert_eq!(
-        tops::reduce_var(&t(&[1.0, 2.0, 3.0, 4.0], &[4]).view(), &[0]).unwrap().as_slice(),
+        tops::reduce_var(&t(&[1.0, 2.0, 3.0, 4.0], &[4]).view(), &[0])
+            .unwrap()
+            .as_slice(),
         &[1.25]
     );
     let sd = tops::reduce_std(&t(&[1.0, 2.0, 3.0, 4.0], &[4]).view(), &[0]).unwrap();
-    assert!(ulp_distance_f64(sd.as_slice()[0], 1.1180339887498949) <= 4, "std {:e}", sd.as_slice()[0]);
+    assert!(
+        ulp_distance_f64(sd.as_slice()[0], 1.118_033_988_749_895) <= 4,
+        "std {:e}",
+        sd.as_slice()[0]
+    );
 
     // AND the honest limit of the §6.13 form: at a 1e8 offset the pinned textbook
     // decomposition cancels — 2.0 against a true 1.25. That is a property of the
@@ -1029,7 +1192,11 @@ fn test_decomp_tensor_reduce_var_equals_the_centered_form_and_where_it_stops() {
     // attribute, but NOT change the decomposition silently — so this stays.
     let big = vec![1e8, 1e8 + 1.0, 1e8 + 2.0, 1e8 + 3.0];
     let v = tops::reduce_var(&t(&big, &[4]).view(), &[0]).unwrap();
-    assert_eq!(v.as_slice(), &[2.0], "the textbook form's cancellation, pinned");
+    assert_eq!(
+        v.as_slice(),
+        &[2.0],
+        "the textbook form's cancellation, pinned"
+    );
     let mu: f64 = big.iter().sum::<f64>() / 4.0;
     let centered: Vec<f64> = big.iter().map(|q| (q - mu) * (q - mu)).collect();
     let cv = tops::reduce_mean(&t(&centered, &[4]).view(), &[0]).unwrap();
@@ -1040,14 +1207,29 @@ fn test_decomp_tensor_reduce_var_equals_the_centered_form_and_where_it_stops() {
 fn test_decomp_tensor_reduce_norm2_equals_sqrt_of_the_sum_of_squares() {
     // §6.13 `reduce_norm2`: `sqrt(reduce(sum, sqr(x)))`. Checked against the inverse
     // relation (norm² == Σx², an independent statement) plus an exact triple.
-    for row in [vec![3.0, 4.0], vec![1.0, 2.0, 2.0], vec![-0.5, 0.25, 1.75, -2.0]] {
+    for row in [
+        vec![3.0, 4.0],
+        vec![1.0, 2.0, 2.0],
+        vec![-0.5, 0.25, 1.75, -2.0],
+    ] {
         let x = t(&row, &[row.len()]);
         let n2 = tops::reduce_norm2(&x.view(), &[0]).unwrap().as_slice()[0];
         let sq: Vec<f64> = row.iter().map(|v| v * v).collect();
-        let s = reduce(&t(&sq, &[row.len()]).view(), Monoid::Sum, &[0]).unwrap().as_slice()[0];
-        assert!(ulp_distance_f64(n2 * n2, s) <= 4, "norm2({row:?})² = {:e} vs Σx² = {s:e}", n2 * n2);
+        let s = reduce(&t(&sq, &[row.len()]).view(), Monoid::Sum, &[0])
+            .unwrap()
+            .as_slice()[0];
+        assert!(
+            ulp_distance_f64(n2 * n2, s) <= 4,
+            "norm2({row:?})² = {:e} vs Σx² = {s:e}",
+            n2 * n2
+        );
     }
-    assert_eq!(tops::reduce_norm2(&t(&[3.0, 4.0], &[2]).view(), &[0]).unwrap().as_slice(), &[5.0]);
+    assert_eq!(
+        tops::reduce_norm2(&t(&[3.0, 4.0], &[2]).view(), &[0])
+            .unwrap()
+            .as_slice(),
+        &[5.0]
+    );
 }
 
 #[test]
@@ -1060,7 +1242,9 @@ fn test_decomp_tensor_logsumexp_equals_the_naive_form_and_survives_its_overflow(
         let x = t(row, &[row.len()]);
         let e = element_map(&parse("exp(x)").unwrap(), &[x.view()], &[row.len()]).unwrap();
         let s = reduce(&e.view(), Monoid::Sum, &[0]).unwrap();
-        element_map(&parse("log(x)").unwrap(), &[s.view()], &[1]).unwrap().as_slice()[0]
+        element_map(&parse("log(x)").unwrap(), &[s.view()], &[1])
+            .unwrap()
+            .as_slice()[0]
     };
     for row in [
         vec![0.0, 1.0, 2.0, 3.0],
@@ -1068,24 +1252,51 @@ fn test_decomp_tensor_logsumexp_equals_the_naive_form_and_survives_its_overflow(
         vec![700.0, 701.0, 702.0, 699.0],
         vec![-1.0, -1.0, -1.0, -1.0],
     ] {
-        let lse = tops::logsumexp(&t(&row, &[4]).view(), &[0]).unwrap().as_slice()[0];
+        let lse = tops::logsumexp(&t(&row, &[4]).view(), &[0])
+            .unwrap()
+            .as_slice()[0];
         let d = ulp_distance_f64(lse, naive(&row));
-        assert!(d <= 4, "logsumexp {row:?}: shifted {lse:e} vs naive {:e} = {d} ULP", naive(&row));
+        assert!(
+            d <= 4,
+            "logsumexp {row:?}: shifted {lse:e} vs naive {:e} = {d} ULP",
+            naive(&row)
+        );
     }
     // hand-computed: ln(1+e+e²+e³) = 3.4401896985611953.
-    let base = tops::logsumexp(&t(&[0.0, 1.0, 2.0, 3.0], &[4]).view(), &[0]).unwrap().as_slice()[0];
-    assert!(ulp_distance_f64(base, 3.4401896985611953) <= 4, "got {base:e}");
+    let base = tops::logsumexp(&t(&[0.0, 1.0, 2.0, 3.0], &[4]).view(), &[0])
+        .unwrap()
+        .as_slice()[0];
+    assert!(
+        ulp_distance_f64(base, 3.4401896985611953) <= 4,
+        "got {base:e}"
+    );
 
     // Divergence: every exp overflows (naive → +inf) / underflows (naive → −inf)
     // while the shifted form is finite and equals the shifted-by-c answer.
     let hi = vec![719.0, 720.0, 721.0, 722.0];
-    assert!(naive(&hi).is_infinite() && naive(&hi) > 0.0, "naive must overflow here");
-    let lse_hi = tops::logsumexp(&t(&hi, &[4]).view(), &[0]).unwrap().as_slice()[0];
-    assert!(ulp_distance_f64(lse_hi, base + 719.0) <= 4, "logsumexp shift-equivariance: {lse_hi:e}");
+    assert!(
+        naive(&hi).is_infinite() && naive(&hi) > 0.0,
+        "naive must overflow here"
+    );
+    let lse_hi = tops::logsumexp(&t(&hi, &[4]).view(), &[0])
+        .unwrap()
+        .as_slice()[0];
+    assert!(
+        ulp_distance_f64(lse_hi, base + 719.0) <= 4,
+        "logsumexp shift-equivariance: {lse_hi:e}"
+    );
     let lo = vec![-800.0, -801.0, -802.0, -799.0];
-    assert!(naive(&lo).is_infinite() && naive(&lo) < 0.0, "naive must underflow to -inf here");
-    let lse_lo = tops::logsumexp(&t(&lo, &[4]).view(), &[0]).unwrap().as_slice()[0];
-    assert!(ulp_distance_f64(lse_lo, base - 802.0) <= 4, "logsumexp low end: {lse_lo:e}");
+    assert!(
+        naive(&lo).is_infinite() && naive(&lo) < 0.0,
+        "naive must underflow to -inf here"
+    );
+    let lse_lo = tops::logsumexp(&t(&lo, &[4]).view(), &[0])
+        .unwrap()
+        .as_slice()[0];
+    assert!(
+        ulp_distance_f64(lse_lo, base - 802.0) <= 4,
+        "logsumexp low end: {lse_lo:e}"
+    );
 }
 
 #[test]
@@ -1110,7 +1321,10 @@ fn test_decomp_tensor_softmax_and_log_softmax_are_mutually_consistent() {
             round.as_slice()
         );
         let total: f64 = sm.as_slice().iter().sum();
-        assert!(ulp_distance_f64(total, 1.0) <= 4, "softmax {row:?} sums to {total:e}");
+        assert!(
+            ulp_distance_f64(total, 1.0) <= 4,
+            "softmax {row:?} sums to {total:e}"
+        );
     }
     // uniform row → exactly 1/n (the max shift makes every exponent 0).
     let u = tops::softmax(&t(&[10.0, 10.0, 10.0, 10.0], &[4]).view(), 0).unwrap();
@@ -1128,7 +1342,11 @@ fn test_decomp_tensor_softmax_is_shift_invariant_where_the_naive_form_would_over
         let moved: Vec<f64> = row.iter().map(|v| v + shift).collect();
         let s = tops::softmax(&t(&moved, &[4]).view(), 0).unwrap();
         for (a, b) in base.as_slice().iter().zip(s.as_slice()) {
-            assert_eq!(a.to_bits(), b.to_bits(), "softmax shift {shift}: {a:e} vs {b:e}");
+            assert_eq!(
+                a.to_bits(),
+                b.to_bits(),
+                "softmax shift {shift}: {a:e} vs {b:e}"
+            );
         }
     }
 }
@@ -1158,7 +1376,9 @@ fn test_decomp_tensor_scans_agree_with_their_reductions() {
     }
     // hand-computed prefixes.
     assert_eq!(
-        tops::cummax(&t(&[3.0, 1.0, 4.0, 1.0, 5.0], &[5]).view(), 0).unwrap().as_slice(),
+        tops::cummax(&t(&[3.0, 1.0, 4.0, 1.0, 5.0], &[5]).view(), 0)
+            .unwrap()
+            .as_slice(),
         &[3.0, 3.0, 4.0, 4.0, 5.0]
     );
 }
@@ -1180,12 +1400,30 @@ fn test_decomp_tensor_any_all_are_the_max_min_of_cmp_ne() {
         let ne = element_map(&parse("cmp_ne(x, const(0))").unwrap(), &[x.view()], &[n]).unwrap();
         let want_any = reduce(&ne.view(), Monoid::Max, &[0]).unwrap();
         let want_all = reduce(&ne.view(), Monoid::Min, &[0]).unwrap();
-        assert_eq!(tops::any(&x.view(), &[0]).unwrap().as_slice(), want_any.as_slice(), "any {row:?}");
-        assert_eq!(tops::all(&x.view(), &[0]).unwrap().as_slice(), want_all.as_slice(), "all {row:?}");
+        assert_eq!(
+            tops::any(&x.view(), &[0]).unwrap().as_slice(),
+            want_any.as_slice(),
+            "any {row:?}"
+        );
+        assert_eq!(
+            tops::all(&x.view(), &[0]).unwrap().as_slice(),
+            want_all.as_slice(),
+            "all {row:?}"
+        );
     }
     // hand-computed: NaN is truthy, -0.0 is not.
-    assert_eq!(tops::any(&t(&[0.0, f64::NAN, 0.0], &[3]).view(), &[0]).unwrap().as_slice(), &[1.0]);
-    assert_eq!(tops::all(&t(&[-0.0, 0.0, -0.0], &[3]).view(), &[0]).unwrap().as_slice(), &[0.0]);
+    assert_eq!(
+        tops::any(&t(&[0.0, f64::NAN, 0.0], &[3]).view(), &[0])
+            .unwrap()
+            .as_slice(),
+        &[1.0]
+    );
+    assert_eq!(
+        tops::all(&t(&[-0.0, 0.0, -0.0], &[3]).view(), &[0])
+            .unwrap()
+            .as_slice(),
+        &[0.0]
+    );
 }
 
 #[test]
@@ -1231,22 +1469,35 @@ fn test_decomp_tensor_layer_norm_and_rms_norm_match_hand_computed_values() {
     let ln = tops::layer_norm(&x.view(), &ones.view(), &zeros.view(), 0.0, 0).unwrap();
     let k = 0.8944271909999159f64;
     let want_ln = [-1.5 * k, -0.5 * k, 0.5 * k, 1.5 * k];
-    assert!(max_ulp(ln.as_slice(), &want_ln) <= 4, "layer_norm {:?}", ln.as_slice());
+    assert!(
+        max_ulp(ln.as_slice(), &want_ln) <= 4,
+        "layer_norm {:?}",
+        ln.as_slice()
+    );
     // centered and unit-variance: mean 0, mean square 1.
     let mean = tops::reduce_mean(&ln.view(), &[0]).unwrap().as_slice()[0];
     assert!(mean.abs() < 1e-15, "layer_norm output mean {mean:e}");
     let ms = tops::reduce_mean(
-        &element_map(&parse("mul(x, x)").unwrap(), &[ln.view()], &[4]).unwrap().view(),
+        &element_map(&parse("mul(x, x)").unwrap(), &[ln.view()], &[4])
+            .unwrap()
+            .view(),
         &[0],
     )
     .unwrap()
     .as_slice()[0];
-    assert!(ulp_distance_f64(ms, 1.0) <= 8, "layer_norm output mean-square {ms:e}");
+    assert!(
+        ulp_distance_f64(ms, 1.0) <= 8,
+        "layer_norm output mean-square {ms:e}"
+    );
 
     let rn = tops::rms_norm(&x.view(), &ones.view(), 0.0, 0).unwrap();
-    let r = 0.36514837167011072f64;
+    let r = 0.365_148_371_670_110_7_f64;
     let want_rn = [r, 2.0 * r, 3.0 * r, 4.0 * r];
-    assert!(max_ulp(rn.as_slice(), &want_rn) <= 4, "rms_norm {:?}", rn.as_slice());
+    assert!(
+        max_ulp(rn.as_slice(), &want_rn) <= 4,
+        "rms_norm {:?}",
+        rn.as_slice()
+    );
     // gamma/beta are applied, not ignored: gamma=2 scales, beta=1 shifts.
     let twos = t(&[2.0, 2.0, 2.0, 2.0], &[4]);
     let scaled = tops::rms_norm(&x.view(), &twos.view(), 0.0, 0).unwrap();
@@ -1271,7 +1522,11 @@ fn test_decomp_tensor_gather_family_matches_its_declared_oob_policy() {
     let sel = tops::index_select(&table.view(), &idx, 0).unwrap();
     assert_eq!(sel.as_slice(), &[30.0, 31.0, 10.0, 11.0]);
     let emb = tops::embedding(&table.view(), &idx).unwrap();
-    assert_eq!(emb.as_slice(), sel.as_slice(), "in-range: the two policies coincide");
+    assert_eq!(
+        emb.as_slice(),
+        sel.as_slice(),
+        "in-range: the two policies coincide"
+    );
 
     let oob = IndexTensor::new(vec![1, 9], &[2], Dtype::I64).unwrap();
     assert_eq!(

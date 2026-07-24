@@ -29,9 +29,15 @@ use crate::Error;
 /// stride) + 1`, or `0` when the effective window is larger than the padded input.
 fn pool_out_dim(in_d: usize, k: usize, s: usize, p: usize, dil: usize) -> Result<usize, Error> {
     if s == 0 || k == 0 {
-        return Err(Error::ShapeMismatch { expected: 1, got: 0 });
+        return Err(Error::ShapeMismatch {
+            expected: 1,
+            got: 0,
+        });
     }
-    let eff = dil.checked_mul(k - 1).and_then(|x| x.checked_add(1)).ok_or(Error::ShapeOverflow)?;
+    let eff = dil
+        .checked_mul(k - 1)
+        .and_then(|x| x.checked_add(1))
+        .ok_or(Error::ShapeOverflow)?;
     // Checked doubling of the padding, like every other multiply in the reference
     // (never-panic contract) — a raw `2 * p` would overflow on a pathological pad.
     let padded = p
@@ -41,7 +47,9 @@ fn pool_out_dim(in_d: usize, k: usize, s: usize, p: usize, dil: usize) -> Result
     if padded < eff {
         return Ok(0);
     }
-    ((padded - eff) / s).checked_add(1).ok_or(Error::ShapeOverflow)
+    ((padded - eff) / s)
+        .checked_add(1)
+        .ok_or(Error::ShapeOverflow)
 }
 
 /// Validate the parallel window-parameter arrays and build the output shape (input
@@ -57,7 +65,10 @@ fn window_out_shape(
     let rank = in_shape.len();
     let n = axes.len();
     if kernel.len() != n || stride.len() != n || padding.len() != n || dilation.len() != n {
-        return Err(Error::ShapeMismatch { expected: n, got: kernel.len() });
+        return Err(Error::ShapeMismatch {
+            expected: n,
+            got: kernel.len(),
+        });
     }
     let mut out = [1usize; MAX_RANK];
     out[..rank].copy_from_slice(in_shape);
@@ -73,7 +84,14 @@ fn window_out_shape(
 /// The source spatial position of window tap `t` at output position `o`:
 /// `o·stride + t·dilation − padding`. Returns `None` (out of bounds) if negative
 /// or `>= extent`.
-fn tap_pos(o: usize, t: usize, stride: usize, dilation: usize, padding: usize, extent: usize) -> Option<usize> {
+fn tap_pos(
+    o: usize,
+    t: usize,
+    stride: usize,
+    dilation: usize,
+    padding: usize,
+    extent: usize,
+) -> Option<usize> {
     let pos = (o as isize)
         .wrapping_mul(stride as isize)
         .wrapping_add((t as isize).wrapping_mul(dilation as isize))
@@ -115,7 +133,14 @@ pub fn avg_pool<T: ScalarFloat>(
             src[..rank].copy_from_slice(oc);
             let mut in_bounds = true;
             for (i, &ax) in axes.iter().enumerate() {
-                match tap_pos(oc[ax], tap[i], stride[i], dilation[i], padding[i], in_shape[ax]) {
+                match tap_pos(
+                    oc[ax],
+                    tap[i],
+                    stride[i],
+                    dilation[i],
+                    padding[i],
+                    in_shape[ax],
+                ) {
                     Some(p) => src[ax] = p,
                     None => {
                         in_bounds = false;
@@ -128,7 +153,11 @@ pub fn avg_pool<T: ScalarFloat>(
                 valid += 1;
             }
         }
-        let divisor = if count_include_pad { count_total } else { valid };
+        let divisor = if count_include_pad {
+            count_total
+        } else {
+            valid
+        };
         data.push(eval_op(Op::Div, &[acc, T::from_f64(divisor as f64)])?);
     }
     Tensor::from_vec(data, out_shape)
@@ -161,7 +190,14 @@ pub fn max_pool<T: ScalarFloat>(
             src[..rank].copy_from_slice(oc);
             let mut in_bounds = true;
             for (i, &ax) in axes.iter().enumerate() {
-                match tap_pos(oc[ax], tap[i], stride[i], dilation[i], padding[i], in_shape[ax]) {
+                match tap_pos(
+                    oc[ax],
+                    tap[i],
+                    stride[i],
+                    dilation[i],
+                    padding[i],
+                    in_shape[ax],
+                ) {
                     Some(p) => src[ax] = p,
                     None => {
                         in_bounds = false;
@@ -198,7 +234,10 @@ pub fn im2col<T: ScalarFloat>(
 
     let out_rank = rank + n;
     if out_rank > MAX_RANK {
-        return Err(Error::RankExceeded { rank: out_rank, max: MAX_RANK });
+        return Err(Error::RankExceeded {
+            rank: out_rank,
+            max: MAX_RANK,
+        });
     }
     let mut out_shape = [1usize; MAX_RANK];
     out_shape[..rank].copy_from_slice(patch_shape);
@@ -214,7 +253,14 @@ pub fn im2col<T: ScalarFloat>(
         src[..rank].copy_from_slice(&oc[..rank]);
         let mut in_bounds = true;
         for (i, &ax) in axes.iter().enumerate() {
-            match tap_pos(oc[ax], oc[rank + i], stride[i], dilation[i], padding[i], in_shape[ax]) {
+            match tap_pos(
+                oc[ax],
+                oc[rank + i],
+                stride[i],
+                dilation[i],
+                padding[i],
+                in_shape[ax],
+            ) {
                 Some(p) => src[ax] = p,
                 None => {
                     in_bounds = false;
@@ -222,7 +268,11 @@ pub fn im2col<T: ScalarFloat>(
                 }
             }
         }
-        data.push(if in_bounds { x.read(&src[..rank])? } else { T::ZERO });
+        data.push(if in_bounds {
+            x.read(&src[..rank])?
+        } else {
+            T::ZERO
+        });
     }
     Tensor::from_vec(data, out_shape)
 }
@@ -279,7 +329,10 @@ mod tests {
         let x = t(&[10.0, 20.0, 30.0], &[3]);
         let y = im2col(&x.view(), &[0], &[2], &[1], &[1], &[1]).unwrap();
         assert_eq!(y.shape(), &[4, 2]);
-        assert_eq!(y.as_slice(), &[0.0, 10.0, 10.0, 20.0, 20.0, 30.0, 30.0, 0.0]);
+        assert_eq!(
+            y.as_slice(),
+            &[0.0, 10.0, 10.0, 20.0, 20.0, 30.0, 30.0, 0.0]
+        );
     }
 
     #[test]

@@ -62,7 +62,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use half::f16;
 use kiss_ops_vocab::Op;
 use kiss_ref_core::window::{avg_pool, im2col, max_pool};
-use kiss_ref_core::{eval_op, Error, ScalarFloat, Tensor, E4m3, MAX_RANK};
+use kiss_ref_core::{eval_op, E4m3, Error, ScalarFloat, Tensor, MAX_RANK};
 
 // ---- iteration budgets (tune here on a slow machine) ------------------------
 
@@ -98,7 +98,11 @@ const SEED_SOAK: u64 = 0xB0FA_0B1A_5EED_0106;
 struct Rng(u64);
 impl Rng {
     fn new(seed: u64) -> Self {
-        Rng(if seed == 0 { 0x9E37_79B9_7F4A_7C15 } else { seed })
+        Rng(if seed == 0 {
+            0x9E37_79B9_7F4A_7C15
+        } else {
+            seed
+        })
     }
     fn next(&mut self) -> u64 {
         let mut x = self.0;
@@ -241,7 +245,10 @@ const USIZE_MAX_U128: u128 = usize::MAX as u128;
 /// Every operand is `< 2^64`, so no `u128` intermediate can overflow.
 fn model_pool_out_dim(in_d: u128, k: u128, s: u128, p: u128, dil: u128) -> Result<u128, Error> {
     if s == 0 || k == 0 {
-        return Err(Error::ShapeMismatch { expected: 1, got: 0 });
+        return Err(Error::ShapeMismatch {
+            expected: 1,
+            got: 0,
+        });
     }
     // `dil.checked_mul(k - 1).and_then(|x| x.checked_add(1))`
     let eff = dil * (k - 1) + 1;
@@ -278,7 +285,10 @@ fn model_stage1(c: &Case) -> Stage1 {
     let rank = c.shape.len();
     let n = c.axes.len();
     if c.kernel.len() != n || c.stride.len() != n || c.padding.len() != n || c.dilation.len() != n {
-        return Stage1::Decline(Error::ShapeMismatch { expected: n, got: c.kernel.len() });
+        return Stage1::Decline(Error::ShapeMismatch {
+            expected: n,
+            got: c.kernel.len(),
+        });
     }
     let mut out: Vec<u128> = c.shape.iter().map(|&d| d as u128).collect();
     for (i, &ax) in c.axes.iter().enumerate() {
@@ -341,7 +351,10 @@ fn expect_avg(c: &Case, s1: &Stage1) -> Expect {
     // The kernel odometer is built per output cell — an over-rank kernel only
     // declines when at least one cell exists.
     if out_numel > 0 && c.axes.len() > MAX_RANK {
-        return Expect::Decline(Error::RankExceeded { rank: c.axes.len(), max: MAX_RANK });
+        return Expect::Decline(Error::RankExceeded {
+            rank: c.axes.len(),
+            max: MAX_RANK,
+        });
     }
     Expect::Shape(to_usize_shape(shape))
 }
@@ -357,7 +370,10 @@ fn expect_max(c: &Case, s1: &Stage1) -> Expect {
         return Expect::Decline(Error::ShapeOverflow);
     }
     if out_numel > 0 && c.axes.len() > MAX_RANK {
-        return Expect::Decline(Error::RankExceeded { rank: c.axes.len(), max: MAX_RANK });
+        return Expect::Decline(Error::RankExceeded {
+            rank: c.axes.len(),
+            max: MAX_RANK,
+        });
     }
     Expect::Shape(to_usize_shape(shape))
 }
@@ -371,7 +387,10 @@ fn expect_im2col(c: &Case, s1: &Stage1) -> Expect {
     };
     let out_rank = c.shape.len() + c.axes.len();
     if out_rank > MAX_RANK {
-        return Expect::Decline(Error::RankExceeded { rank: out_rank, max: MAX_RANK });
+        return Expect::Decline(Error::RankExceeded {
+            rank: out_rank,
+            max: MAX_RANK,
+        });
     }
     let total = sat_prod(
         shape
@@ -720,7 +739,14 @@ fn dump_case(c: &Case) -> String {
     s
 }
 
-fn fail(seed: u64, mode: Mode, phase: Phase, dtype: &str, case: Option<&Case>, payload: Box<dyn Any + Send>) -> ! {
+fn fail(
+    seed: u64,
+    mode: Mode,
+    phase: Phase,
+    dtype: &str,
+    case: Option<&Case>,
+    payload: Box<dyn Any + Send>,
+) -> ! {
     let dump = case
         .map(dump_case)
         .unwrap_or_else(|| "<no case: generation itself panicked>".to_string());
@@ -867,7 +893,14 @@ fn run_one<T: ScalarFloat>(seed: u64, mode: Mode, dtype: &str) -> Obs {
 
     let want_max = expect_max(&case, &s1);
     let r = catch_unwind(AssertUnwindSafe(|| {
-        max_pool::<T>(&v, &case.axes, &case.kernel, &case.stride, &case.padding, &case.dilation)
+        max_pool::<T>(
+            &v,
+            &case.axes,
+            &case.kernel,
+            &case.stride,
+            &case.padding,
+            &case.dilation,
+        )
     }));
     match r {
         Err(p) => fail(seed, mode, Phase::MaxPool, dtype, Some(&case), p),
@@ -880,7 +913,14 @@ fn run_one<T: ScalarFloat>(seed: u64, mode: Mode, dtype: &str) -> Obs {
 
     let want_im = expect_im2col(&case, &s1);
     let r = catch_unwind(AssertUnwindSafe(|| {
-        im2col::<T>(&v, &case.axes, &case.kernel, &case.stride, &case.padding, &case.dilation)
+        im2col::<T>(
+            &v,
+            &case.axes,
+            &case.kernel,
+            &case.stride,
+            &case.padding,
+            &case.dilation,
+        )
     }));
     match r {
         Err(p) => fail(seed, mode, Phase::Im2col, dtype, Some(&case), p),
@@ -968,7 +1008,11 @@ impl Tally {
 fn fuzz_plausible_f64() {
     let mut t = Tally::new();
     for i in 0..PLAUSIBLE_ITERS {
-        t.add(run_one::<f64>(case_seed(SEED_PLAUSIBLE, i), Mode::Plausible, "f64"));
+        t.add(run_one::<f64>(
+            case_seed(SEED_PLAUSIBLE, i),
+            Mode::Plausible,
+            "f64",
+        ));
     }
     // Generator-health (vacuity) guards, NOT never-panic violations: if these
     // trip, the plausible generator has rotted into all-decline — a fuzzer that
@@ -994,12 +1038,27 @@ fn fuzz_plausible_f64() {
         t.ok_im,
         t.n
     );
-    assert!(t.ok_nonempty >= floor, "vacuity: too few Ok cases with a NON-EMPTY output");
-    assert!(t.ok_padded > 0, "vacuity: no Ok case provably executed the out-of-bounds tap branch");
+    assert!(
+        t.ok_nonempty >= floor,
+        "vacuity: too few Ok cases with a NON-EMPTY output"
+    );
+    assert!(
+        t.ok_padded > 0,
+        "vacuity: no Ok case provably executed the out-of-bounds tap branch"
+    );
     assert!(t.ok_dilated > 0, "vacuity: no Ok case used dilation > 1");
-    assert!(t.ok_empty_out > 0, "vacuity: no Ok case produced an empty (zero-extent) output");
-    assert!(t.ok_multi_axis > 0, "vacuity: no Ok case pooled over 2+ spatial axes");
-    assert_eq!(t.skipped, 0, "the plausible generator must be affordable by construction");
+    assert!(
+        t.ok_empty_out > 0,
+        "vacuity: no Ok case produced an empty (zero-extent) output"
+    );
+    assert!(
+        t.ok_multi_axis > 0,
+        "vacuity: no Ok case pooled over 2+ spatial axes"
+    );
+    assert_eq!(
+        t.skipped, 0,
+        "the plausible generator must be affordable by construction"
+    );
     // The 5% zero-kernel/zero-stride noise must actually reach the decline path.
     assert!(
         t.declines & 1 != 0,
@@ -1011,22 +1070,35 @@ fn fuzz_plausible_f64() {
 fn fuzz_adversarial_f64() {
     let mut t = Tally::new();
     for i in 0..ADVERSARIAL_ITERS {
-        t.add(run_one::<f64>(case_seed(SEED_ADVERSARIAL, i), Mode::Adversarial, "f64"));
+        t.add(run_one::<f64>(
+            case_seed(SEED_ADVERSARIAL, i),
+            Mode::Adversarial,
+            "f64",
+        ));
     }
     // Every decline family must be reachable from the adversarial generator,
     // otherwise the wild pools are not doing what their comments claim.
     for (bit, name) in [
-        (0u8, "ShapeMismatch (zero kernel/stride, mismatched parallel arrays)"),
+        (
+            0u8,
+            "ShapeMismatch (zero kernel/stride, mismatched parallel arrays)",
+        ),
         (1, "AxisOutOfRange"),
         (2, "ShapeOverflow (the padding/dilation overflow guards)"),
-        (3, "RankExceeded (over-rank axis lists / im2col tap-axis blowup)"),
+        (
+            3,
+            "RankExceeded (over-rank axis lists / im2col tap-axis blowup)",
+        ),
     ] {
         assert!(
             t.declines & (1 << bit) != 0,
             "vacuity: the adversarial generator never produced a {name} decline"
         );
     }
-    assert!(t.ok_avg > 0 && t.ok_max > 0 && t.ok_im > 0, "vacuity: adversarial mode is all-decline");
+    assert!(
+        t.ok_avg > 0 && t.ok_max > 0 && t.ok_im > 0,
+        "vacuity: adversarial mode is all-decline"
+    );
     // The budget guard must not be silently eating the corpus.
     assert!(
         t.skipped * 4 < t.n,
@@ -1090,19 +1162,41 @@ fn determinism_spot_check() {
                     &case.dilation,
                     case.count_include_pad,
                 ),
-                max_pool::<f64>(&v, &case.axes, &case.kernel, &case.stride, &case.padding, &case.dilation),
-                im2col::<f64>(&v, &case.axes, &case.kernel, &case.stride, &case.padding, &case.dilation),
+                max_pool::<f64>(
+                    &v,
+                    &case.axes,
+                    &case.kernel,
+                    &case.stride,
+                    &case.padding,
+                    &case.dilation,
+                ),
+                im2col::<f64>(
+                    &v,
+                    &case.axes,
+                    &case.kernel,
+                    &case.stride,
+                    &case.padding,
+                    &case.dilation,
+                ),
             )
         };
         let (a1, m1, i1) = go();
         let (a2, m2, i2) = go();
-        for (r1, r2, name) in [(&a1, &a2, "avg_pool"), (&m1, &m2, "max_pool"), (&i1, &i2, "im2col")] {
+        for (r1, r2, name) in [
+            (&a1, &a2, "avg_pool"),
+            (&m1, &m2, "max_pool"),
+            (&i1, &i2, "im2col"),
+        ] {
             match (r1, r2) {
                 (Err(e1), Err(e2)) => {
                     assert_eq!(e1, e2, "{name}: Err values differ (seed={seed:#018x})")
                 }
                 (Ok(t1), Ok(t2)) => {
-                    assert_eq!(t1.shape(), t2.shape(), "{name}: shapes differ (seed={seed:#018x})");
+                    assert_eq!(
+                        t1.shape(),
+                        t2.shape(),
+                        "{name}: shapes differ (seed={seed:#018x})"
+                    );
                     for (k, (p, q)) in t1.as_slice().iter().zip(t2.as_slice()).enumerate() {
                         assert_eq!(
                             p.to_bits(),
@@ -1152,12 +1246,19 @@ fn cross_check_avg_and_max_against_im2col() {
             Err(_) => continue,
         };
         let v = x.view();
-        let cols = match im2col::<f64>(&v, &case.axes, &case.kernel, &case.stride, &case.padding, &case.dilation) {
+        let cols = match im2col::<f64>(
+            &v,
+            &case.axes,
+            &case.kernel,
+            &case.stride,
+            &case.padding,
+            &case.dilation,
+        ) {
             Ok(t) => t,
             Err(_) => continue,
         };
         let taps = numel_of(&case.kernel);
-        let patches = if taps == 0 { 0 } else { cols.as_slice().len() / taps };
+        let patches = cols.as_slice().len().checked_div(taps).unwrap_or(0);
 
         // ORACLE 1 — count_include_pad: avg_pool == (Σ taps of im2col) / |kernel|.
         // im2col zero-fills an out-of-bounds tap and avg_pool skips it; adding
@@ -1172,7 +1273,11 @@ fn cross_check_avg_and_max_against_im2col() {
             &case.dilation,
             true,
         ) {
-            assert_eq!(avg.as_slice().len(), patches, "cross: patch count (seed={seed:#018x})");
+            assert_eq!(
+                avg.as_slice().len(),
+                patches,
+                "cross: patch count (seed={seed:#018x})"
+            );
             let divisor = f64::from_f64(taps as f64);
             for p in 0..patches {
                 let mut acc = 0.0f64;
@@ -1197,11 +1302,19 @@ fn cross_check_avg_and_max_against_im2col() {
         // equal the tap-max of im2col (with padding they legitimately differ:
         // im2col's zero fill is a real 0.0, max_pool skips the tap).
         if case.padding.iter().all(|&p| p == 0) {
-            if let Ok(mx) = max_pool::<f64>(&v, &case.axes, &case.kernel, &case.stride, &case.padding, &case.dilation) {
+            if let Ok(mx) = max_pool::<f64>(
+                &v,
+                &case.axes,
+                &case.kernel,
+                &case.stride,
+                &case.padding,
+                &case.dilation,
+            ) {
                 for p in 0..patches {
                     let mut acc = f64::NEG_INFINITY;
                     for t in 0..taps {
-                        acc = eval_op(Op::MaxProp, &[acc, cols.as_slice()[p * taps + t]]).expect("max");
+                        acc = eval_op(Op::MaxProp, &[acc, cols.as_slice()[p * taps + t]])
+                            .expect("max");
                     }
                     let got = mx.as_slice()[p];
                     assert!(
@@ -1218,10 +1331,30 @@ fn cross_check_avg_and_max_against_im2col() {
 
             // ORACLE 3 — with no padding, `count_include_pad` cannot matter:
             // every window's in-bounds tap count IS the full window size.
-            let a = avg_pool::<f64>(&v, &case.axes, &case.kernel, &case.stride, &case.padding, &case.dilation, true);
-            let b = avg_pool::<f64>(&v, &case.axes, &case.kernel, &case.stride, &case.padding, &case.dilation, false);
+            let a = avg_pool::<f64>(
+                &v,
+                &case.axes,
+                &case.kernel,
+                &case.stride,
+                &case.padding,
+                &case.dilation,
+                true,
+            );
+            let b = avg_pool::<f64>(
+                &v,
+                &case.axes,
+                &case.kernel,
+                &case.stride,
+                &case.padding,
+                &case.dilation,
+                false,
+            );
             if let (Ok(a), Ok(b)) = (a, b) {
-                assert_eq!(a.shape(), b.shape(), "cross(cip): shapes (seed={seed:#018x})");
+                assert_eq!(
+                    a.shape(),
+                    b.shape(),
+                    "cross(cip): shapes (seed={seed:#018x})"
+                );
                 for (k, (p, q)) in a.as_slice().iter().zip(b.as_slice()).enumerate() {
                     assert!(
                         same_bits(*p, *q),
@@ -1236,9 +1369,18 @@ fn cross_check_avg_and_max_against_im2col() {
         }
     }
     // Vacuity: an oracle that never ran proves nothing.
-    assert!(checked_avg >= 50, "vacuity: avg/im2col oracle ran only {checked_avg} times");
-    assert!(checked_max >= 20, "vacuity: max/im2col oracle ran only {checked_max} times");
-    assert!(checked_cip >= 20, "vacuity: count_include_pad oracle ran only {checked_cip} times");
+    assert!(
+        checked_avg >= 50,
+        "vacuity: avg/im2col oracle ran only {checked_avg} times"
+    );
+    assert!(
+        checked_max >= 20,
+        "vacuity: max/im2col oracle ran only {checked_max} times"
+    );
+    assert!(
+        checked_cip >= 20,
+        "vacuity: count_include_pad oracle ran only {checked_cip} times"
+    );
 }
 
 // ---- hand-computed goldens --------------------------------------------------
@@ -1320,7 +1462,10 @@ fn anchor_max_pool_wholly_padded_window_is_identity() {
     let x = t64(&[5.0], &[1]);
     let y = max_pool(&x.view(), &[0], &[2], &[1], &[2], &[1]).expect("max");
     assert_eq!(y.shape(), &[4]);
-    assert_eq!(y.as_slice(), &[f64::NEG_INFINITY, 5.0, 5.0, f64::NEG_INFINITY]);
+    assert_eq!(
+        y.as_slice(),
+        &[f64::NEG_INFINITY, 5.0, 5.0, f64::NEG_INFINITY]
+    );
 }
 
 #[test]
@@ -1375,16 +1520,25 @@ fn anchor_typed_declines() {
     // kernel 0 / stride 0 — the shared "degenerate window" decline.
     assert_eq!(
         max_pool(&x.view(), &[0], &[0], &[1], &[0], &[1]).unwrap_err(),
-        Error::ShapeMismatch { expected: 1, got: 0 }
+        Error::ShapeMismatch {
+            expected: 1,
+            got: 0
+        }
     );
     assert_eq!(
         max_pool(&x.view(), &[0], &[1], &[0], &[0], &[1]).unwrap_err(),
-        Error::ShapeMismatch { expected: 1, got: 0 }
+        Error::ShapeMismatch {
+            expected: 1,
+            got: 0
+        }
     );
     // parallel-array length mismatch (reported against kernel.len()).
     assert_eq!(
         avg_pool(&x.view(), &[0], &[1, 1], &[1], &[0], &[1], false).unwrap_err(),
-        Error::ShapeMismatch { expected: 1, got: 2 }
+        Error::ShapeMismatch {
+            expected: 1,
+            got: 2
+        }
     );
     // axis out of range.
     assert_eq!(
@@ -1412,22 +1566,42 @@ fn anchor_typed_declines() {
     let zeros = vec![0usize; 9];
     assert_eq!(
         avg_pool(&x.view(), &nine, &ones, &ones, &zeros, &ones, false).unwrap_err(),
-        Error::RankExceeded { rank: 9, max: MAX_RANK }
+        Error::RankExceeded {
+            rank: 9,
+            max: MAX_RANK
+        }
     );
     assert_eq!(
         max_pool(&x.view(), &nine, &ones, &ones, &zeros, &ones).unwrap_err(),
-        Error::RankExceeded { rank: 9, max: MAX_RANK }
+        Error::RankExceeded {
+            rank: 9,
+            max: MAX_RANK
+        }
     );
     // im2col appends the tap axes, so it trips one axis earlier: 1 + 9 = 10.
     assert_eq!(
         im2col(&x.view(), &nine, &ones, &ones, &zeros, &ones).unwrap_err(),
-        Error::RankExceeded { rank: 10, max: MAX_RANK }
+        Error::RankExceeded {
+            rank: 10,
+            max: MAX_RANK
+        }
     );
     // rank 3 + 6 tap axes = 9 > MAX_RANK.
     let r3 = t64(&[1.0; 8], &[2, 2, 2]);
     assert_eq!(
-        im2col(&r3.view(), &[0, 1, 2, 0, 1, 2], &[1; 6], &[1; 6], &[0; 6], &[1; 6]).unwrap_err(),
-        Error::RankExceeded { rank: 9, max: MAX_RANK }
+        im2col(
+            &r3.view(),
+            &[0, 1, 2, 0, 1, 2],
+            &[1; 6],
+            &[1; 6],
+            &[0; 6],
+            &[1; 6]
+        )
+        .unwrap_err(),
+        Error::RankExceeded {
+            rank: 9,
+            max: MAX_RANK
+        }
     );
 }
 

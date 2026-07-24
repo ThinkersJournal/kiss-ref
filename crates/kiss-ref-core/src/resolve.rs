@@ -21,7 +21,11 @@ fn arity<T>(op: Op, args: &[T], n: usize) -> Result<(), Error> {
     if args.len() == n {
         Ok(())
     } else {
-        Err(Error::Arity { op, expected: n, got: args.len() })
+        Err(Error::Arity {
+            op,
+            expected: n,
+            got: args.len(),
+        })
     }
 }
 
@@ -53,7 +57,11 @@ pub fn eval_op<T: ScalarFloat>(op: Op, args: &[T]) -> Result<T, Error> {
         // so its signed zero / NaN payload is preserved bit-for-bit.
         Op::Select => {
             arity(op, args, 3)?;
-            Ok(if args[0].is_truthy() { args[1] } else { args[2] })
+            Ok(if args[0].is_truthy() {
+                args[1]
+            } else {
+                args[2]
+            })
         }
 
         // comparison atoms (§6.6): 1/0 in the compute dtype. Rust's PartialOrd is
@@ -428,7 +436,10 @@ mod tests {
     fn gelu_resolves_and_is_finite() {
         // Non-primitive resolved through erf + arithmetic floor atoms.
         let y = eval_op(Op::Gelu, &[1.0f64]).unwrap();
-        assert!(y.is_finite() && y > 0.8 && y < 0.9, "gelu(1) ≈ 0.8413, got {y}");
+        assert!(
+            y.is_finite() && y > 0.8 && y < 0.9,
+            "gelu(1) ≈ 0.8413, got {y}"
+        );
     }
 
     #[test]

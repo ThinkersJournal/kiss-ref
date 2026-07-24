@@ -1,16 +1,14 @@
 name: CI
 
-# Every gate that was previously run by hand. Four of them:
-#   1. `cargo test --workspace`                  — the conformance suite + unit tests   [HARD]
-#   2. a *genuine* no_std build of kiss-ref-core against a bare-metal target             [HARD]
-#   3. `cargo fmt --all --check`                 — formatting                        [advisory]
-#   4. `cargo clippy --workspace --all-targets`  — warnings denied                   [advisory]
+# Every gate that was previously run by hand. Four of them, ALL HARD:
+#   1. `cargo test --workspace`                  — the conformance suite + unit tests
+#   2. a *genuine* no_std build of kiss-ref-core against a bare-metal target
+#   3. `cargo fmt --all --check`                 — formatting
+#   4. `cargo clippy --workspace --all-targets`  — warnings denied
 #
-# (1) and (2) are the load-bearing correctness + contract gates and FAIL the job.
-# (3) and (4) are `continue-on-error` for now: the tree predates any fmt/clippy
-# pass, so hard-gating them would fail CI on unrelated legacy style. They report
-# (visible red X on the step) but do not block; flip `continue-on-error` off once
-# a dedicated `cargo fmt --all` + clippy-cleanup commit lands.
+# All four FAIL the job. (3) and (4) were `continue-on-error` initially because the
+# tree predated any fmt/clippy pass; the dedicated `cargo fmt --all` + clippy
+# cleanup landed, so they are now hard gates like the rest.
 #
 # (2) is the load-bearing one. kiss-ref-core is `#![cfg_attr(not(test), no_std)]`
 # and Fuel consumes it relying on that property. A host build cannot prove it:
@@ -85,8 +83,7 @@ jobs:
       # push reports every broken gate at once instead of one per round trip. Any
       # failing step still fails the job.
 
-      - name: Format (cargo fmt --check) [advisory]
-        continue-on-error: true
+      - name: Format (cargo fmt --check)
         run: cargo fmt --all --check
 
       - name: no_std - build kiss-ref-core for thumbv7em-none-eabi
@@ -98,9 +95,8 @@ jobs:
         # in both manifests => no `std` feature). Nothing else in the tree.
         run: cargo build -p kiss-ref-core --target "$NOSTD_TARGET"
 
-      - name: Clippy (warnings denied) [advisory]
+      - name: Clippy (warnings denied)
         if: ${{ !cancelled() }}
-        continue-on-error: true
         run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Tests

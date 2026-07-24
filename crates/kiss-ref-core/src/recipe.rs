@@ -76,9 +76,19 @@ pub enum Node {
     /// `mul`/`div`, the unary/binary math atoms, `select`.
     Apply { op: Op, children: Vec<usize> },
     /// A `reduce` fold node.
-    Reduce { monoid: Monoid, axes: Vec<usize>, keepdim: bool, child: usize },
+    Reduce {
+        monoid: Monoid,
+        axes: Vec<usize>,
+        keepdim: bool,
+        child: usize,
+    },
     /// A `prefix_scan` fold node.
-    PrefixScan { monoid: Monoid, axis: usize, exclusive: bool, child: usize },
+    PrefixScan {
+        monoid: Monoid,
+        axis: usize,
+        exclusive: bool,
+        child: usize,
+    },
     /// A `matmul` contraction node (batched `[..b,M,K]·[..b,K,N]`).
     Matmul { lhs: usize, rhs: usize },
     /// A `gather` node: read `data` (a node) at a runtime `index` along `axis`.
@@ -88,16 +98,32 @@ pub enum Node {
     /// position. The base requirement is **dynamic**: `Skip` + `base: None` is
     /// legal until an index is actually OOB, which is the typed
     /// [`Error::GatherSkipNoBase`] decline.
-    Gather { data: usize, index: IndexRef, axis: usize, oob: OobPolicy, base: Option<usize> },
+    Gather {
+        data: usize,
+        index: IndexRef,
+        axis: usize,
+        oob: OobPolicy,
+        base: Option<usize>,
+    },
     /// A `scatter` node: write `updates` (a node) into `dest` (a node) at a runtime
     /// `index` along `axis`, combined per `combine`.
-    Scatter { dest: usize, index: IndexRef, updates: usize, axis: usize, combine: Combine },
+    Scatter {
+        dest: usize,
+        index: IndexRef,
+        updates: usize,
+        axis: usize,
+        combine: Combine,
+    },
     /// A `sort_network` node. **Value lane:** the sorted values along `axis` (a
     /// raw-bit permutation). **Index lane** (same node id): the §6.11-0007
     /// original-index permutation (`i64`, stable total order), consumable
     /// downstream via [`IndexRef::Node`] and exportable via
     /// [`FlatDag::index_outputs`].
-    SortNetwork { keys: usize, axis: usize, dir: Direction },
+    SortNetwork {
+        keys: usize,
+        axis: usize,
+        dir: Direction,
+    },
     /// An `iota` node (the §6.12-0001 `coord(axis)` leaf): the row-major
     /// coordinate along `axis` of the **shape** of node `like`, as `T`. The
     /// `like` edge is SHAPE-ONLY — its values are never read, so its [`DetClass`]
@@ -135,7 +161,11 @@ impl FlatDag {
     /// A value-lane-only DAG — `index_outputs` defaults to empty (the pre-
     /// index-lane constructor shape).
     pub fn new(nodes: Vec<Node>, outputs: Vec<usize>) -> Self {
-        FlatDag { nodes, outputs, index_outputs: Vec::new() }
+        FlatDag {
+            nodes,
+            outputs,
+            index_outputs: Vec::new(),
+        }
     }
 }
 
@@ -157,15 +187,29 @@ pub struct RecipeEval<T> {
 
 /// A rank-0 (scalar) tensor holding `v` — broadcasts to any shape in an
 /// elementwise op (stride-0 on every axis).
+// The `vec!` macro is not imported on this no_std non-test path, so the
+// one-element buffer is built by hand.
+#[allow(clippy::vec_init_then_push)]
 fn rank0<T: Copy>(v: T) -> Result<Tensor<T>, Error> {
-    Tensor::from_vec({ let mut d = Vec::new(); d.push(v); d }, &[])
+    Tensor::from_vec(
+        {
+            let mut d = Vec::new();
+            d.push(v);
+            d
+        },
+        &[],
+    )
 }
 
 /// Apply an elementwise scalar `op` over the broadcast of `children` (via the
 /// unchanged scalar `eval_op`).
 fn apply_elementwise<T: ScalarFloat>(op: Op, children: &[Tensor<T>]) -> Result<Tensor<T>, Error> {
     if children.is_empty() {
-        return Err(Error::Arity { op, expected: 1, got: 0 });
+        return Err(Error::Arity {
+            op,
+            expected: 1,
+            got: 0,
+        });
     }
     let views: Vec<View<T>> = children.iter().map(|t| t.view()).collect();
     let shapes: Vec<&[usize]> = views.iter().map(|v| v.shape()).collect();
@@ -310,7 +354,10 @@ pub fn eval_recipe<T: ScalarFloat>(
             } else {
                 if state[idx] == 1 {
                     // a cycle in a supposedly-acyclic DAG — decline, don't loop.
-                    return Err(Error::BadDecomposition { op: Op::Add, pos: idx });
+                    return Err(Error::BadDecomposition {
+                        op: Op::Add,
+                        pos: idx,
+                    });
                 }
                 state[idx] = 1;
                 stack.push((idx, true)); // revisit after its children
@@ -345,7 +392,11 @@ pub fn eval_recipe<T: ScalarFloat>(
         .iter()
         .map(|x| x.as_ref().map(|(_, d)| *d).unwrap_or(DetClass::ExactByte))
         .collect();
-    Ok(RecipeEval { outputs, index_outputs, dets })
+    Ok(RecipeEval {
+        outputs,
+        index_outputs,
+        dets,
+    })
 }
 
 /// Read the memoized results of `children` (each already evaluated), cloning the
@@ -380,7 +431,9 @@ fn children_of(node: &Node) -> Vec<usize> {
         }
         // a Slot index operand is external (the `indices` array), not a child;
         // a Node index operand IS a scheduling edge (the producer runs first).
-        Node::Gather { data, index, base, .. } => {
+        Node::Gather {
+            data, index, base, ..
+        } => {
             v.push(*data);
             if let Some(b) = base {
                 v.push(*b);
@@ -389,7 +442,12 @@ fn children_of(node: &Node) -> Vec<usize> {
                 v.push(*m);
             }
         }
-        Node::Scatter { dest, updates, index, .. } => {
+        Node::Scatter {
+            dest,
+            updates,
+            index,
+            ..
+        } => {
             v.push(*dest);
             v.push(*updates);
             if let IndexRef::Node(m) = index {
@@ -419,12 +477,18 @@ fn compute_node<T: ScalarFloat>(
 ) -> Result<(Tensor<T>, DetClass, Option<IndexTensor>), Error> {
     match &dag.nodes[idx] {
         Node::Bind(i) => {
-            let t = inputs.get(*i).cloned().ok_or(Error::MissingInput(*i as u8))?;
+            let t = inputs
+                .get(*i)
+                .cloned()
+                .ok_or(Error::MissingInput(*i as u8))?;
             Ok((t, DetClass::ExactByte, None))
         }
         Node::Const(v) => Ok((rank0(T::from_f64(*v))?, DetClass::ExactByte, None)),
         Node::RuntimeScalar(s) => {
-            let v = params.get(*s).copied().ok_or(Error::MissingInput(*s as u8))?;
+            let v = params
+                .get(*s)
+                .copied()
+                .ok_or(Error::MissingInput(*s as u8))?;
             Ok((rank0(v)?, DetClass::ExactByte, None))
         }
         Node::ReducedCount(axes) => {
@@ -433,7 +497,10 @@ fn compute_node<T: ScalarFloat>(
             let mut c: usize = 1;
             for &a in axes {
                 c = c
-                    .checked_mul(*shape.get(a).ok_or(Error::AxisOutOfRange { axis: a, rank: shape.len() })?)
+                    .checked_mul(*shape.get(a).ok_or(Error::AxisOutOfRange {
+                        axis: a,
+                        rank: shape.len(),
+                    })?)
                     .ok_or(Error::ShapeOverflow)?;
             }
             Ok((rank0(T::from_f64(c as f64))?, DetClass::ExactByte, None))
@@ -442,13 +509,23 @@ fn compute_node<T: ScalarFloat>(
             let (ts, ds) = read_children(children, memo)?;
             Ok((apply_elementwise(*op, &ts)?, scalar_det(*op, &ds), None))
         }
-        Node::Reduce { monoid, axes, keepdim, child } => {
+        Node::Reduce {
+            monoid,
+            axes,
+            keepdim,
+            child,
+        } => {
             let (ts, ds) = read_children(core::slice::from_ref(child), memo)?;
             let r = reduce(&ts[0].view(), *monoid, axes)?;
             let r = if *keepdim { r } else { squeeze(r, axes)? };
             Ok((r, monoid_det(*monoid).join(ds[0]), None))
         }
-        Node::PrefixScan { monoid, axis, exclusive, child } => {
+        Node::PrefixScan {
+            monoid,
+            axis,
+            exclusive,
+            child,
+        } => {
             let (ts, ds) = read_children(core::slice::from_ref(child), memo)?;
             let r = prefix_scan(&ts[0].view(), *monoid, *axis, *exclusive)?;
             Ok((r, monoid_det(*monoid).join(ds[0]), None))
@@ -457,9 +534,21 @@ fn compute_node<T: ScalarFloat>(
             let (ts, ds) = read_children(&[*lhs, *rhs], memo)?;
             let r = matmul(&ts[0].view(), &ts[1].view())?;
             // float sum contraction → order-invariant/nondeterministic (§6.0-0004).
-            Ok((r, DetClass::OrderInvariantNondeterministic.join(ds[0]).join(ds[1]), None))
+            Ok((
+                r,
+                DetClass::OrderInvariantNondeterministic
+                    .join(ds[0])
+                    .join(ds[1]),
+                None,
+            ))
         }
-        Node::Gather { data, index, axis, oob, base } => {
+        Node::Gather {
+            data,
+            index,
+            axis,
+            oob,
+            base,
+        } => {
             let (ts, ds) = read_children(core::slice::from_ref(data), memo)?;
             let idx = resolve_index_ref(*index, indices, imemo)?;
             let basem = match base {
@@ -475,7 +564,9 @@ fn compute_node<T: ScalarFloat>(
             // raw-bit move ⊔ data ⊔ index producer; the base's class joins ONLY
             // under `Skip` — that is the only arm whose output can carry base
             // bits (a static, policy-conditioned join, never index-conditioned).
-            let mut det = DetClass::ExactByte.join(ds[0]).join(index_ref_det(*index, memo));
+            let mut det = DetClass::ExactByte
+                .join(ds[0])
+                .join(index_ref_det(*index, memo));
             if *oob == OobPolicy::Skip {
                 if let Some((_, bd)) = basem {
                     det = det.join(*bd);
@@ -483,7 +574,13 @@ fn compute_node<T: ScalarFloat>(
             }
             Ok((r, det, None))
         }
-        Node::Scatter { dest, index, updates, axis, combine } => {
+        Node::Scatter {
+            dest,
+            index,
+            updates,
+            axis,
+            combine,
+        } => {
             let (ts, ds) = read_children(&[*dest, *updates], memo)?;
             let idx = resolve_index_ref(*index, indices, imemo)?;
             let r = scatter(ts[0].clone(), idx, &ts[1].view(), *axis, *combine)?;
@@ -492,7 +589,13 @@ fn compute_node<T: ScalarFloat>(
                 Combine::AtomicAdd => DetClass::OrderInvariantNondeterministic,
                 _ => DetClass::ExactByte,
             };
-            Ok((r, own.join(ds[0]).join(ds[1]).join(index_ref_det(*index, memo)), None))
+            Ok((
+                r,
+                own.join(ds[0])
+                    .join(ds[1])
+                    .join(index_ref_det(*index, memo)),
+                None,
+            ))
         }
         Node::SortNetwork { keys, axis, dir } => {
             let (ts, ds) = read_children(core::slice::from_ref(keys), memo)?;
@@ -561,8 +664,14 @@ mod tests {
                 Node::Bind(1),
                 Node::Matmul { lhs: 0, rhs: 1 },
                 Node::Bind(2),
-                Node::Apply { op: Op::Add, children: vec![2, 3] },
-                Node::Apply { op: Op::Relu, children: vec![4] },
+                Node::Apply {
+                    op: Op::Add,
+                    children: vec![2, 3],
+                },
+                Node::Apply {
+                    op: Op::Relu,
+                    children: vec![4],
+                },
             ],
             vec![5],
         );
@@ -588,11 +697,30 @@ mod tests {
         let dag = FlatDag::new(
             vec![
                 Node::Bind(0),
-                Node::Reduce { monoid: Monoid::Max, axes: vec![1], keepdim: true, child: 0 },
-                Node::Apply { op: Op::Sub, children: vec![0, 1] },
-                Node::Apply { op: Op::Exp, children: vec![2] },
-                Node::Reduce { monoid: Monoid::Sum, axes: vec![1], keepdim: true, child: 3 },
-                Node::Apply { op: Op::Div, children: vec![3, 4] },
+                Node::Reduce {
+                    monoid: Monoid::Max,
+                    axes: vec![1],
+                    keepdim: true,
+                    child: 0,
+                },
+                Node::Apply {
+                    op: Op::Sub,
+                    children: vec![0, 1],
+                },
+                Node::Apply {
+                    op: Op::Exp,
+                    children: vec![2],
+                },
+                Node::Reduce {
+                    monoid: Monoid::Sum,
+                    axes: vec![1],
+                    keepdim: true,
+                    child: 3,
+                },
+                Node::Apply {
+                    op: Op::Div,
+                    children: vec![3, 4],
+                },
             ],
             vec![5],
         );
@@ -615,11 +743,22 @@ mod tests {
         let dag = FlatDag::new(
             vec![
                 Node::Bind(0),
-                Node::Reduce { monoid: Monoid::Sum, axes: vec![0], keepdim: false, child: 0 },
+                Node::Reduce {
+                    monoid: Monoid::Sum,
+                    axes: vec![0],
+                    keepdim: false,
+                    child: 0,
+                },
                 Node::ReducedCount(vec![0]),
-                Node::Apply { op: Op::Div, children: vec![1, 2] },
+                Node::Apply {
+                    op: Op::Div,
+                    children: vec![1, 2],
+                },
                 Node::RuntimeScalar(0),
-                Node::Apply { op: Op::Add, children: vec![3, 4] },
+                Node::Apply {
+                    op: Op::Add,
+                    children: vec![3, 4],
+                },
             ],
             vec![5],
         );
@@ -673,7 +812,7 @@ mod tests {
         let sidx = IndexTensor::new(vec![0, 0, 1], &[3], Dtype::I64).unwrap();
         let sr = eval_recipe(&sdag, &[dest, upd], &[], &[sidx]).unwrap();
         close(sr.outputs[0].as_slice(), &[12.0, 4.0, 0.0]); // idx0: 5+7=12, idx1: 4
-        // float atomic_add → order-invariant/nondeterministic (§6.0-0004).
+                                                            // float atomic_add → order-invariant/nondeterministic (§6.0-0004).
         assert_eq!(sr.dets[2], DetClass::OrderInvariantNondeterministic);
     }
 
@@ -684,7 +823,11 @@ mod tests {
         let dag = FlatDag {
             nodes: vec![
                 Node::Bind(0),
-                Node::SortNetwork { keys: 0, axis: 0, dir: Direction::Asc },
+                Node::SortNetwork {
+                    keys: 0,
+                    axis: 0,
+                    dir: Direction::Asc,
+                },
             ],
             outputs: vec![1],
             index_outputs: vec![1],
@@ -705,7 +848,11 @@ mod tests {
             vec![
                 Node::Bind(0), // keys
                 Node::Bind(1), // data
-                Node::SortNetwork { keys: 0, axis: 0, dir: Direction::Asc },
+                Node::SortNetwork {
+                    keys: 0,
+                    axis: 0,
+                    dir: Direction::Asc,
+                },
                 Node::Gather {
                     data: 1,
                     index: IndexRef::Node(2),
@@ -735,8 +882,15 @@ mod tests {
             vec![
                 Node::Bind(0), // x
                 Node::Bind(1), // data
-                Node::Apply { op: Op::Exp, children: vec![0] },
-                Node::SortNetwork { keys: 2, axis: 0, dir: Direction::Asc },
+                Node::Apply {
+                    op: Op::Exp,
+                    children: vec![0],
+                },
+                Node::SortNetwork {
+                    keys: 2,
+                    axis: 0,
+                    dir: Direction::Asc,
+                },
                 Node::Gather {
                     data: 1,
                     index: IndexRef::Node(3),
@@ -811,7 +965,10 @@ mod tests {
                 vec![
                     Node::Bind(0),
                     Node::Const(1.0),
-                    Node::Apply { op: Op::Exp, children: vec![1] },
+                    Node::Apply {
+                        op: Op::Exp,
+                        children: vec![1],
+                    },
                     Node::Gather {
                         data: 0,
                         index: IndexRef::Slot(0),
@@ -825,7 +982,13 @@ mod tests {
         };
         let data = t(&[10.0, 20.0, 30.0], &[3]);
         let idx = IndexTensor::new(vec![0, 1, 2], &[3], Dtype::I64).unwrap();
-        let skip = eval_recipe(&mk(OobPolicy::Skip), &[data.clone()], &[], &[idx.clone()]).unwrap();
+        let skip = eval_recipe(
+            &mk(OobPolicy::Skip),
+            std::slice::from_ref(&data),
+            &[],
+            std::slice::from_ref(&idx),
+        )
+        .unwrap();
         assert!(matches!(skip.dets[3], DetClass::Ulp(_)));
         let zf = eval_recipe(&mk(OobPolicy::ZeroFill), &[data], &[], &[idx]).unwrap();
         assert_eq!(zf.dets[3], DetClass::ExactByte);
@@ -847,14 +1010,20 @@ mod tests {
         };
         let dest = t(&[0.0, 0.0, 0.0], &[3]);
         let idx = IndexTensor::new(vec![0, 1, 1, 9], &[4], Dtype::I64).unwrap(); // 9 OOB → skipped
-        // rank-0 const updates.
+                                                                                 // rank-0 const updates.
         let dag = FlatDag::new(vec![Node::Bind(0), Node::Const(2.0), scat.clone()], vec![2]);
-        let r = eval_recipe(&dag, &[dest.clone()], &[], &[idx.clone()]).unwrap();
+        let r = eval_recipe(
+            &dag,
+            std::slice::from_ref(&dest),
+            &[],
+            std::slice::from_ref(&idx),
+        )
+        .unwrap();
         close(r.outputs[0].as_slice(), &[2.0, 4.0, 0.0]);
         // extent-1 input updates (general broadcast, not a rank-0 carve-out).
         let dag1 = FlatDag::new(vec![Node::Bind(0), Node::Bind(1), scat.clone()], vec![2]);
         let one = t(&[3.0], &[1]);
-        let r1 = eval_recipe(&dag1, &[dest.clone(), one], &[], &[idx.clone()]).unwrap();
+        let r1 = eval_recipe(&dag1, &[dest.clone(), one], &[], std::slice::from_ref(&idx)).unwrap();
         close(r1.outputs[0].as_slice(), &[3.0, 6.0, 0.0]);
         // extent 2 vs write shape [4]: not broadcast-compatible → typed decline.
         let dag2 = FlatDag::new(vec![Node::Bind(0), Node::Bind(1), scat], vec![2]);
@@ -869,17 +1038,12 @@ mod tests {
     fn iota_materializes_coordinates() {
         // iota over the shape of Bind(0) ([2,3]): axis 1 → column ids, axis 0 →
         // row ids; an out-of-range axis declines.
-        let mk = |axis| {
-            FlatDag::new(
-                vec![Node::Bind(0), Node::Iota { like: 0, axis }],
-                vec![1],
-            )
-        };
+        let mk = |axis| FlatDag::new(vec![Node::Bind(0), Node::Iota { like: 0, axis }], vec![1]);
         let x = t(&[0.0; 6], &[2, 3]);
-        let r1 = eval_recipe(&mk(1), &[x.clone()], &[], &[]).unwrap();
+        let r1 = eval_recipe(&mk(1), std::slice::from_ref(&x), &[], &[]).unwrap();
         close(r1.outputs[0].as_slice(), &[0.0, 1.0, 2.0, 0.0, 1.0, 2.0]);
         assert_eq!(r1.dets[1], DetClass::ExactByte);
-        let r0 = eval_recipe(&mk(0), &[x.clone()], &[], &[]).unwrap();
+        let r0 = eval_recipe(&mk(0), std::slice::from_ref(&x), &[], &[]).unwrap();
         close(r0.outputs[0].as_slice(), &[0.0, 0.0, 0.0, 1.0, 1.0, 1.0]);
         assert!(matches!(
             eval_recipe(&mk(2), &[x], &[], &[]),
@@ -905,7 +1069,7 @@ mod tests {
         );
         let data = t(&[1.0], &[1]);
         assert!(matches!(
-            eval_recipe(&dag, &[data.clone()], &[], &[]),
+            eval_recipe(&dag, std::slice::from_ref(&data), &[], &[]),
             Err(Error::IndexSourceInvalid { node: 0 })
         ));
         // index_outputs naming a non-index node (or out of range) → same error.
@@ -915,7 +1079,7 @@ mod tests {
             index_outputs: vec![0],
         };
         assert!(matches!(
-            eval_recipe(&dag2, &[data.clone()], &[], &[]),
+            eval_recipe(&dag2, std::slice::from_ref(&data), &[], &[]),
             Err(Error::IndexSourceInvalid { node: 0 })
         ));
         let dag3 = FlatDag {
@@ -938,7 +1102,10 @@ mod tests {
         let mut nodes = Vec::new();
         for i in 0..n {
             if i + 1 < n {
-                nodes.push(Node::Apply { op: Op::Neg, children: vec![i + 1] });
+                nodes.push(Node::Apply {
+                    op: Op::Neg,
+                    children: vec![i + 1],
+                });
             } else {
                 nodes.push(Node::Bind(0));
             }
@@ -953,10 +1120,22 @@ mod tests {
     #[test]
     fn cycle_and_bad_index_decline_not_panic() {
         // a self-referential node must decline, not loop forever.
-        let dag = FlatDag::new(vec![Node::Apply { op: Op::Add, children: vec![0, 0] }], vec![0]);
+        let dag = FlatDag::new(
+            vec![Node::Apply {
+                op: Op::Add,
+                children: vec![0, 0],
+            }],
+            vec![0],
+        );
         assert!(eval_recipe::<f64>(&dag, &[], &[], &[]).is_err());
         // an out-of-range child index is an error.
-        let dag2 = FlatDag::new(vec![Node::Apply { op: Op::Neg, children: vec![9] }], vec![0]);
+        let dag2 = FlatDag::new(
+            vec![Node::Apply {
+                op: Op::Neg,
+                children: vec![9],
+            }],
+            vec![0],
+        );
         assert!(eval_recipe::<f64>(&dag2, &[], &[], &[]).is_err());
     }
 }

@@ -19,8 +19,8 @@ use kiss_classify_vocab::Dtype;
 use kiss_ref_core::kernels::{gather, prefix_scan, scatter, sort_network};
 use kiss_ref_core::tensor_ops::{index_select, scatter_add};
 use kiss_ref_core::{
-    eval_recipe, Combine, DetClass, Direction, Error, FlatDag, IndexRef, IndexTensor, Monoid,
-    Node, OobPolicy, Tensor,
+    eval_recipe, Combine, DetClass, Direction, Error, FlatDag, IndexRef, IndexTensor, Monoid, Node,
+    OobPolicy, Tensor,
 };
 
 // ---- helpers (ops_conformance idiom: raw-bit for ExactByte, tol for OIN) -----
@@ -40,7 +40,11 @@ fn assert_bits(got: &Tensor<f64>, want: &[f64], shape: &[usize]) {
     assert_eq!(got.shape(), shape, "output shape");
     assert_eq!(got.as_slice().len(), want.len(), "element count");
     for (i, (&g, &w)) in got.as_slice().iter().zip(want).enumerate() {
-        assert_eq!(g.to_bits(), w.to_bits(), "elem {i}: got {g} want {w} (raw-bit)");
+        assert_eq!(
+            g.to_bits(),
+            w.to_bits(),
+            "elem {i}: got {g} want {w} (raw-bit)"
+        );
     }
 }
 
@@ -51,7 +55,10 @@ fn assert_close(got: &Tensor<f64>, want: &[f64], shape: &[usize], tol: f64) {
     assert_eq!(got.shape(), shape, "output shape");
     assert_eq!(got.as_slice().len(), want.len(), "element count");
     for (i, (&g, &w)) in got.as_slice().iter().zip(want).enumerate() {
-        assert!((g - w).abs() <= tol, "elem {i}: got {g} want {w} (abs tol {tol})");
+        assert!(
+            (g - w).abs() <= tol,
+            "elem {i}: got {g} want {w} (abs tol {tol})"
+        );
     }
 }
 
@@ -84,7 +91,10 @@ fn test_ops_gather_skip_base_dynamic() {
         gather(&data.view(), &oob, 0, OobPolicy::Skip, None).err(),
         Some(Error::GatherSkipNoBase)
     );
-    assert_eq!(index_select(&data.view(), &oob, 0).err(), Some(Error::GatherSkipNoBase));
+    assert_eq!(
+        index_select(&data.view(), &oob, 0).err(),
+        Some(Error::GatherSkipNoBase)
+    );
 
     // (c) skip + base + OOB → the base value kept at the skipped position. base is
     // rank-0 (−0.0) → broadcast to the output shape; the −0.0 sign bit survives
@@ -93,7 +103,11 @@ fn test_ops_gather_skip_base_dynamic() {
     let gb = gather(&data.view(), &oob, 0, OobPolicy::Skip, Some(&base.view()))
         .expect("skip + base must be Ok");
     assert_bits(&gb, &[30.0, -0.0, 10.0], &[3]);
-    assert_eq!(gb.as_slice()[1].to_bits(), 0x8000_0000_0000_0000, "base −0.0 kept raw-bit");
+    assert_eq!(
+        gb.as_slice()[1].to_bits(),
+        0x8000_0000_0000_0000,
+        "base −0.0 kept raw-bit"
+    );
 }
 
 #[test]
@@ -112,7 +126,11 @@ fn test_ops_scatter_dest_operand() {
     let upd = t(&[7.0, 5.0], &[2]);
     let out = scatter(dest, &idx, &upd.view(), 0, Combine::Assign).expect("assign must be Ok");
     assert_bits(&out, &[7.0, -0.0, 300.0], &[3]);
-    assert_eq!(out.as_slice()[1].to_bits(), 0x8000_0000_0000_0000, "unwritten −0.0 dest kept");
+    assert_eq!(
+        out.as_slice()[1].to_bits(),
+        0x8000_0000_0000_0000,
+        "unwritten −0.0 dest kept"
+    );
     assert_eq!(out.shape(), &[3], "output shape == dest.shape");
 
     // (b) atomic_add accumulates ONTO dest (OIN root → tolerance). dest
@@ -170,7 +188,11 @@ fn test_ops_structural_empty_axis() {
     let data = t(&[10.0, 11.0, 20.0, 21.0, 30.0, 31.0], &[3, 2]);
     let g = gather(&data.view(), &ix(&[], &[0]), 0, OobPolicy::Skip, None)
         .expect("empty-index gather must be Ok");
-    assert_eq!(g.shape(), &[0, 2], "gathered axis empty, trailing axis kept");
+    assert_eq!(
+        g.shape(),
+        &[0, 2],
+        "gathered axis empty, trailing axis kept"
+    );
     assert!(g.as_slice().is_empty());
 
     // (3) scatter with an empty index → dest unchanged (raw-bit; −0.0 kept). No
@@ -188,7 +210,11 @@ fn test_ops_structural_empty_axis() {
     assert!(vals.as_slice().is_empty(), "empty value permutation");
     assert_eq!(idxs.shape(), &[2, 0]);
     assert!(idxs.as_slice().is_empty(), "empty index vector");
-    assert_eq!(idxs.dtype(), Dtype::I64, "empty sort index vector is still i64");
+    assert_eq!(
+        idxs.dtype(),
+        Dtype::I64,
+        "empty sort index vector is still i64"
+    );
 }
 
 #[test]
@@ -237,7 +263,11 @@ fn test_ops_index_ref_wire_form() {
     )
     .expect("slot form must evaluate");
     assert_bits(&r.outputs[0], &[30.0, 10.0, 0.0], &[3]);
-    assert_eq!(r.dets[1], DetClass::ExactByte, "external Slot index → exact gather");
+    assert_eq!(
+        r.dets[1],
+        DetClass::ExactByte,
+        "external Slot index → exact gather"
+    );
 
     // (b) Node → node 2's (sort_network) index lane, a real scheduling edge.
     // keys [3,1,2] → perm [1,2,0]; gather data [30,10,20] by that perm →
@@ -246,7 +276,11 @@ fn test_ops_index_ref_wire_form() {
         vec![
             Node::Bind(0), // keys
             Node::Bind(1), // data
-            Node::SortNetwork { keys: 0, axis: 0, dir: Direction::Asc },
+            Node::SortNetwork {
+                keys: 0,
+                axis: 0,
+                dir: Direction::Asc,
+            },
             Node::Gather {
                 data: 1,
                 index: IndexRef::Node(2),
@@ -265,7 +299,11 @@ fn test_ops_index_ref_wire_form() {
     )
     .expect("node form must evaluate");
     assert_bits(&r.outputs[0], &[10.0, 20.0, 30.0], &[3]);
-    assert_eq!(r.dets[3], DetClass::ExactByte, "exact chain via IndexRef::Node");
+    assert_eq!(
+        r.dets[3],
+        DetClass::ExactByte,
+        "exact chain via IndexRef::Node"
+    );
 
     // (c) Node at a non-index producer (Bind) → typed decline.
     let dag_bad = FlatDag::new(
@@ -323,8 +361,16 @@ fn test_ops_index_outputs_root_list() {
         nodes: vec![
             Node::Bind(0), // k1
             Node::Bind(1), // k2
-            Node::SortNetwork { keys: 0, axis: 0, dir: Direction::Asc }, // 2
-            Node::SortNetwork { keys: 1, axis: 0, dir: Direction::Asc }, // 3
+            Node::SortNetwork {
+                keys: 0,
+                axis: 0,
+                dir: Direction::Asc,
+            }, // 2
+            Node::SortNetwork {
+                keys: 1,
+                axis: 0,
+                dir: Direction::Asc,
+            }, // 3
         ],
         outputs: vec![2, 3],
         index_outputs: vec![3, 2],
@@ -339,22 +385,36 @@ fn test_ops_index_outputs_root_list() {
     assert_bits(&r.outputs[0], &[1.0, 2.0, 3.0], &[3]);
     assert_bits(&r.outputs[1], &[10.0, 20.0, 30.0], &[3]);
     assert_eq!(r.index_outputs.len(), 2);
-    assert_eq!(r.index_outputs[0].as_slice(), &[0, 2, 1], "node3 perm exported first");
-    assert_eq!(r.index_outputs[1].as_slice(), &[1, 2, 0], "node2 perm exported second");
+    assert_eq!(
+        r.index_outputs[0].as_slice(),
+        &[0, 2, 1],
+        "node3 perm exported first"
+    );
+    assert_eq!(
+        r.index_outputs[1].as_slice(),
+        &[1, 2, 0],
+        "node2 perm exported second"
+    );
     assert_eq!(r.index_outputs[0].dtype(), Dtype::I64);
     assert_eq!(r.index_outputs[1].dtype(), Dtype::I64);
     assert_eq!(r.dets[2], DetClass::ExactByte);
     assert_eq!(r.dets[3], DetClass::ExactByte);
 
     // (b) a listed non-index node → typed decline; and an out-of-range id.
-    let bad_nonindex =
-        FlatDag { nodes: vec![Node::Bind(0)], outputs: vec![0], index_outputs: vec![0] };
+    let bad_nonindex = FlatDag {
+        nodes: vec![Node::Bind(0)],
+        outputs: vec![0],
+        index_outputs: vec![0],
+    };
     assert_eq!(
         eval_recipe(&bad_nonindex, &[t(&[1.0], &[1])], &[], &[]).err(),
         Some(Error::IndexSourceInvalid { node: 0 })
     );
-    let bad_oor =
-        FlatDag { nodes: vec![Node::Bind(0)], outputs: vec![0], index_outputs: vec![9] };
+    let bad_oor = FlatDag {
+        nodes: vec![Node::Bind(0)],
+        outputs: vec![0],
+        index_outputs: vec![9],
+    };
     assert_eq!(
         eval_recipe(&bad_oor, &[t(&[1.0], &[1])], &[], &[]).err(),
         Some(Error::IndexSourceInvalid { node: 9 })
@@ -363,7 +423,14 @@ fn test_ops_index_outputs_root_list() {
     // (c) empty index_outputs (FlatDag::new default) → value-lane-only: a sort
     // node whose index lane is simply not exported.
     let value_only = FlatDag::new(
-        vec![Node::Bind(0), Node::SortNetwork { keys: 0, axis: 0, dir: Direction::Asc }],
+        vec![
+            Node::Bind(0),
+            Node::SortNetwork {
+                keys: 0,
+                axis: 0,
+                dir: Direction::Asc,
+            },
+        ],
         vec![1],
     );
     let r = eval_recipe(&value_only, &[t(&[3.0, 1.0, 2.0], &[3])], &[], &[])

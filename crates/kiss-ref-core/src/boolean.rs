@@ -35,8 +35,7 @@ pub fn norm(v: i128) -> i128 {
 /// this seed (only the float `window::im2col`), so `(im2col, bool)` stays
 /// `Pending`, not over-claimed as `Done`.
 pub fn bool_supported(op: Op) -> bool {
-    bool_scalar_supported(op)
-        || (bool_legal(op) && crate::tensor_int::int_tensor_supported(op))
+    bool_scalar_supported(op) || (bool_legal(op) && crate::tensor_int::int_tensor_supported(op))
 }
 
 /// The **scalar** subset the bool lane evaluates directly via [`eval_bool_op`]:
@@ -66,7 +65,11 @@ pub fn eval_bool_op(op: Op, args: &[i128]) -> Result<i128, Error> {
         return Err(Error::UnsupportedDtype(Dtype::Bool));
     }
     if args.len() > 3 {
-        return Err(Error::Arity { op, expected: 3, got: args.len() });
+        return Err(Error::Arity {
+            op,
+            expected: 3,
+            got: args.len(),
+        });
     }
     let mut buf = [0i128; 3];
     for (i, &a) in args.iter().enumerate() {
@@ -108,8 +111,14 @@ mod tests {
     #[test]
     fn arithmetic_and_bitwise_decline() {
         // add/bitwise are not truth-valued ops — they decline (never wrap-compute).
-        assert!(matches!(eval_bool_op(Op::Add, &[1, 1]), Err(Error::UnsupportedDtype(_))));
-        assert!(matches!(eval_bool_op(Op::BitAnd, &[1, 1]), Err(Error::UnsupportedDtype(_))));
+        assert!(matches!(
+            eval_bool_op(Op::Add, &[1, 1]),
+            Err(Error::UnsupportedDtype(_))
+        ));
+        assert!(matches!(
+            eval_bool_op(Op::BitAnd, &[1, 1]),
+            Err(Error::UnsupportedDtype(_))
+        ));
     }
 
     #[test]

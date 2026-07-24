@@ -269,7 +269,11 @@ fn narrow_reduce_sum_folds_in_the_narrow_dtype() {
     // §6.16-0005 round-half-to-even lands on 16. The reduction of four exactly
     // representable inputs is 1 ULP ABOVE the exact answer. Pinned, not dodged.
     check_reduce_sum_exact::<E5m2>(16.0);
-    assert_eq!(wide_sum(&[1.0, 2.0, 4.0, 8.0]), 15.0, "the f32-accumulator answer");
+    assert_eq!(
+        wide_sum(&[1.0, 2.0, 4.0, 8.0]),
+        15.0,
+        "the f32-accumulator answer"
+    );
 }
 
 fn check_reduce_sum_stagnation<T: Narrow>(want: f32) {
@@ -418,15 +422,24 @@ fn narrow_accumulator_width_guard_and_maxmin_route_verbatim() {
     let x32: Tensor<f32> = Tensor::from_vec(vec![1.0f32, 2.0], &[2]).unwrap();
     assert!(matches!(
         reduce_ref::<f16>(&x16.view(), Monoid::Sum, &[0], Dtype::Bf16),
-        Err(Error::AccumulatorTooNarrow { storage: Dtype::F16, acc: Dtype::Bf16 })
+        Err(Error::AccumulatorTooNarrow {
+            storage: Dtype::F16,
+            acc: Dtype::Bf16
+        })
     )); // bf16 mantissa 7 < f16 mantissa 10 → incomparable, declined
     assert!(matches!(
         reduce_ref::<bf16>(&xbf.view(), Monoid::Sum, &[0], Dtype::F16),
-        Err(Error::AccumulatorTooNarrow { storage: Dtype::Bf16, acc: Dtype::F16 })
+        Err(Error::AccumulatorTooNarrow {
+            storage: Dtype::Bf16,
+            acc: Dtype::F16
+        })
     )); // f16 exp 5 < bf16 exp 8 → incomparable, declined
     assert!(matches!(
         reduce_ref::<f32>(&x32.view(), Monoid::Sum, &[0], Dtype::F16),
-        Err(Error::AccumulatorTooNarrow { storage: Dtype::F32, acc: Dtype::F16 })
+        Err(Error::AccumulatorTooNarrow {
+            storage: Dtype::F32,
+            acc: Dtype::F16
+        })
     ));
     assert!(matches!(
         reduce_ref::<f16>(&x16.view(), Monoid::Sum, &[0], Dtype::I32),
@@ -496,14 +509,24 @@ fn narrow_accumulator_diagonal_is_byte_identical() {
         let r_ref = reduce_ref::<T>(&x.view(), Monoid::Sum, &[0], T::DTYPE).unwrap();
         let r_ker = reduce(&x.view(), Monoid::Sum, &[0]).unwrap();
         for (a, b) in r_ref.as_slice().iter().zip(r_ker.as_slice()) {
-            assert_eq!(a.bits(), b.bits(), "[{}] reduce diagonal not byte-identical", T::NAME);
+            assert_eq!(
+                a.bits(),
+                b.bits(),
+                "[{}] reduce diagonal not byte-identical",
+                T::NAME
+            );
         }
         let a2: Tensor<T> = tn(&[1.0, -0.0, 2.0, 8.0], &[2, 2]);
         let b2: Tensor<T> = tn(&[1.0, 0.0, 0.0, 1.0], &[2, 2]);
         let m_ref = matmul_ref::<T>(&a2.view(), &b2.view(), T::DTYPE).unwrap();
         let m_ker = matmul(&a2.view(), &b2.view()).unwrap();
         for (a, b) in m_ref.as_slice().iter().zip(m_ker.as_slice()) {
-            assert_eq!(a.bits(), b.bits(), "[{}] matmul diagonal not byte-identical", T::NAME);
+            assert_eq!(
+                a.bits(),
+                b.bits(),
+                "[{}] matmul diagonal not byte-identical",
+                T::NAME
+            );
         }
     }
     diag::<f16>();
@@ -613,8 +636,7 @@ fn check_matmul_exact<T: Narrow>() {
     }
     let a: Tensor<T> = tn(&[1.0, 2.0, 3.0, 4.0], &[2, 2]);
     let b: Tensor<T> = tn(&[2.0, 0.0, 1.0, 2.0], &[2, 2]);
-    let c = matmul(&a.view(), &b.view())
-        .unwrap_or_else(|e| panic!("[{}] matmul: {e:?}", T::NAME));
+    let c = matmul(&a.view(), &b.view()).unwrap_or_else(|e| panic!("[{}] matmul: {e:?}", T::NAME));
     // [[1,2],[3,4]]·[[2,0],[1,2]]:
     //   c00 = 1·2 + 2·1 = 4    c01 = 1·0 + 2·2 = 4
     //   c10 = 3·2 + 4·1 = 10   c11 = 3·0 + 4·2 = 8
@@ -634,8 +656,8 @@ fn check_matmul_k8<T: Narrow>(want: f32) {
     assert_exact::<T>(64.0);
     let a: Tensor<T> = tn(&[64.0; 8], &[1, 8]);
     let b: Tensor<T> = tn(&[1.0; 8], &[8, 1]);
-    let c = matmul(&a.view(), &b.view())
-        .unwrap_or_else(|e| panic!("[{}] matmul k=8: {e:?}", T::NAME));
+    let c =
+        matmul(&a.view(), &b.view()).unwrap_or_else(|e| panic!("[{}] matmul k=8: {e:?}", T::NAME));
     assert_bits(&c, &[want], &[1, 1]);
 }
 
@@ -647,13 +669,13 @@ fn narrow_matmul_saturates_in_e4m3() {
     check_matmul_k8::<f16>(512.0);
     check_matmul_k8::<bf16>(512.0);
     check_matmul_k8::<E5m2>(512.0); // max finite 57344, plenty of room
-    // e4m3fn has no infinity encoding and §6.16-0004 mandates SATURATION, so the
-    // eighth accumulation step clamps: the reference returns 448, not 512 and not
-    // inf. A candidate accumulating in f32 and rounding once at the end returns
-    // 448 too (512 → saturate) — but a candidate accumulating in f16 and storing
-    // to e4m3 also returns 448, while one accumulating in f32 and OUTPUTTING f32
-    // (the usual FP8 GEMM shape, §6.13 does not pin the output dtype of a
-    // narrow contraction either) returns 512. Pinned as the reference's truth.
+                                    // e4m3fn has no infinity encoding and §6.16-0004 mandates SATURATION, so the
+                                    // eighth accumulation step clamps: the reference returns 448, not 512 and not
+                                    // inf. A candidate accumulating in f32 and rounding once at the end returns
+                                    // 448 too (512 → saturate) — but a candidate accumulating in f16 and storing
+                                    // to e4m3 also returns 448, while one accumulating in f32 and OUTPUTTING f32
+                                    // (the usual FP8 GEMM shape, §6.13 does not pin the output dtype of a
+                                    // narrow contraction either) returns 512. Pinned as the reference's truth.
     check_matmul_k8::<E4m3>(448.0);
 }
 
@@ -704,11 +726,8 @@ fn check_gather<T: Narrow>() {
 
     // gather is a pure RAW-BIT MOVE: a NaN's payload and a −0 survive untouched,
     // with no promote-round trip (the narrow lane changes nothing here).
-    let n: Tensor<T> = Tensor::from_vec(
-        vec![T::of(f32::NAN), T::of(-0.0), T::of(1.0)],
-        &[3],
-    )
-    .unwrap();
+    let n: Tensor<T> =
+        Tensor::from_vec(vec![T::of(f32::NAN), T::of(-0.0), T::of(1.0)], &[3]).unwrap();
     let g = gather(&n.view(), &ix(&[1, 0], &[2]), 0, OobPolicy::Clamp, None)
         .unwrap_or_else(|e| panic!("[{}] gather raw-bit: {e:?}", T::NAME));
     assert_eq!(
@@ -800,7 +819,10 @@ fn check_sort_network<T: Narrow>() {
         .unwrap_or_else(|e| panic!("[{}] sort asc: {e:?}", T::NAME));
     // NaN orders GREATEST (ascending → last); ties break by lower original index.
     assert_eq!(
-        vals.as_slice()[..3].iter().map(|&v| v.f32()).collect::<Vec<_>>(),
+        vals.as_slice()[..3]
+            .iter()
+            .map(|&v| v.f32())
+            .collect::<Vec<_>>(),
         vec![1.0, 2.0, 3.0],
         "[{}] ascending values",
         T::NAME
@@ -810,7 +832,12 @@ fn check_sort_network<T: Narrow>() {
         "[{}] NaN must sort last ascending",
         T::NAME
     );
-    assert_eq!(idx.as_slice(), &[1, 3, 0, 2], "[{}] original-index lane", T::NAME);
+    assert_eq!(
+        idx.as_slice(),
+        &[1, 3, 0, 2],
+        "[{}] original-index lane",
+        T::NAME
+    );
 
     let (dvals, didx) = sort_network(&x.view(), 0, Direction::Desc)
         .unwrap_or_else(|e| panic!("[{}] sort desc: {e:?}", T::NAME));
@@ -819,7 +846,12 @@ fn check_sort_network<T: Narrow>() {
         "[{}] NaN must sort first descending",
         T::NAME
     );
-    assert_eq!(didx.as_slice(), &[2, 0, 3, 1], "[{}] descending index lane", T::NAME);
+    assert_eq!(
+        didx.as_slice(),
+        &[2, 0, 3, 1],
+        "[{}] descending index lane",
+        T::NAME
+    );
 }
 
 #[test]
@@ -853,8 +885,8 @@ fn narrow_softmax_rows_do_not_sum_to_one() {
     // cannot sum to 1. The deviation grows as the mantissa shrinks — worth
     // stating loudly because a consumer's "softmax rows sum to 1" invariant is
     // FALSE on the narrow lanes and there is no §6.13 clause promising it.
-    check_softmax_uniform::<f16>(0.333251953125, 0.999755859375); // −2.4e−4
-    check_softmax_uniform::<bf16>(0.333984375, 1.001953125); // +2.0e−3
+    check_softmax_uniform::<f16>(0.333_251_95, 0.999_755_86); // −2.4e−4
+    check_softmax_uniform::<bf16>(0.333_984_38, 1.001_953_1); // +2.0e−3
     check_softmax_uniform::<E4m3>(0.34375, 1.03125); // +3.1e−2 (!)
     check_softmax_uniform::<E5m2>(0.3125, 0.9375); // −6.3e−2 (!)
 }
@@ -889,7 +921,10 @@ fn check_recipe_dot<T: Narrow>(want: f32) {
         vec![
             Node::Bind(0),
             Node::Bind(1),
-            Node::Apply { op: Op::Mul, children: vec![0, 1] },
+            Node::Apply {
+                op: Op::Mul,
+                children: vec![0, 1],
+            },
             Node::Reduce {
                 monoid: Monoid::Sum,
                 axes: vec![0],
@@ -938,7 +973,11 @@ fn check_recipe_graph<T: Narrow>(scan: &[f32]) {
     let dag = FlatDag {
         nodes: vec![
             Node::Bind(0),
-            Node::SortNetwork { keys: 0, axis: 0, dir: Direction::Asc },
+            Node::SortNetwork {
+                keys: 0,
+                axis: 0,
+                dir: Direction::Asc,
+            },
             Node::Gather {
                 data: 0,
                 index: IndexRef::Node(1),
@@ -947,8 +986,16 @@ fn check_recipe_graph<T: Narrow>(scan: &[f32]) {
                 base: None,
             },
             Node::Const(1.0),
-            Node::Apply { op: Op::Add, children: vec![2, 3] },
-            Node::PrefixScan { monoid: Monoid::Sum, axis: 0, exclusive: false, child: 4 },
+            Node::Apply {
+                op: Op::Add,
+                children: vec![2, 3],
+            },
+            Node::PrefixScan {
+                monoid: Monoid::Sum,
+                axis: 0,
+                exclusive: false,
+                child: 4,
+            },
             Node::Iota { like: 0, axis: 0 },
             Node::Flip { child: 6, axis: 0 },
         ],
@@ -962,7 +1009,12 @@ fn check_recipe_graph<T: Narrow>(scan: &[f32]) {
     assert_bits(&ev.outputs[1], &[1.0, 2.0, 3.0, 4.0], &[4]); // gather by the index lane
     assert_bits(&ev.outputs[2], scan, &[4]); // running sum of [2,3,4,5]
     assert_bits(&ev.outputs[3], &[3.0, 2.0, 1.0, 0.0], &[4]); // flip(iota)
-    assert_eq!(ev.index_outputs[0].as_slice(), &[1, 3, 2, 0], "[{}] index lane", T::NAME);
+    assert_eq!(
+        ev.index_outputs[0].as_slice(),
+        &[1, 3, 2, 0],
+        "[{}] index lane",
+        T::NAME
+    );
     // sort/gather/flip are raw-bit moves → exact-byte; the sum scan is not.
     assert_eq!(ev.dets[1], DetClass::ExactByte, "[{}] sort det", T::NAME);
     assert_eq!(ev.dets[2], DetClass::ExactByte, "[{}] gather det", T::NAME);
@@ -981,10 +1033,10 @@ fn narrow_eval_recipe_full_graph_runs_on_every_narrow_dtype() {
     check_recipe_graph::<f16>(&[2.0, 5.0, 9.0, 14.0]);
     check_recipe_graph::<bf16>(&[2.0, 5.0, 9.0, 14.0]);
     check_recipe_graph::<E4m3>(&[2.0, 5.0, 9.0, 14.0]); // 9 = 1.001b·2^3, 3 bits
-    // e5m2 (2 mantissa bits) cannot hold 9: it is EXACTLY midway between 8
-    // (mantissa 00, even) and 10 (mantissa 01, odd) → RNE gives 8; the fold then
-    // continues from 8, and 8+5 = 13 is midway between 12 (mantissa 10, even) and
-    // 14 (mantissa 11, odd) → 12. The scan drifts to [2,5,8,12].
+                                                        // e5m2 (2 mantissa bits) cannot hold 9: it is EXACTLY midway between 8
+                                                        // (mantissa 00, even) and 10 (mantissa 01, odd) → RNE gives 8; the fold then
+                                                        // continues from 8, and 8+5 = 13 is midway between 12 (mantissa 10, even) and
+                                                        // 14 (mantissa 11, odd) → 12. The scan drifts to [2,5,8,12].
     check_recipe_graph::<E5m2>(&[2.0, 5.0, 8.0, 12.0]);
 }
 

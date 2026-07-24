@@ -34,8 +34,8 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use kiss_classify_vocab::Dtype;
 use kiss_ops_vocab::Op;
 use kiss_ref_core::{
-    eval_recipe, Combine, DetClass, Direction, Error, FlatDag, IndexRef, IndexTensor, Monoid,
-    Node, OobPolicy, RecipeEval, ScalarFloat, Tensor, MAX_OPERANDS, MAX_RANK,
+    eval_recipe, Combine, DetClass, Direction, Error, FlatDag, IndexRef, IndexTensor, Monoid, Node,
+    OobPolicy, RecipeEval, ScalarFloat, Tensor, MAX_OPERANDS, MAX_RANK,
 };
 
 // ---- iteration budgets (tune here on a slow machine) ------------------------
@@ -62,7 +62,11 @@ const SEED_DETCHECK: u64 = 0xD15C_0B1A_5EED_0006;
 struct Rng(u64);
 impl Rng {
     fn new(seed: u64) -> Self {
-        Rng(if seed == 0 { 0x9E37_79B9_7F4A_7C15 } else { seed })
+        Rng(if seed == 0 {
+            0x9E37_79B9_7F4A_7C15
+        } else {
+            seed
+        })
     }
     fn next(&mut self) -> u64 {
         let mut x = self.0;
@@ -281,7 +285,10 @@ fn rank1_child(
         }
         inputs.push(gen_tensor(rng, &sh));
         let slot = inputs.len() - 1;
-        metas.push(Meta { shape: sh, sortlike: false });
+        metas.push(Meta {
+            shape: sh,
+            sortlike: false,
+        });
         nodes.push(Node::Bind(slot));
         nodes.len() - 1
     } else {
@@ -296,7 +303,10 @@ fn push_const(rng: &mut Rng, nodes: &mut Vec<Node>, metas: &mut Vec<Meta>) {
         plain_tame(rng)
     };
     nodes.push(Node::Const(v));
-    metas.push(Meta { shape: Vec::new(), sortlike: false });
+    metas.push(Meta {
+        shape: Vec::new(),
+        sortlike: false,
+    });
 }
 
 /// A fresh small index tensor for `gather`/`scatter` against `extent`, with 15%
@@ -351,7 +361,10 @@ fn gen_valid_node(
         // Bind (weight 2)
         0 | 1 => {
             let slot = rng.below(inputs.len());
-            metas.push(Meta { shape: inputs[slot].shape().to_vec(), sortlike: false });
+            metas.push(Meta {
+                shape: inputs[slot].shape().to_vec(),
+                sortlike: false,
+            });
             nodes.push(Node::Bind(slot));
         }
         // Const (weight 2)
@@ -362,7 +375,10 @@ fn gen_valid_node(
                 push_const(rng, nodes, metas);
             } else {
                 nodes.push(Node::RuntimeScalar(rng.below(params.len())));
-                metas.push(Meta { shape: Vec::new(), sortlike: false });
+                metas.push(Meta {
+                    shape: Vec::new(),
+                    sortlike: false,
+                });
             }
         }
         // ReducedCount (weight 1)
@@ -370,7 +386,10 @@ fn gen_valid_node(
             let rank = inputs[0].rank();
             let axes: Vec<usize> = (0..rank).filter(|_| rng.chance(40)).collect();
             nodes.push(Node::ReducedCount(axes));
-            metas.push(Meta { shape: Vec::new(), sortlike: false });
+            metas.push(Meta {
+                shape: Vec::new(),
+                sortlike: false,
+            });
         }
         // Apply (weight 5)
         6..=10 => {
@@ -387,7 +406,10 @@ fn gen_valid_node(
                     .map(|&c| metas[c].shape.clone())
                     .unwrap_or_default();
                 nodes.push(Node::Apply { op, children });
-                metas.push(Meta { shape, sortlike: false });
+                metas.push(Meta {
+                    shape,
+                    sortlike: false,
+                });
             } else {
                 let r = rng.below(100);
                 let (op, arity) = if r < 45 {
@@ -412,7 +434,10 @@ fn gen_valid_node(
                     children.push(c);
                 }
                 nodes.push(Node::Apply { op, children });
-                metas.push(Meta { shape: cshape, sortlike: false });
+                metas.push(Meta {
+                    shape: cshape,
+                    sortlike: false,
+                });
             }
         }
         // Reduce (weight 2)
@@ -436,8 +461,16 @@ fn gen_valid_node(
                     shape.push(d);
                 }
             }
-            nodes.push(Node::Reduce { monoid, axes, keepdim, child });
-            metas.push(Meta { shape, sortlike: false });
+            nodes.push(Node::Reduce {
+                monoid,
+                axes,
+                keepdim,
+                child,
+            });
+            metas.push(Meta {
+                shape,
+                sortlike: false,
+            });
         }
         // PrefixScan (weight 1)
         13 => {
@@ -446,8 +479,16 @@ fn gen_valid_node(
             let axis = rng.below(cshape.len().max(1));
             let monoid = MONOIDS[rng.below(4)];
             let exclusive = rng.chance(50);
-            nodes.push(Node::PrefixScan { monoid, axis, exclusive, child });
-            metas.push(Meta { shape: cshape, sortlike: false });
+            nodes.push(Node::PrefixScan {
+                monoid,
+                axis,
+                exclusive,
+                child,
+            });
+            metas.push(Meta {
+                shape: cshape,
+                sortlike: false,
+            });
         }
         // Matmul (weight 1)
         14 => {
@@ -476,25 +517,37 @@ fn gen_valid_node(
                 inputs.push(gen_tensor(rng, &sb));
                 let slot_b = inputs.len() - 1;
                 nodes.push(Node::Bind(slot_a));
-                metas.push(Meta { shape: sa, sortlike: false });
+                metas.push(Meta {
+                    shape: sa,
+                    sortlike: false,
+                });
                 let na = nodes.len() - 1;
                 nodes.push(Node::Bind(slot_b));
-                metas.push(Meta { shape: sb, sortlike: false });
+                metas.push(Meta {
+                    shape: sb,
+                    sortlike: false,
+                });
                 let nb = nodes.len() - 1;
                 let mut so = batch;
                 so.push(m);
                 so.push(nn);
                 nodes.push(Node::Matmul { lhs: na, rhs: nb });
-                metas.push(Meta { shape: so, sortlike: false });
+                metas.push(Meta {
+                    shape: so,
+                    sortlike: false,
+                });
             } else {
                 // random-pair arm — usually a typed decline, fine.
-                let lhs = pick_where(rng, metas, |m| m.shape.len() >= 2)
-                    .unwrap_or_else(|| rng.below(i));
-                let rhs = pick_where(rng, metas, |m| m.shape.len() >= 2)
-                    .unwrap_or_else(|| rng.below(i));
+                let lhs =
+                    pick_where(rng, metas, |m| m.shape.len() >= 2).unwrap_or_else(|| rng.below(i));
+                let rhs =
+                    pick_where(rng, metas, |m| m.shape.len() >= 2).unwrap_or_else(|| rng.below(i));
                 let shape = metas[lhs].shape.clone();
                 nodes.push(Node::Matmul { lhs, rhs });
-                metas.push(Meta { shape, sortlike: false });
+                metas.push(Meta {
+                    shape,
+                    sortlike: false,
+                });
             }
         }
         // Gather (weight 2)
@@ -551,8 +604,17 @@ fn gen_valid_node(
             } else {
                 shape = ds.clone();
             }
-            nodes.push(Node::Gather { data, index, axis, oob, base });
-            metas.push(Meta { shape, sortlike: false });
+            nodes.push(Node::Gather {
+                data,
+                index,
+                axis,
+                oob,
+                base,
+            });
+            metas.push(Meta {
+                shape,
+                sortlike: false,
+            });
         }
         // Scatter (weight 2)
         17 | 18 => {
@@ -592,7 +654,10 @@ fn gen_valid_node(
                     if inputs.len() < MAX_INPUTS && us.len() <= MAX_RANK {
                         inputs.push(gen_tensor(rng, &us));
                         nodes.push(Node::Bind(inputs.len() - 1));
-                        metas.push(Meta { shape: us.clone(), sortlike: false });
+                        metas.push(Meta {
+                            shape: us.clone(),
+                            sortlike: false,
+                        });
                         nodes.len() - 1
                     } else {
                         dest
@@ -607,17 +672,33 @@ fn gen_valid_node(
                 None => IndexRef::Slot(push_index_tensor(rng, indices, &[l], extent)),
             };
             let combine = COMBINES[rng.below(4)];
-            nodes.push(Node::Scatter { dest, index, updates, axis, combine });
-            metas.push(Meta { shape: s, sortlike: false });
+            nodes.push(Node::Scatter {
+                dest,
+                index,
+                updates,
+                axis,
+                combine,
+            });
+            metas.push(Meta {
+                shape: s,
+                sortlike: false,
+            });
         }
         // SortNetwork (weight 2)
         19 | 20 => {
             let keys = rank1_child(rng, nodes, metas, inputs);
             let ks = metas[keys].shape.clone();
             let axis = rng.below(ks.len().max(1));
-            let dir = if rng.chance(50) { Direction::Asc } else { Direction::Desc };
+            let dir = if rng.chance(50) {
+                Direction::Asc
+            } else {
+                Direction::Desc
+            };
             nodes.push(Node::SortNetwork { keys, axis, dir });
-            metas.push(Meta { shape: ks, sortlike: true });
+            metas.push(Meta {
+                shape: ks,
+                sortlike: true,
+            });
         }
         // Iota (weight 1)
         21 => {
@@ -630,7 +711,10 @@ fn gen_valid_node(
             };
             let shape = metas[like].shape.clone();
             nodes.push(Node::Iota { like, axis });
-            metas.push(Meta { shape, sortlike: false });
+            metas.push(Meta {
+                shape,
+                sortlike: false,
+            });
         }
         // Flip (weight 1)
         _ => {
@@ -643,7 +727,10 @@ fn gen_valid_node(
             };
             let shape = metas[child].shape.clone();
             nodes.push(Node::Flip { child, axis });
-            metas.push(Meta { shape, sortlike: false });
+            metas.push(Meta {
+                shape,
+                sortlike: false,
+            });
         }
     }
 }
@@ -657,7 +744,11 @@ fn gen_valid(rng: &mut Rng) -> Case {
     let s0 = gen_shape(rng);
     let n_in = 1 + rng.below(3);
     for k in 0..n_in {
-        let sh = if k == 0 || rng.chance(60) { s0.clone() } else { gen_shape(rng) };
+        let sh = if k == 0 || rng.chance(60) {
+            s0.clone()
+        } else {
+            gen_shape(rng)
+        };
         inputs.push(gen_tensor(rng, &sh));
     }
     let mut indices: Vec<IndexTensor> = Vec::new();
@@ -667,11 +758,21 @@ fn gen_valid(rng: &mut Rng) -> Case {
 
     // Seed leaf so every later child reference has a prior target.
     let slot = rng.below(inputs.len());
-    metas.push(Meta { shape: inputs[slot].shape().to_vec(), sortlike: false });
+    metas.push(Meta {
+        shape: inputs[slot].shape().to_vec(),
+        sortlike: false,
+    });
     nodes.push(Node::Bind(slot));
 
     while nodes.len() < target && nodes.len() < MAX_NODES_HARD {
-        gen_valid_node(rng, &mut nodes, &mut metas, &mut inputs, &params, &mut indices);
+        gen_valid_node(
+            rng,
+            &mut nodes,
+            &mut metas,
+            &mut inputs,
+            &params,
+            &mut indices,
+        );
     }
 
     let n = nodes.len();
@@ -692,7 +793,11 @@ fn gen_valid(rng: &mut Rng) -> Case {
         }
     }
     Case {
-        dag: FlatDag { nodes, outputs, index_outputs },
+        dag: FlatDag {
+            nodes,
+            outputs,
+            index_outputs,
+        },
         inputs,
         params,
         indices,
@@ -806,7 +911,11 @@ fn apply_mutation(rng: &mut Rng, c: &mut Case, kind: usize) -> bool {
                 return false;
             }
             let k = cand[rng.below(cand.len())];
-            let v = if rng.chance(25) { usize::MAX } else { n + rng.below(4) };
+            let v = if rng.chance(25) {
+                usize::MAX
+            } else {
+                n + rng.below(4)
+            };
             set_random_child(rng, &mut c.dag.nodes[k], v)
         }
         // M1: self-cycle on a child edge.
@@ -830,10 +939,16 @@ fn apply_mutation(rng: &mut Rng, c: &mut Case, kind: usize) -> bool {
             }
             let (i0, j) = if a < b { (a, b) } else { (b, a) };
             if !point_first_child_at(&mut c.dag.nodes[i0], j) {
-                c.dag.nodes[i0] = Node::Apply { op: Op::Add, children: vec![j] };
+                c.dag.nodes[i0] = Node::Apply {
+                    op: Op::Add,
+                    children: vec![j],
+                };
             }
             if !point_first_child_at(&mut c.dag.nodes[j], i0) {
-                c.dag.nodes[j] = Node::Apply { op: Op::Add, children: vec![i0] };
+                c.dag.nodes[j] = Node::Apply {
+                    op: Op::Add,
+                    children: vec![i0],
+                };
             }
             true
         }
@@ -874,7 +989,11 @@ fn apply_mutation(rng: &mut Rng, c: &mut Case, kind: usize) -> bool {
                 | Node::Scatter { axis, .. }
                 | Node::SortNetwork { axis, .. }
                 | Node::Iota { axis, .. } => {
-                    *axis = if rng.chance(25) { usize::MAX } else { MAX_RANK + rng.below(3) };
+                    *axis = if rng.chance(25) {
+                        usize::MAX
+                    } else {
+                        MAX_RANK + rng.below(3)
+                    };
                 }
                 _ => return false,
             }
@@ -892,8 +1011,14 @@ fn apply_mutation(rng: &mut Rng, c: &mut Case, kind: usize) -> bool {
                         nd,
                         Node::Bind(_)
                             | Node::RuntimeScalar(_)
-                            | Node::Gather { index: IndexRef::Slot(_), .. }
-                            | Node::Scatter { index: IndexRef::Slot(_), .. }
+                            | Node::Gather {
+                                index: IndexRef::Slot(_),
+                                ..
+                            }
+                            | Node::Scatter {
+                                index: IndexRef::Slot(_),
+                                ..
+                            }
                     )
                 })
                 .map(|(k, _)| k)
@@ -1025,10 +1150,11 @@ fn apply_mutation(rng: &mut Rng, c: &mut Case, kind: usize) -> bool {
         // M8: outputs garbage.
         8 => {
             match rng.below(3) {
-                0 => c
-                    .dag
-                    .outputs
-                    .push(if rng.chance(50) { usize::MAX } else { n + rng.below(4) }),
+                0 => c.dag.outputs.push(if rng.chance(50) {
+                    usize::MAX
+                } else {
+                    n + rng.below(4)
+                }),
                 1 => c.dag.outputs.clear(),
                 _ => match c.dag.outputs.first().copied() {
                     Some(e) => {
@@ -1171,7 +1297,10 @@ fn apply_mutation(rng: &mut Rng, c: &mut Case, kind: usize) -> bool {
                 .iter()
                 .enumerate()
                 .filter(|(_, nd)| {
-                    matches!(nd, Node::Apply { .. } | Node::Matmul { .. } | Node::Scatter { .. })
+                    matches!(
+                        nd,
+                        Node::Apply { .. } | Node::Matmul { .. } | Node::Scatter { .. }
+                    )
                 })
                 .map(|(k, _)| k)
                 .collect();
@@ -1242,14 +1371,20 @@ fn gen_deep_chain(rng: &mut Rng) -> Case {
         let op = if rng.chance(50) { Op::Neg } else { Op::Abs };
         if descending {
             if k + 1 < n {
-                nodes.push(Node::Apply { op, children: vec![k + 1] });
+                nodes.push(Node::Apply {
+                    op,
+                    children: vec![k + 1],
+                });
             } else {
                 nodes.push(Node::Bind(0));
             }
         } else if k == 0 {
             nodes.push(Node::Bind(0));
         } else {
-            nodes.push(Node::Apply { op, children: vec![k - 1] });
+            nodes.push(Node::Apply {
+                op,
+                children: vec![k - 1],
+            });
         }
     }
     let outputs = if descending { vec![0] } else { vec![n - 1] };
@@ -1356,7 +1491,11 @@ fn chaos_node(rng: &mut Rng, n: usize) -> Node {
         2 => Node::RuntimeScalar(wild_usize(rng, n)),
         3 => Node::ReducedCount((0..rng.below(6)).map(|_| wild_usize(rng, n)).collect()),
         4 => {
-            let len = if rng.chance(10) { rng.below(200) } else { rng.below(6) };
+            let len = if rng.chance(10) {
+                rng.below(200)
+            } else {
+                rng.below(6)
+            };
             Node::Apply {
                 op: Op::ALL[rng.below(Op::ALL.len())],
                 children: (0..len).map(|_| wild_usize(rng, n)).collect(),
@@ -1374,7 +1513,10 @@ fn chaos_node(rng: &mut Rng, n: usize) -> Node {
             exclusive: rng.chance(50),
             child: wild_usize(rng, n),
         },
-        7 => Node::Matmul { lhs: wild_usize(rng, n), rhs: wild_usize(rng, n) },
+        7 => Node::Matmul {
+            lhs: wild_usize(rng, n),
+            rhs: wild_usize(rng, n),
+        },
         8 => Node::Gather {
             data: wild_usize(rng, n),
             index: if rng.chance(50) {
@@ -1384,7 +1526,11 @@ fn chaos_node(rng: &mut Rng, n: usize) -> Node {
             },
             axis: wild_usize(rng, n),
             oob: OOBS[rng.below(3)],
-            base: if rng.chance(50) { Some(wild_usize(rng, n)) } else { None },
+            base: if rng.chance(50) {
+                Some(wild_usize(rng, n))
+            } else {
+                None
+            },
         },
         9 => Node::Scatter {
             dest: wild_usize(rng, n),
@@ -1400,9 +1546,16 @@ fn chaos_node(rng: &mut Rng, n: usize) -> Node {
         10 => Node::SortNetwork {
             keys: wild_usize(rng, n),
             axis: wild_usize(rng, n),
-            dir: if rng.chance(50) { Direction::Asc } else { Direction::Desc },
+            dir: if rng.chance(50) {
+                Direction::Asc
+            } else {
+                Direction::Desc
+            },
         },
-        _ => Node::Iota { like: wild_usize(rng, n), axis: wild_usize(rng, n) },
+        _ => Node::Iota {
+            like: wild_usize(rng, n),
+            axis: wild_usize(rng, n),
+        },
     }
 }
 
@@ -1415,7 +1568,11 @@ fn gen_chaos(rng: &mut Rng) -> Case {
     let params: Vec<f64> = (0..rng.below(3)).map(|_| chaos_const(rng)).collect();
     let indices: Vec<IndexTensor> = (0..rng.below(3)).map(|_| gen_chaos_index(rng)).collect();
     Case {
-        dag: FlatDag { nodes, outputs, index_outputs },
+        dag: FlatDag {
+            nodes,
+            outputs,
+            index_outputs,
+        },
         inputs,
         params,
         indices,
@@ -1594,8 +1751,11 @@ fn run_one(seed: u64, mode: Mode, run_f64: bool, run_f32: bool) -> (Case, bool) 
                 })
             })
             .collect();
-        let params32: Vec<f32> =
-            case.params.iter().map(|&v| <f32 as ScalarFloat>::from_f64(v)).collect();
+        let params32: Vec<f32> = case
+            .params
+            .iter()
+            .map(|&v| <f32 as ScalarFloat>::from_f64(v))
+            .collect();
         let r = catch_unwind(AssertUnwindSafe(|| {
             eval_recipe::<f32>(&case.dag, &inputs32, &params32, &case.indices)
         }));
@@ -1635,21 +1795,32 @@ fn anchor_mean_param_recipe() {
     let dag = FlatDag::new(
         vec![
             Node::Bind(0),
-            Node::Reduce { monoid: Monoid::Sum, axes: vec![0], keepdim: false, child: 0 },
+            Node::Reduce {
+                monoid: Monoid::Sum,
+                axes: vec![0],
+                keepdim: false,
+                child: 0,
+            },
             Node::ReducedCount(vec![0]),
-            Node::Apply { op: Op::Div, children: vec![1, 2] },
+            Node::Apply {
+                op: Op::Div,
+                children: vec![1, 2],
+            },
             Node::RuntimeScalar(0),
-            Node::Apply { op: Op::Add, children: vec![3, 4] },
+            Node::Apply {
+                op: Op::Add,
+                children: vec![3, 4],
+            },
         ],
         vec![5],
     );
     let want_dets = vec![
-        DetClass::ExactByte,                        // n0 Bind
-        DetClass::OrderInvariantNondeterministic,   // n1 float Sum
-        DetClass::ExactByte,                        // n2 ReducedCount
-        DetClass::OrderInvariantNondeterministic,   // n3 Div: EB ⊔ OIN ⊔ EB
-        DetClass::ExactByte,                        // n4 RuntimeScalar
-        DetClass::OrderInvariantNondeterministic,   // n5 Add: EB ⊔ OIN ⊔ EB
+        DetClass::ExactByte,                      // n0 Bind
+        DetClass::OrderInvariantNondeterministic, // n1 float Sum
+        DetClass::ExactByte,                      // n2 ReducedCount
+        DetClass::OrderInvariantNondeterministic, // n3 Div: EB ⊔ OIN ⊔ EB
+        DetClass::ExactByte,                      // n4 RuntimeScalar
+        DetClass::OrderInvariantNondeterministic, // n5 Add: EB ⊔ OIN ⊔ EB
     ];
 
     let x = Tensor::from_vec(vec![1.0f64, 2.0, 3.0, 4.0], &[4]).unwrap();
@@ -1676,7 +1847,11 @@ fn anchor_sort_gather_iota_both_lanes() {
     let dag = FlatDag {
         nodes: vec![
             Node::Bind(0),
-            Node::SortNetwork { keys: 0, axis: 0, dir: Direction::Asc },
+            Node::SortNetwork {
+                keys: 0,
+                axis: 0,
+                dir: Direction::Asc,
+            },
             Node::Bind(1),
             Node::Const(-1.0),
             Node::Gather {
@@ -1706,7 +1881,13 @@ fn anchor_sort_gather_iota_both_lanes() {
 #[test]
 fn anchor_typed_declines() {
     // A3a: self-cycle → the evaluator's cycle sentinel.
-    let a = FlatDag::new(vec![Node::Apply { op: Op::Add, children: vec![0, 0] }], vec![0]);
+    let a = FlatDag::new(
+        vec![Node::Apply {
+            op: Op::Add,
+            children: vec![0, 0],
+        }],
+        vec![0],
+    );
     assert!(matches!(
         eval_recipe::<f64>(&a, &[], &[], &[]),
         Err(Error::BadDecomposition { pos: 0, .. })
@@ -1772,7 +1953,9 @@ fn fuzz_mostly_valid_f64() {
             for node in &case.dag.nodes {
                 variant_mask |= 1 << variant_bit(node);
                 match node {
-                    Node::Gather { index, base, oob, .. } => {
+                    Node::Gather {
+                        index, base, oob, ..
+                    } => {
                         if matches!(index, IndexRef::Node(_)) {
                             ok_index_ref_node = true;
                         }
@@ -1884,7 +2067,10 @@ fn determinism_spot_check() {
                 assert_eq!(e1, e2, "determinism: Err values differ (seed={seed:#018x})");
             }
             (Ok(r1), Ok(r2)) => {
-                assert_eq!(r1.dets, r2.dets, "determinism: dets differ (seed={seed:#018x})");
+                assert_eq!(
+                    r1.dets, r2.dets,
+                    "determinism: dets differ (seed={seed:#018x})"
+                );
                 assert_eq!(
                     r1.outputs.len(),
                     r2.outputs.len(),
@@ -1965,7 +2151,11 @@ fn repro_from_env() {
         Ok(c) => c,
         Err(p) => fail(seed, mode, Phase::Generate, "-", None, p),
     };
-    println!("repro seed={seed:#018x} mode={}\n{}", mode_name(mode), dump_case(&case));
+    println!(
+        "repro seed={seed:#018x} mode={}\n{}",
+        mode_name(mode),
+        dump_case(&case)
+    );
     let (_, ok64) = run_one(seed, mode, true, true);
     println!(
         "repro result: f64 {}",

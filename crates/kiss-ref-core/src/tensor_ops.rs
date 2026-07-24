@@ -83,7 +83,9 @@ pub fn reduce_var<T: ScalarFloat>(x: &View<T>, axes: &[usize]) -> Result<Tensor<
     let sq = map_views(&[*x], x.shape(), |b| eval_op(Op::Mul, &[b[0], b[0]]))?;
     let mean_sq = reduce_mean(&sq.view(), axes)?;
     let mean = reduce_mean(x, axes)?;
-    let mean2 = map_views(&[mean.view()], mean.shape(), |b| eval_op(Op::Mul, &[b[0], b[0]]))?;
+    let mean2 = map_views(&[mean.view()], mean.shape(), |b| {
+        eval_op(Op::Mul, &[b[0], b[0]])
+    })?;
     bin(Op::Sub, &mean_sq.view(), &mean2.view())
 }
 
@@ -140,7 +142,10 @@ pub fn argmax<T: ScalarFloat>(x: &View<T>, axis: usize) -> Result<IndexTensor, E
         coord[..rank].copy_from_slice(oc);
         coord[axis] = 0; // rank-0 of the descending sort = the argmax
         let lin = row_major_index(&coord[..rank], in_shape);
-        data.push(*isl.get(lin).ok_or(Error::ShapeMismatch { expected: isl.len(), got: lin })?);
+        data.push(*isl.get(lin).ok_or(Error::ShapeMismatch {
+            expected: isl.len(),
+            got: lin,
+        })?);
     }
     IndexTensor::new(data, out_shape, Dtype::I64)
 }
@@ -226,20 +231,29 @@ pub fn matmul<T: ScalarFloat>(a: &View<T>, b: &View<T>) -> Result<Tensor<T>, Err
     let ash = a.shape();
     let bsh = b.shape();
     if ash.len() < 2 || bsh.len() < 2 {
-        return Err(Error::ShapeMismatch { expected: 2, got: ash.len().min(bsh.len()) });
+        return Err(Error::ShapeMismatch {
+            expected: 2,
+            got: ash.len().min(bsh.len()),
+        });
     }
     let (ar, br) = (ash.len(), bsh.len());
     let (m, k) = (ash[ar - 2], ash[ar - 1]);
     let (k2, n) = (bsh[br - 2], bsh[br - 1]);
     if k != k2 {
-        return Err(Error::ShapeMismatch { expected: k, got: k2 });
+        return Err(Error::ShapeMismatch {
+            expected: k,
+            got: k2,
+        });
     }
     // Broadcast the batch dims (everything but the trailing two).
     let (batch_buf, batch_rank) = broadcast_shapes(&[&ash[..ar - 2], &bsh[..br - 2]])?;
     let batch = &batch_buf[..batch_rank];
     let out_rank = batch_rank + 2;
     if out_rank > MAX_RANK {
-        return Err(Error::RankExceeded { rank: out_rank, max: MAX_RANK });
+        return Err(Error::RankExceeded {
+            rank: out_rank,
+            max: MAX_RANK,
+        });
     }
     // Full (broadcast) operand shapes: `batch ++ [m,k]` and `batch ++ [k,n]`.
     let mut a_full = [1usize; MAX_RANK];
@@ -274,8 +288,10 @@ pub fn matmul<T: ScalarFloat>(a: &View<T>, b: &View<T>) -> Result<Tensor<T>, Err
         for p in 0..k {
             acoord[batch_rank + 1] = p; // a's K index
             bcoord[batch_rank] = p; // b's K index
-            let prod =
-                eval_op(Op::Mul, &[av.read(&acoord[..out_rank])?, bv.read(&bcoord[..out_rank])?])?;
+            let prod = eval_op(
+                Op::Mul,
+                &[av.read(&acoord[..out_rank])?, bv.read(&bcoord[..out_rank])?],
+            )?;
             acc = eval_op(Op::Add, &[acc, prod])?;
         }
         data.push(acc);
@@ -301,19 +317,28 @@ pub(crate) fn matmul_acc<T: ScalarFloat, A: ScalarFloat>(
     let ash = a.shape();
     let bsh = b.shape();
     if ash.len() < 2 || bsh.len() < 2 {
-        return Err(Error::ShapeMismatch { expected: 2, got: ash.len().min(bsh.len()) });
+        return Err(Error::ShapeMismatch {
+            expected: 2,
+            got: ash.len().min(bsh.len()),
+        });
     }
     let (ar, br) = (ash.len(), bsh.len());
     let (m, k) = (ash[ar - 2], ash[ar - 1]);
     let (k2, n) = (bsh[br - 2], bsh[br - 1]);
     if k != k2 {
-        return Err(Error::ShapeMismatch { expected: k, got: k2 });
+        return Err(Error::ShapeMismatch {
+            expected: k,
+            got: k2,
+        });
     }
     let (batch_buf, batch_rank) = broadcast_shapes(&[&ash[..ar - 2], &bsh[..br - 2]])?;
     let batch = &batch_buf[..batch_rank];
     let out_rank = batch_rank + 2;
     if out_rank > MAX_RANK {
-        return Err(Error::RankExceeded { rank: out_rank, max: MAX_RANK });
+        return Err(Error::RankExceeded {
+            rank: out_rank,
+            max: MAX_RANK,
+        });
     }
     let mut a_full = [1usize; MAX_RANK];
     let mut b_full = [1usize; MAX_RANK];
@@ -359,7 +384,11 @@ pub(crate) fn matmul_acc<T: ScalarFloat, A: ScalarFloat>(
 /// The runtime-`<acc>` [`matmul`] reference (RFC #92 direction b). The diagonal
 /// `acc == T::DTYPE` routes to the verbatim [`matmul`] (byte-identical); otherwise
 /// the accumulator width is guarded and the contraction runs in the requested `A`.
-pub fn matmul_ref<T: ScalarFloat>(a: &View<T>, b: &View<T>, acc: Dtype) -> Result<Tensor<T>, Error> {
+pub fn matmul_ref<T: ScalarFloat>(
+    a: &View<T>,
+    b: &View<T>,
+    acc: Dtype,
+) -> Result<Tensor<T>, Error> {
     if acc == T::DTYPE {
         return matmul::<T>(a, b);
     }
@@ -390,10 +419,7 @@ pub fn index_select<T: ScalarFloat>(
 }
 
 /// `embedding` — §6.13: `gather(oob=zero-fill)` with a 1-D index, `axis=0`.
-pub fn embedding<T: ScalarFloat>(
-    table: &View<T>,
-    index: &IndexTensor,
-) -> Result<Tensor<T>, Error> {
+pub fn embedding<T: ScalarFloat>(table: &View<T>, index: &IndexTensor) -> Result<Tensor<T>, Error> {
     gather(table, index, 0, OobPolicy::ZeroFill, None)
 }
 
@@ -484,8 +510,14 @@ mod tests {
         let x = t(&[1.0, 2.0, 3.0, 1.0, 1.0, 1.0], &[2, 3]);
         let s = softmax(&x.view(), 1).unwrap();
         // each row sums to 1.
-        close(&[s.as_slice()[0] + s.as_slice()[1] + s.as_slice()[2]], &[1.0]);
-        close(&[s.as_slice()[3] + s.as_slice()[4] + s.as_slice()[5]], &[1.0]);
+        close(
+            &[s.as_slice()[0] + s.as_slice()[1] + s.as_slice()[2]],
+            &[1.0],
+        );
+        close(
+            &[s.as_slice()[3] + s.as_slice()[4] + s.as_slice()[5]],
+            &[1.0],
+        );
         // uniform row → 1/3 each.
         close(&s.as_slice()[3..6], &[1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0]);
     }
@@ -554,9 +586,15 @@ mod tests {
     fn determinism_tags() {
         // avg_pool carries a float sum → nondeterministic (§6.0-0004); max_pool is
         // a max reduction → exact-byte (regression, adversarial review).
-        assert_eq!(op_det(Op::AvgPool), DetClass::OrderInvariantNondeterministic);
+        assert_eq!(
+            op_det(Op::AvgPool),
+            DetClass::OrderInvariantNondeterministic
+        );
         assert_eq!(op_det(Op::MaxPool), DetClass::ExactByte);
-        assert_eq!(op_det(Op::ScatterAdd), DetClass::OrderInvariantNondeterministic);
+        assert_eq!(
+            op_det(Op::ScatterAdd),
+            DetClass::OrderInvariantNondeterministic
+        );
         assert_eq!(op_det(Op::Argmax), DetClass::ExactByte);
     }
 

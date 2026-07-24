@@ -99,21 +99,34 @@ impl<T: Copy> Tensor<T> {
     /// [`Error::ShapeMismatch`] if `data.len()` ≠ `numel(shape)`.
     pub fn from_vec(data: Vec<T>, shape: &[usize]) -> Result<Self, Error> {
         if shape.len() > MAX_RANK {
-            return Err(Error::RankExceeded { rank: shape.len(), max: MAX_RANK });
+            return Err(Error::RankExceeded {
+                rank: shape.len(),
+                max: MAX_RANK,
+            });
         }
         let n = numel(shape)?;
         if n != data.len() {
-            return Err(Error::ShapeMismatch { expected: n, got: data.len() });
+            return Err(Error::ShapeMismatch {
+                expected: n,
+                got: data.len(),
+            });
         }
         let mut s = [1usize; MAX_RANK];
         s[..shape.len()].copy_from_slice(shape);
-        Ok(Tensor { data, shape: s, rank: shape.len() })
+        Ok(Tensor {
+            data,
+            shape: s,
+            rank: shape.len(),
+        })
     }
 
     /// A tensor of `shape` filled with `value`.
     pub fn full(shape: &[usize], value: T) -> Result<Self, Error> {
         if shape.len() > MAX_RANK {
-            return Err(Error::RankExceeded { rank: shape.len(), max: MAX_RANK });
+            return Err(Error::RankExceeded {
+                rank: shape.len(),
+                max: MAX_RANK,
+            });
         }
         let n = numel(shape)?;
         let mut data = Vec::new();
@@ -198,11 +211,14 @@ impl<'a, T: Copy> View<'a, T> {
     /// an [`Error`], never a panic.
     pub fn read(&self, coord: &[usize]) -> Result<T, Error> {
         if coord.len() != self.rank {
-            return Err(Error::ShapeMismatch { expected: self.rank, got: coord.len() });
+            return Err(Error::ShapeMismatch {
+                expected: self.rank,
+                got: coord.len(),
+            });
         }
         let mut idx: isize = self.offset as isize;
-        for k in 0..self.rank {
-            idx = idx.wrapping_add((coord[k] as isize).wrapping_mul(self.strides[k]));
+        for (&c, &stride) in coord.iter().zip(&self.strides[..self.rank]) {
+            idx = idx.wrapping_add((c as isize).wrapping_mul(stride));
         }
         let i = usize::try_from(idx).map_err(|_| Error::ShapeMismatch {
             expected: self.data.len(),
@@ -241,7 +257,13 @@ impl<'a, T: Copy> View<'a, T> {
                 }
             }
         }
-        Ok(View { data: self.data, shape, strides, offset: self.offset, rank: r_out })
+        Ok(View {
+            data: self.data,
+            shape,
+            strides,
+            offset: self.offset,
+            rank: r_out,
+        })
     }
 }
 
@@ -254,7 +276,10 @@ pub fn broadcast_shapes(shapes: &[&[usize]]) -> Result<([usize; MAX_RANK], usize
         }
     }
     if r_out > MAX_RANK {
-        return Err(Error::RankExceeded { rank: r_out, max: MAX_RANK });
+        return Err(Error::RankExceeded {
+            rank: r_out,
+            max: MAX_RANK,
+        });
     }
     let mut out = [1usize; MAX_RANK];
     for s in shapes {
@@ -286,9 +311,17 @@ impl<'s> Odometer<'s> {
     /// out of range) or [`Error::ShapeOverflow`] if the element count overflows.
     pub fn new(shape: &'s [usize]) -> Result<Self, Error> {
         if shape.len() > MAX_RANK {
-            return Err(Error::RankExceeded { rank: shape.len(), max: MAX_RANK });
+            return Err(Error::RankExceeded {
+                rank: shape.len(),
+                max: MAX_RANK,
+            });
         }
-        Ok(Odometer { shape, numel: numel(shape)?, lin: 0, coord: [0usize; MAX_RANK] })
+        Ok(Odometer {
+            shape,
+            numel: numel(shape)?,
+            lin: 0,
+            coord: [0usize; MAX_RANK],
+        })
     }
 
     /// The number of coordinates this odometer yields.
@@ -335,15 +368,26 @@ impl IndexTensor {
             return Err(Error::IndexDtypeIllegal(dtype));
         }
         if shape.len() > MAX_RANK {
-            return Err(Error::RankExceeded { rank: shape.len(), max: MAX_RANK });
+            return Err(Error::RankExceeded {
+                rank: shape.len(),
+                max: MAX_RANK,
+            });
         }
         let n = numel(shape)?;
         if n != data.len() {
-            return Err(Error::ShapeMismatch { expected: n, got: data.len() });
+            return Err(Error::ShapeMismatch {
+                expected: n,
+                got: data.len(),
+            });
         }
         let mut s = [1usize; MAX_RANK];
         s[..shape.len()].copy_from_slice(shape);
-        Ok(IndexTensor { data, shape: s, rank: shape.len(), dtype })
+        Ok(IndexTensor {
+            data,
+            shape: s,
+            rank: shape.len(),
+            dtype,
+        })
     }
 
     /// The index values in row-major order.
@@ -453,6 +497,9 @@ mod tests {
     fn odometer_rejects_over_rank() {
         // rank 9 > MAX_RANK: an Error, never an out-of-range panic on the fixed
         // coord buffer (regression, adversarial review).
-        assert!(matches!(Odometer::new(&[1usize; 9]), Err(Error::RankExceeded { .. })));
+        assert!(matches!(
+            Odometer::new(&[1usize; 9]),
+            Err(Error::RankExceeded { .. })
+        ));
     }
 }

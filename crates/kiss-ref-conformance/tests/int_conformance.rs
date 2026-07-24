@@ -20,8 +20,14 @@ fn test_ops_int_wrapping() {
 #[test]
 fn test_ops_int_neg_abs_wrap() {
     // KISS-OPS-6.4-0005: neg/abs of INT_MIN stay INT_MIN, no UB, no saturation.
-    assert_eq!(ev(Op::Neg, Dtype::I32, &[i32::MIN as i128]), i32::MIN as i128);
-    assert_eq!(ev(Op::Abs, Dtype::I32, &[i32::MIN as i128]), i32::MIN as i128);
+    assert_eq!(
+        ev(Op::Neg, Dtype::I32, &[i32::MIN as i128]),
+        i32::MIN as i128
+    );
+    assert_eq!(
+        ev(Op::Abs, Dtype::I32, &[i32::MIN as i128]),
+        i32::MIN as i128
+    );
     assert_eq!(ev(Op::Neg, Dtype::I32, &[5]), -5);
 }
 

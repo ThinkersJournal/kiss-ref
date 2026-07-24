@@ -83,7 +83,10 @@ fn test_ops_f16_computes_in_dtype() {
     assert_eq!(eval_op(Op::Mul, &[a, b]).unwrap(), f16::from_f32(2.0));
     // A non-primitive resolves through the floor in f16 and stays finite.
     let g = eval_op(Op::Gelu, &[f16::from_f32(1.0)]).unwrap().to_f32();
-    assert!(g.is_finite() && (g - 0.8413).abs() < 0.05, "gelu(1) in f16 ≈ 0.84, got {g}");
+    assert!(
+        g.is_finite() && (g - 0.8413).abs() < 0.05,
+        "gelu(1) in f16 ≈ 0.84, got {g}"
+    );
 }
 
 #[test]

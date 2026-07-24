@@ -72,7 +72,7 @@ impl ConstSym {
             ConstSym::Sqrt2 => consts::SQRT_2,
             // sqrt(2/pi) pinned as a const(bits) leaf (§6.12-0003) so the vocab
             // crate stays dependency-free (no libm for a runtime sqrt).
-            ConstSym::SqrtTwoOverPi => 0.7978845608028653558798921198687637,
+            ConstSym::SqrtTwoOverPi => 0.797_884_560_802_865_4,
             ConstSym::C0_044715 => 0.044715,
         }
     }
@@ -120,7 +120,10 @@ pub struct ParseError {
 /// §6.13-0006 grammar. (The let-binding form is not needed by the elementwise
 /// subset and is a documented follow-up.)
 pub fn parse(src: &str) -> Result<Expr, ParseError> {
-    let mut p = Parser { s: src.as_bytes(), i: 0 };
+    let mut p = Parser {
+        s: src.as_bytes(),
+        i: 0,
+    };
     p.skip_ws();
     let e = p.expr()?;
     p.skip_ws();
@@ -137,7 +140,10 @@ struct Parser<'a> {
 
 impl<'a> Parser<'a> {
     fn err(&self, m: &str) -> ParseError {
-        ParseError { msg: m.to_string(), pos: self.i }
+        ParseError {
+            msg: m.to_string(),
+            pos: self.i,
+        }
     }
 
     fn skip_ws(&mut self) {
@@ -398,7 +404,10 @@ mod tests {
         for o in Op::ALL {
             if let Some(src) = o.reference_decomposition_src() {
                 let e = parse(src).unwrap();
-                assert!(!mentions(&e, *o), "{o:?} references itself in its decomposition");
+                assert!(
+                    !mentions(&e, *o),
+                    "{o:?} references itself in its decomposition"
+                );
             }
         }
     }
@@ -433,7 +442,10 @@ mod tests {
         }
         for o in Op::ALL {
             if o.reference_decomposition_src().is_some() {
-                assert!(resolves(*o, 32), "{o:?} did not resolve to floor within budget");
+                assert!(
+                    resolves(*o, 32),
+                    "{o:?} did not resolve to floor within budget"
+                );
             }
         }
     }

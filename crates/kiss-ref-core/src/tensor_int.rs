@@ -89,10 +89,16 @@ pub fn element_map(
 ) -> Result<Tensor<i128>, Error> {
     let n = inputs.len();
     if n > MAX_OPERANDS {
-        return Err(Error::RankExceeded { rank: n, max: MAX_OPERANDS });
+        return Err(Error::RankExceeded {
+            rank: n,
+            max: MAX_OPERANDS,
+        });
     }
     if out_shape.len() > MAX_RANK {
-        return Err(Error::RankExceeded { rank: out_shape.len(), max: MAX_RANK });
+        return Err(Error::RankExceeded {
+            rank: out_shape.len(),
+            max: MAX_RANK,
+        });
     }
     let mut bviews: Vec<View<i128>> = Vec::with_capacity(n);
     for v in inputs {
@@ -188,7 +194,11 @@ pub fn prefix_scan(
     let op = monoid_op(monoid);
     let ident = int_identity(monoid, dtype)?;
     let count = numel(in_shape)?;
-    let mut data: Vec<i128> = if count == 0 { Vec::new() } else { vec![ident; count] };
+    let mut data: Vec<i128> = if count == 0 {
+        Vec::new()
+    } else {
+        vec![ident; count]
+    };
 
     let mut line_shape = [1usize; MAX_RANK];
     line_shape[..rank].copy_from_slice(in_shape);
@@ -203,7 +213,10 @@ pub fn prefix_scan(
             coord[axis] = j;
             let xv = x.read(&coord[..rank])?;
             let lin = row_major_index(&coord[..rank], in_shape);
-            let slot = data.get_mut(lin).ok_or(Error::ShapeMismatch { expected: count, got: lin })?;
+            let slot = data.get_mut(lin).ok_or(Error::ShapeMismatch {
+                expected: count,
+                got: lin,
+            })?;
             if exclusive {
                 *slot = acc;
                 acc = eval_int_op(op, dtype, &[acc, xv])?;
@@ -227,8 +240,8 @@ fn resolve_index(ival: i64, extent: usize, oob: OobPolicy) -> Result<Option<usiz
             }
             Ok(Some(if ival < 0 { 0 } else { extent - 1 }))
         }
-        OobPolicy::ZeroFill => Ok(None),          // → zero
-        OobPolicy::Skip => Ok(Some(usize::MAX)),  // sentinel handled by caller (base)
+        OobPolicy::ZeroFill => Ok(None),         // → zero
+        OobPolicy::Skip => Ok(Some(usize::MAX)), // sentinel handled by caller (base)
     }
 }
 
@@ -250,7 +263,10 @@ pub fn gather(
     let irank = ishape.len();
     let out_rank = drank - 1 + irank;
     if out_rank > MAX_RANK {
-        return Err(Error::RankExceeded { rank: out_rank, max: MAX_RANK });
+        return Err(Error::RankExceeded {
+            rank: out_rank,
+            max: MAX_RANK,
+        });
     }
     let extent = dshape[axis];
     let mut out_shape = [1usize; MAX_RANK];
@@ -290,9 +306,7 @@ pub fn gather(
                 None => return Err(Error::GatherSkipNoBase),
             },
             Some(s) => {
-                for k in 0..axis {
-                    src[k] = oc[k];
-                }
+                src[..axis].copy_from_slice(&oc[..axis]);
                 src[axis] = s;
                 for k in 0..(drank - 1 - axis) {
                     src[axis + 1 + k] = oc[axis + irank + k];
@@ -325,7 +339,10 @@ pub fn scatter(
         return Err(Error::AxisOutOfRange { axis, rank: drank });
     }
     if index.rank() != 1 {
-        return Err(Error::ShapeMismatch { expected: 1, got: index.rank() });
+        return Err(Error::ShapeMismatch {
+            expected: 1,
+            got: index.rank(),
+        });
     }
     let mut wshape = [0usize; MAX_RANK];
     wshape[..drank].copy_from_slice(&dshape[..drank]);
@@ -350,14 +367,20 @@ pub fn scatter(
         dcoord[axis] = ival as usize;
         let dlin = row_major_index(&dcoord[..drank], &dshape[..drank]);
         let u = updates.read(uc)?;
-        let cur = *data.get(dlin).ok_or(Error::ShapeMismatch { expected: dlen, got: dlin })?;
+        let cur = *data.get(dlin).ok_or(Error::ShapeMismatch {
+            expected: dlen,
+            got: dlin,
+        })?;
         let next = match combine {
             Combine::Assign => u,
             Combine::AtomicAdd => eval_int_op(Op::Add, dtype, &[cur, u])?,
             Combine::AtomicMax => eval_int_op(Op::MaxProp, dtype, &[cur, u])?,
             Combine::AtomicMin => eval_int_op(Op::MinProp, dtype, &[cur, u])?,
         };
-        *data.get_mut(dlin).ok_or(Error::ShapeMismatch { expected: dlen, got: dlin })? = next;
+        *data.get_mut(dlin).ok_or(Error::ShapeMismatch {
+            expected: dlen,
+            got: dlin,
+        })? = next;
     }
     Tensor::from_vec(data, &dshape[..drank])
 }
@@ -408,8 +431,14 @@ pub fn sort_network(
         for (r, &(orig, val)) in pairs.iter().enumerate() {
             coord[axis] = r;
             let lin = row_major_index(&coord[..rank], in_shape);
-            *vals.get_mut(lin).ok_or(Error::ShapeMismatch { expected: count, got: lin })? = val;
-            *idxs.get_mut(lin).ok_or(Error::ShapeMismatch { expected: count, got: lin })? = orig;
+            *vals.get_mut(lin).ok_or(Error::ShapeMismatch {
+                expected: count,
+                got: lin,
+            })? = val;
+            *idxs.get_mut(lin).ok_or(Error::ShapeMismatch {
+                expected: count,
+                got: lin,
+            })? = orig;
         }
     }
     Ok((
@@ -441,7 +470,10 @@ pub fn argmax(x: &View<i128>, axis: usize) -> Result<IndexTensor, Error> {
         coord[..rank].copy_from_slice(oc);
         coord[axis] = 0;
         let lin = row_major_index(&coord[..rank], in_shape);
-        data.push(*isl.get(lin).ok_or(Error::ShapeMismatch { expected: isl.len(), got: lin })?);
+        data.push(*isl.get(lin).ok_or(Error::ShapeMismatch {
+            expected: isl.len(),
+            got: lin,
+        })?);
     }
     IndexTensor::new(data, out_shape, Dtype::I64)
 }
@@ -504,14 +536,27 @@ mod tests {
     #[test]
     fn int_reduce_max_min_identity() {
         let x = t(&[-5, 3, -1], &[3]);
-        assert_eq!(reduce(&x.view(), Dtype::S8, Monoid::Max, &[0]).unwrap().as_slice(), &[3]);
-        assert_eq!(reduce(&x.view(), Dtype::S8, Monoid::Min, &[0]).unwrap().as_slice(), &[-5]);
+        assert_eq!(
+            reduce(&x.view(), Dtype::S8, Monoid::Max, &[0])
+                .unwrap()
+                .as_slice(),
+            &[3]
+        );
+        assert_eq!(
+            reduce(&x.view(), Dtype::S8, Monoid::Min, &[0])
+                .unwrap()
+                .as_slice(),
+            &[-5]
+        );
     }
 
     #[test]
     fn int_cumsum_and_argmax() {
         let x = t(&[1, 2, 3, 4], &[4]);
-        assert_eq!(cumsum(&x.view(), Dtype::I32, 0).unwrap().as_slice(), &[1, 3, 6, 10]);
+        assert_eq!(
+            cumsum(&x.view(), Dtype::I32, 0).unwrap().as_slice(),
+            &[1, 3, 6, 10]
+        );
         let a = argmax(&t(&[3, 9, 1], &[3]).view(), 0).unwrap();
         assert_eq!(a.as_slice(), &[1]);
     }

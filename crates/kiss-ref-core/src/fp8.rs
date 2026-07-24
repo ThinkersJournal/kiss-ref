@@ -24,7 +24,11 @@ fn round_mag(a: f32, m_bits: u32, bias: i32, max_fin_e: u32, sat: u8, e4m3fn: bo
     let e32 = ((b >> 23) & 0xFF) as i32;
     let m32 = b & 0x007F_FFFF;
     // 24-bit significand (implicit 1 for a normal f32) + unbiased exponent.
-    let (sig, ue) = if e32 == 0 { (m32, -126i32) } else { (m32 | 0x0080_0000, e32 - 127) };
+    let (sig, ue) = if e32 == 0 {
+        (m32, -126i32)
+    } else {
+        (m32 | 0x0080_0000, e32 - 127)
+    };
     let drop = 23 - m_bits; // f32 keeps 23 fraction bits; the target keeps m_bits
     let m_mask = (1u32 << m_bits) - 1;
     let te = ue + bias; // target biased exponent
@@ -84,7 +88,11 @@ fn decode(bits: u8, m_bits: u32, bias: i32, e4m3fn: bool) -> f32 {
             return f32::NAN;
         }
     } else if exp as u32 == max_e {
-        return if mant == 0 { sign * f32::INFINITY } else { f32::NAN };
+        return if mant == 0 {
+            sign * f32::INFINITY
+        } else {
+            f32::NAN
+        };
     }
     if exp == 0 {
         // subnormal: 2^(1-bias) · (mant / 2^m_bits)

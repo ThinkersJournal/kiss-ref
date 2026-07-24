@@ -286,23 +286,55 @@ macro_rules! impl_scalar_float {
 impl_scalar_float!(
     f64,
     dtype = Dtype::F64,
-    exp = libm::exp, log = libm::log, sin = libm::sin, cos = libm::cos, sqrt = libm::sqrt,
-    erf = libm::erf, atan = libm::atan, lgamma = libm::lgamma, atan2 = libm::atan2,
-    copysign = libm::copysign, nextafter = libm::nextafter, floor = libm::floor,
-    ceil = libm::ceil, trunc = libm::trunc, fabs = libm::fabs, tanh = libm::tanh,
-    sinh = libm::sinh, cosh = libm::cosh, log1p = libm::log1p, expm1 = libm::expm1,
-    pow = libm::pow, hypot = libm::hypot
+    exp = libm::exp,
+    log = libm::log,
+    sin = libm::sin,
+    cos = libm::cos,
+    sqrt = libm::sqrt,
+    erf = libm::erf,
+    atan = libm::atan,
+    lgamma = libm::lgamma,
+    atan2 = libm::atan2,
+    copysign = libm::copysign,
+    nextafter = libm::nextafter,
+    floor = libm::floor,
+    ceil = libm::ceil,
+    trunc = libm::trunc,
+    fabs = libm::fabs,
+    tanh = libm::tanh,
+    sinh = libm::sinh,
+    cosh = libm::cosh,
+    log1p = libm::log1p,
+    expm1 = libm::expm1,
+    pow = libm::pow,
+    hypot = libm::hypot
 );
 
 impl_scalar_float!(
     f32,
     dtype = Dtype::F32,
-    exp = libm::expf, log = libm::logf, sin = libm::sinf, cos = libm::cosf, sqrt = libm::sqrtf,
-    erf = libm::erff, atan = libm::atanf, lgamma = libm::lgammaf, atan2 = libm::atan2f,
-    copysign = libm::copysignf, nextafter = libm::nextafterf, floor = libm::floorf,
-    ceil = libm::ceilf, trunc = libm::truncf, fabs = libm::fabsf, tanh = libm::tanhf,
-    sinh = libm::sinhf, cosh = libm::coshf, log1p = libm::log1pf, expm1 = libm::expm1f,
-    pow = libm::powf, hypot = libm::hypotf
+    exp = libm::expf,
+    log = libm::logf,
+    sin = libm::sinf,
+    cos = libm::cosf,
+    sqrt = libm::sqrtf,
+    erf = libm::erff,
+    atan = libm::atanf,
+    lgamma = libm::lgammaf,
+    atan2 = libm::atan2f,
+    copysign = libm::copysignf,
+    nextafter = libm::nextafterf,
+    floor = libm::floorf,
+    ceil = libm::ceilf,
+    trunc = libm::truncf,
+    fabs = libm::fabsf,
+    tanh = libm::tanhf,
+    sinh = libm::sinhf,
+    cosh = libm::coshf,
+    log1p = libm::log1pf,
+    expm1 = libm::expm1f,
+    pow = libm::powf,
+    hypot = libm::hypotf
 );
 
 // ---- Narrow floats (f16 / bf16) ----------------------------------------------
@@ -535,7 +567,11 @@ fn round_to_odd_f64_to_f32(x: f64) -> f32 {
     }
     // r is one of the two consecutive f32s bracketing x; the OTHER bracket is r's
     // neighbor toward x. Exactly one of two consecutive f32s is odd — return it.
-    let other = if (r as f64) < x { next_up_f32(r) } else { next_down_f32(r) };
+    let other = if (r as f64) < x {
+        next_up_f32(r)
+    } else {
+        next_down_f32(r)
+    };
     if (r.to_bits() & 1) == 1 {
         r
     } else {
@@ -606,12 +642,27 @@ mod tests {
     fn round_to_odd_is_identity_on_f32_values() {
         // Every exact f32 value comes back byte-unchanged (the acc ⊆ f32 property
         // that keeps every accumulator-≤-f32 narrowing cell byte-identical).
-        for &v in &[0.0f32, -0.0, 1.0, -3.5, 57344.0, f32::MIN_POSITIVE, f32::MAX] {
-            assert_eq!(round_to_odd_f64_to_f32(v as f64).to_bits(), v.to_bits(), "{v}");
+        for &v in &[
+            0.0f32,
+            -0.0,
+            1.0,
+            -3.5,
+            57344.0,
+            f32::MIN_POSITIVE,
+            f32::MAX,
+        ] {
+            assert_eq!(
+                round_to_odd_f64_to_f32(v as f64).to_bits(),
+                v.to_bits(),
+                "{v}"
+            );
         }
         assert!(round_to_odd_f64_to_f32(f64::NAN).is_nan());
         assert_eq!(round_to_odd_f64_to_f32(f64::INFINITY), f32::INFINITY);
-        assert_eq!(round_to_odd_f64_to_f32(f64::NEG_INFINITY), f32::NEG_INFINITY);
+        assert_eq!(
+            round_to_odd_f64_to_f32(f64::NEG_INFINITY),
+            f32::NEG_INFINITY
+        );
     }
 
     #[test]
@@ -620,16 +671,31 @@ mod tests {
         // narrows to e5m2 by SATURATION to ±57344 (§6.16-0005), NOT inf — because
         // round-to-odd returns the finite ±f32::MAX for a finite operand. Only a
         // true f64 inf yields e5m2 inf.
-        assert_eq!(E5m2::from_f32(round_to_odd_f64_to_f32(1e300)).to_bits(), 0x7B); // 57344
-        assert_eq!(E5m2::from_f32(round_to_odd_f64_to_f32(-1e300)).to_bits(), 0xFB); // -57344
-        assert_eq!(E5m2::from_f32(round_to_odd_f64_to_f32(f64::INFINITY)).to_bits(), 0x7C); // inf
+        assert_eq!(
+            E5m2::from_f32(round_to_odd_f64_to_f32(1e300)).to_bits(),
+            0x7B
+        ); // 57344
+        assert_eq!(
+            E5m2::from_f32(round_to_odd_f64_to_f32(-1e300)).to_bits(),
+            0xFB
+        ); // -57344
+        assert_eq!(
+            E5m2::from_f32(round_to_odd_f64_to_f32(f64::INFINITY)).to_bits(),
+            0x7C
+        ); // inf
         assert_eq!(
             E5m2::from_f32(round_to_odd_f64_to_f32(f64::NEG_INFINITY)).to_bits(),
             0xFC
         ); // -inf
-        // e4m3fn has no inf encoding — finite-overflow AND inf both saturate to ±448.
-        assert_eq!(E4m3::from_f32(round_to_odd_f64_to_f32(1e300)).to_bits(), 0x7E); // 448
-        assert_eq!(E4m3::from_f32(round_to_odd_f64_to_f32(f64::INFINITY)).to_bits(), 0x7E);
+           // e4m3fn has no inf encoding — finite-overflow AND inf both saturate to ±448.
+        assert_eq!(
+            E4m3::from_f32(round_to_odd_f64_to_f32(1e300)).to_bits(),
+            0x7E
+        ); // 448
+        assert_eq!(
+            E4m3::from_f32(round_to_odd_f64_to_f32(f64::INFINITY)).to_bits(),
+            0x7E
+        );
     }
 
     #[test]
@@ -639,7 +705,10 @@ mod tests {
         // the trait entry point used by narrow().
         let r = 1.0f64 + 2f64.powi(-11) + 2f64.powi(-24);
         let single = half::f16::from_f64_single_round(r);
-        assert_eq!(single.to_bits(), half::f16::from_f32(1.0 + 2f32.powi(-10)).to_bits());
+        assert_eq!(
+            single.to_bits(),
+            half::f16::from_f32(1.0 + 2f32.powi(-10)).to_bits()
+        );
         assert_ne!(single.to_bits(), half::f16::from_f32(1.0).to_bits());
     }
 }

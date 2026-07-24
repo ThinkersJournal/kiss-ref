@@ -247,14 +247,14 @@ fn fold_a<A: ScalarFloat>(t: &[A], s: &Schedule) -> A {
         Schedule::Blocked { order, block } => order
             .chunks((*block).max(1))
             .map(|b| b.iter().fold(A::ZERO, |a, &i| add(a, t[i])))
-            .fold(A::ZERO, |a, p| add(a, p)),
+            .fold(A::ZERO, &add),
         Schedule::Strided { order, lanes } => {
             let l = (*lanes).max(1);
             let mut ln = vec![A::ZERO; l];
             for (k, &i) in order.iter().enumerate() {
                 ln[k % l] = add(ln[k % l], t[i]);
             }
-            ln.into_iter().fold(A::ZERO, |a, p| add(a, p))
+            ln.into_iter().fold(A::ZERO, add)
         }
     }
 }
@@ -314,7 +314,10 @@ fn value_sets<S: CalFloat>(rng: &mut SplitMix64, a_mant: i32) -> Vec<ValueSet<S>
             for _ in 1..n {
                 v.push(S::from_f64(8.0));
             }
-            out.push(ValueSet { label: "golden-stagnation", v });
+            out.push(ValueSet {
+                label: "golden-stagnation",
+                v,
+            });
         }
 
         // ---- family 1b: accumulator-sized stagnation adversary. N/2 copies of
@@ -337,7 +340,10 @@ fn value_sets<S: CalFloat>(rng: &mut SplitMix64, a_mant: i32) -> Vec<ValueSet<S>
                     for _ in half..n {
                         v.push(small);
                     }
-                    out.push(ValueSet { label: "acc-stagnation", v });
+                    out.push(ValueSet {
+                        label: "acc-stagnation",
+                        v,
+                    });
                 }
             }
         }
@@ -358,7 +364,10 @@ fn value_sets<S: CalFloat>(rng: &mut SplitMix64, a_mant: i32) -> Vec<ValueSet<S>
                 v.push(ss);
             }
             v.push(S::from_f64(-bval));
-            out.push(ValueSet { label: "cancellation", v });
+            out.push(ValueSet {
+                label: "cancellation",
+                v,
+            });
 
             // 2b: alternating growing signed (near-cancellation, wide spread).
             let mut v2 = Vec::with_capacity(n);
@@ -368,7 +377,10 @@ fn value_sets<S: CalFloat>(rng: &mut SplitMix64, a_mant: i32) -> Vec<ValueSet<S>
                 let sgn = if i % 2 == 0 { 1.0 } else { -1.0 };
                 v2.push(S::from_f64(sgn * mag));
             }
-            out.push(ValueSet { label: "alt-cancellation", v: v2 });
+            out.push(ValueSet {
+                label: "alt-cancellation",
+                v: v2,
+            });
         }
 
         // ---- family 3: wide dynamic range, mixed sign (the real A=f32 adversary):
@@ -377,13 +389,19 @@ fn value_sets<S: CalFloat>(rng: &mut SplitMix64, a_mant: i32) -> Vec<ValueSet<S>
             let hi = (S::max_finite().log2().floor() as i32) - 2;
             let lo = hi - (a_mant + 12);
             let v: Vec<S> = (0..n).map(|_| rand_s::<S>(rng, lo, hi, true)).collect();
-            out.push(ValueSet { label: "wide-dynamic", v });
+            out.push(ValueSet {
+                label: "wide-dynamic",
+                v,
+            });
         }
 
         // ---- family 4: benign random control, [-2, 2].
         {
             let v: Vec<S> = (0..n).map(|_| rand_s::<S>(rng, -2, 1, true)).collect();
-            out.push(ValueSet { label: "random-control", v });
+            out.push(ValueSet {
+                label: "random-control",
+                v,
+            });
         }
 
         // ---- family 5: boundary / subnormal / RNE-tie sites.
@@ -400,7 +418,10 @@ fn value_sets<S: CalFloat>(rng: &mut SplitMix64, a_mant: i32) -> Vec<ValueSet<S>
                 };
                 v.push(S::from_f64(val));
             }
-            out.push(ValueSet { label: "boundary-tie", v });
+            out.push(ValueSet {
+                label: "boundary-tie",
+                v,
+            });
         }
     }
     out
@@ -437,14 +458,23 @@ fn schedules<A: ScalarFloat + CalFloat>(t: &[A], rng: &mut SplitMix64) -> Vec<Sc
     // blocked over index + asc-magnitude orders (b=32 is a warp reduction).
     for &b in &[2usize, 4, 8, 16, 32, 64, 128] {
         if b < n {
-            out.push(Schedule::Blocked { order: idx.clone(), block: b });
-            out.push(Schedule::Blocked { order: asc_mag.clone(), block: b });
+            out.push(Schedule::Blocked {
+                order: idx.clone(),
+                block: b,
+            });
+            out.push(Schedule::Blocked {
+                order: asc_mag.clone(),
+                block: b,
+            });
         }
     }
     // strided lanes (SIMD / tensor-core shape).
     for &l in &[2usize, 4, 8, 16, 32] {
         if l < n {
-            out.push(Schedule::Strided { order: idx.clone(), lanes: l });
+            out.push(Schedule::Strided {
+                order: idx.clone(),
+                lanes: l,
+            });
         }
     }
 
@@ -720,20 +750,18 @@ fn sequential_subspace_equals_permute_plus_reduce_ref() {
         let n = inp.len();
         let t: Vec<f32> = inp.iter().map(|&s| widen::<E4m3, f32>(s)).collect();
         // a couple of permutations.
-        let perms: [Vec<usize>; 2] = [
-            (0..n).rev().collect(),
-            {
-                let mut p: Vec<usize> = (0..n).collect();
-                for i in (1..n).rev() {
-                    let j = rng.below(i + 1);
-                    p.swap(i, j);
-                }
-                p
-            },
-        ];
+        let perms: [Vec<usize>; 2] = [(0..n).rev().collect(), {
+            let mut p: Vec<usize> = (0..n).collect();
+            for i in (1..n).rev() {
+                let j = rng.below(i + 1);
+                p.swap(i, j);
+            }
+            p
+        }];
         for p in &perms {
             // reconstruction's Sequential(perm), then the single narrow A->S.
-            let mine: E4m3 = narrow::<f32, E4m3>(fold_a::<f32>(&t, &Schedule::Sequential(p.clone())));
+            let mine: E4m3 =
+                narrow::<f32, E4m3>(fold_a::<f32>(&t, &Schedule::Sequential(p.clone())));
             // the named method: physically permute the tensor, call reduce_ref(acc=f32).
             let permuted: Vec<E4m3> = p.iter().map(|&i| inp[i]).collect();
             let x = Tensor::from_vec(permuted, &[n]).unwrap();
@@ -785,8 +813,12 @@ fn matmul_reuses_sum_engine_over_realized_products() {
     let b8: Vec<E4m3> = core::iter::repeat(E4m3::from_f32(1.0)).take(8).collect();
     check::<E4m3, f32>(&a8, &b8);
     check::<E5m2, f32>(
-        &core::iter::repeat(E5m2::from_f32(64.0)).take(8).collect::<Vec<_>>(),
-        &core::iter::repeat(E5m2::from_f32(1.0)).take(8).collect::<Vec<_>>(),
+        &core::iter::repeat(E5m2::from_f32(64.0))
+            .take(8)
+            .collect::<Vec<_>>(),
+        &core::iter::repeat(E5m2::from_f32(1.0))
+            .take(8)
+            .collect::<Vec<_>>(),
     );
     let mut av = vec![E4m3::from_f32(128.0)];
     av.extend(core::iter::repeat(E4m3::from_f32(8.0)).take(8));

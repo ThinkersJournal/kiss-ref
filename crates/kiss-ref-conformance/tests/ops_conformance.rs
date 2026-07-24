@@ -140,8 +140,16 @@ fn test_ops_rounding_directions() {
 #[test]
 fn test_ops_transcendental_declared_ulp() {
     // KISS-OPS-6.8-0001: within the op's declared ULP ceiling (from the vocab).
-    assert!(within_ulp(ev(Op::Erf, &[1.0]), 0.8427007929497149, ceiling(Op::Erf)));
-    assert!(within_ulp(ev(Op::Exp, &[1.0]), std::f64::consts::E, ceiling(Op::Exp)));
+    assert!(within_ulp(
+        ev(Op::Erf, &[1.0]),
+        0.8427007929497149,
+        ceiling(Op::Erf)
+    ));
+    assert!(within_ulp(
+        ev(Op::Exp, &[1.0]),
+        std::f64::consts::E,
+        ceiling(Op::Exp)
+    ));
     assert!(within_ulp(
         ev(Op::Log, &[std::f64::consts::E]),
         1.0,

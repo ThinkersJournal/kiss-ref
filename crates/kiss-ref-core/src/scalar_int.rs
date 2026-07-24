@@ -21,11 +21,18 @@ use crate::Error;
 /// Never panics; a >8-ary apply node is an [`Error::Arity`].
 pub fn eval_int_expr(e: &Expr, dtype: Dtype, inputs: &[i128]) -> Result<i128, Error> {
     match e {
-        Expr::Input(i) => inputs.get(*i as usize).copied().ok_or(Error::MissingInput(*i)),
+        Expr::Input(i) => inputs
+            .get(*i as usize)
+            .copied()
+            .ok_or(Error::MissingInput(*i)),
         Expr::Const(c) => Ok(c.value() as i128),
         Expr::Apply(op, args) => {
             if args.len() > 8 {
-                return Err(Error::Arity { op: *op, expected: 8, got: args.len() });
+                return Err(Error::Arity {
+                    op: *op,
+                    expected: 8,
+                    got: args.len(),
+                });
             }
             let mut buf = [0i128; 8];
             for (k, a) in args.iter().enumerate() {
@@ -107,7 +114,11 @@ fn arity(op: Op, args: &[i128], n: usize) -> Result<(), Error> {
     if args.len() == n {
         Ok(())
     } else {
-        Err(Error::Arity { op, expected: n, got: args.len() })
+        Err(Error::Arity {
+            op,
+            expected: n,
+            got: args.len(),
+        })
     }
 }
 
@@ -285,7 +296,10 @@ mod tests {
 
     #[test]
     fn int_bitwise_and_not() {
-        assert_eq!(eval_int_op(Op::BitAnd, Dtype::U8, &[0b1100, 0b1010]).unwrap(), 0b1000);
+        assert_eq!(
+            eval_int_op(Op::BitAnd, Dtype::U8, &[0b1100, 0b1010]).unwrap(),
+            0b1000
+        );
         // u8 bit_not(0) = 255.
         assert_eq!(eval_int_op(Op::BitNot, Dtype::U8, &[0]).unwrap(), 255);
         // s8 bit_not(0) = -1 (all ones sign-extended).
@@ -295,7 +309,10 @@ mod tests {
     #[test]
     fn int_shifts_signed_vs_unsigned() {
         // u8 logical shr.
-        assert_eq!(eval_int_op(Op::Shr, Dtype::U8, &[0b1000_0000, 1]).unwrap(), 0b0100_0000);
+        assert_eq!(
+            eval_int_op(Op::Shr, Dtype::U8, &[0b1000_0000, 1]).unwrap(),
+            0b0100_0000
+        );
         // s8 arithmetic shr keeps the sign.
         assert_eq!(eval_int_op(Op::Shr, Dtype::S8, &[-8, 1]).unwrap(), -4);
         // shl wraps within width.
