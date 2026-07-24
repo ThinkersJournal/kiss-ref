@@ -29,6 +29,21 @@ pub trait ScalarFloat: Copy + PartialEq + PartialOrd {
 
     /// Round an `f64` reference constant into this dtype (§6.12 `const(bits)`).
     fn from_f64(v: f64) -> Self;
+
+    /// Round an `f64` ACCUMULATOR into this storage dtype with a SINGLE
+    /// correctly-rounded RNE, even when the accumulator is wider than this type's
+    /// internal pivot (RFC #92 C3 "result rounded once A→S"). Default is `from_f64`
+    /// — already one round for `f32`/`f64`, where the accumulator never exceeds the
+    /// pivot. The narrow via-`f32` types override it with round-to-odd `f64→f32`
+    /// then RNE `f32→narrow` (double-rounding-is-odd), reusing their existing
+    /// correctly-rounded `from_f32` codec (§6.16). Byte-identical to `from_f64`
+    /// whenever `v` is exactly an `f32` value — which holds for every admitted
+    /// accumulator `A ⊆ f32`.
+    #[inline]
+    fn from_f64_single_round(v: f64) -> Self {
+        Self::from_f64(v)
+    }
+
     /// Widen to `f64` (for truthiness / diagnostics, never for compute).
     fn to_f64(self) -> f64;
     /// IEEE `isnan` (`x != x`).
@@ -314,6 +329,10 @@ macro_rules! impl_scalar_float_via_f32 {
                 <$t>::from_f32(v as f32)
             }
             #[inline]
+            fn from_f64_single_round(v: f64) -> $t {
+                <$t>::from_f32(round_to_odd_f64_to_f32(v))
+            }
+            #[inline]
             fn to_f64(self) -> f64 {
                 self.to_f32() as f64
             }
@@ -463,17 +482,80 @@ pub(crate) fn widen<S: ScalarFloat, A: ScalarFloat>(x: S) -> A {
     A::from_f64(x.to_f64())
 }
 
+/// Smallest `f32` strictly greater than a FINITE `x`. At the top finite this
+/// yields +inf, which `round_to_odd_f64_to_f32` never selects (that x is odd).
+#[inline]
+fn next_up_f32(x: f32) -> f32 {
+    let b = x.to_bits();
+    if x > 0.0 {
+        f32::from_bits(b + 1) // magnitude up
+    } else if x < 0.0 {
+        f32::from_bits(b - 1) // toward zero
+    } else {
+        f32::from_bits(1) // ±0 → +2^-149
+    }
+}
+
+/// Largest `f32` strictly less than a FINITE `x` (mirror of `next_up_f32`).
+#[inline]
+fn next_down_f32(x: f32) -> f32 {
+    let b = x.to_bits();
+    if x > 0.0 {
+        f32::from_bits(b - 1) // toward zero
+    } else if x < 0.0 {
+        f32::from_bits(b + 1) // more negative
+    } else {
+        f32::from_bits(0x8000_0001) // ±0 → -2^-149
+    }
+}
+
+/// Round `x` from `f64` to `f32` with ROUND-TO-ODD (von Neumann / sticky
+/// rounding). Composed with a following RNE `f32→narrow`, this equals a single
+/// correctly-rounded RNE `f64→narrow` (double-rounding-is-odd; f32's 24
+/// significand bits ≥ 2m+2 for every narrow mantissa m ≤ 10). It is the EXACT
+/// identity on every `f32`-representable value, so routing all narrowings through
+/// it leaves every accumulator `A ⊆ f32` cell byte-unchanged.
+#[inline]
+fn round_to_odd_f64_to_f32(x: f64) -> f32 {
+    if !x.is_finite() {
+        return x as f32; // ±inf / NaN: propagate; narrow from_f32 applies §6.16.
+    }
+    let r = x as f32; // RNE, ties-to-even
+    if (r as f64) == x {
+        return r; // x is exactly an f32 (incl. ±0 / exact finite): identity.
+    }
+    if !r.is_finite() {
+        // A finite x overflowed the f32 cast: round-to-odd never overflows a
+        // finite operand — return the FINITE ±MAX (all-ones mantissa is odd). This
+        // is what lets each narrow from_f32 apply the CORRECT §6.16 overflow rule:
+        // e5m2 finite-overflow SATURATES to 57344 (a true f64 inf would instead
+        // reach here via the !is_finite branch above and yield inf), e4m3 → 448,
+        // f16/bf16 → their own inf.
+        return if x < 0.0 { f32::MIN } else { f32::MAX };
+    }
+    // r is one of the two consecutive f32s bracketing x; the OTHER bracket is r's
+    // neighbor toward x. Exactly one of two consecutive f32s is odd — return it.
+    let other = if (r as f64) < x { next_up_f32(r) } else { next_down_f32(r) };
+    if (r.to_bits() & 1) == 1 {
+        r
+    } else {
+        other
+    }
+}
+
 /// Narrow an accumulator value `A` back to the storage/result dtype `S` (RFC #92
-/// C3 "…and the result rounded to S"). This is a **single** round-to-nearest-even
-/// for every `(A, S)` pair the accumulator width guard admits: when `A ⊆ f32`
-/// (which the guard guarantees for a narrow `S`), `S::from_f64(a.to_f64())`
-/// collapses to `S::from_f32` — one rounding. The only double-rounding pair,
-/// `A = f64` narrowed to a via-`f32` narrow `S` (`f64→f32→S`), is **declined** by
-/// [`crate::kernels::guard_accumulator`] as [`Error::AccumulatorNarrowingUnsupported`],
-/// so it never reaches this helper.
+/// C3 "…and the result rounded to S"). A **single** correctly-rounded RNE for
+/// every `(A, S)` pair the accumulator width guard admits: when `A ⊆ f32` (which
+/// the guard guarantees for a narrow `S`), `a.to_f64()` is exactly an `f32`, and
+/// `from_f64_single_round` collapses to one `from_f32` round — byte-identical to
+/// the former `S::from_f64` path. The only accumulator wider than the narrow
+/// pivot, `A = f64` narrowed to a via-`f32` narrow `S`, would double-round
+/// (`f64→f32→S`); `from_f64_single_round` avoids it with round-to-odd `f64→f32`
+/// then the existing RNE `f32→S` codec (double-rounding-is-odd), so this is a
+/// single correctly-rounded RNE there too.
 #[inline]
 pub(crate) fn narrow<A: ScalarFloat, S: ScalarFloat>(a: A) -> S {
-    S::from_f64(a.to_f64())
+    S::from_f64_single_round(a.to_f64())
 }
 
 // ---- Refined non-primitive scalar forms (§6.13-0003) --------------------------
@@ -513,4 +595,51 @@ pub fn silu_stable<T: ScalarFloat>(x: T) -> T {
 #[inline]
 pub fn mish_stable<T: ScalarFloat>(x: T) -> T {
     x.mul(softplus_stable(x).tanh())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fp8::{E4m3, E5m2};
+
+    #[test]
+    fn round_to_odd_is_identity_on_f32_values() {
+        // Every exact f32 value comes back byte-unchanged (the acc ⊆ f32 property
+        // that keeps every accumulator-≤-f32 narrowing cell byte-identical).
+        for &v in &[0.0f32, -0.0, 1.0, -3.5, 57344.0, f32::MIN_POSITIVE, f32::MAX] {
+            assert_eq!(round_to_odd_f64_to_f32(v as f64).to_bits(), v.to_bits(), "{v}");
+        }
+        assert!(round_to_odd_f64_to_f32(f64::NAN).is_nan());
+        assert_eq!(round_to_odd_f64_to_f32(f64::INFINITY), f32::INFINITY);
+        assert_eq!(round_to_odd_f64_to_f32(f64::NEG_INFINITY), f32::NEG_INFINITY);
+    }
+
+    #[test]
+    fn round_to_odd_f64_to_f32_overflow_saturates_correctly() {
+        // THE DISCRIMINATOR (design open-point 2): a FINITE f64 above f32::MAX
+        // narrows to e5m2 by SATURATION to ±57344 (§6.16-0005), NOT inf — because
+        // round-to-odd returns the finite ±f32::MAX for a finite operand. Only a
+        // true f64 inf yields e5m2 inf.
+        assert_eq!(E5m2::from_f32(round_to_odd_f64_to_f32(1e300)).to_bits(), 0x7B); // 57344
+        assert_eq!(E5m2::from_f32(round_to_odd_f64_to_f32(-1e300)).to_bits(), 0xFB); // -57344
+        assert_eq!(E5m2::from_f32(round_to_odd_f64_to_f32(f64::INFINITY)).to_bits(), 0x7C); // inf
+        assert_eq!(
+            E5m2::from_f32(round_to_odd_f64_to_f32(f64::NEG_INFINITY)).to_bits(),
+            0xFC
+        ); // -inf
+        // e4m3fn has no inf encoding — finite-overflow AND inf both saturate to ±448.
+        assert_eq!(E4m3::from_f32(round_to_odd_f64_to_f32(1e300)).to_bits(), 0x7E); // 448
+        assert_eq!(E4m3::from_f32(round_to_odd_f64_to_f32(f64::INFINITY)).to_bits(), 0x7E);
+    }
+
+    #[test]
+    fn round_to_odd_then_rne_is_a_single_f64_to_f16_round() {
+        // R = 1 + 2^-11 + 2^-24 rounds UP to 1 + 2^-10 under a single RNE f64→f16,
+        // where a naive f64→f32→f16 double round collapses to 1.0. Verified through
+        // the trait entry point used by narrow().
+        let r = 1.0f64 + 2f64.powi(-11) + 2f64.powi(-24);
+        let single = half::f16::from_f64_single_round(r);
+        assert_eq!(single.to_bits(), half::f16::from_f32(1.0 + 2f32.powi(-10)).to_bits());
+        assert_ne!(single.to_bits(), half::f16::from_f32(1.0).to_bits());
+    }
 }

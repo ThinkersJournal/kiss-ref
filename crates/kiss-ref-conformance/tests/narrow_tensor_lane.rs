@@ -432,19 +432,24 @@ fn narrow_accumulator_width_guard_and_maxmin_route_verbatim() {
         reduce_ref::<f16>(&x16.view(), Monoid::Sum, &[0], Dtype::I32),
         Err(Error::NonFloatAccumulator(Dtype::I32))
     ));
-    // (narrow storage, f64 accumulator): legal per C1 but f64→f32→S would
-    // double-round, so kiss-ref DECLINES rather than return a 1-ULP-wrong C3
-    // reference (adversarial-review find; a Pending cell pending a round-to-odd
-    // f64→narrow codec). The common acc=f32 path is exact and unaffected.
-    assert!(matches!(
-        reduce_ref::<f16>(&x16.view(), Monoid::Sum, &[0], Dtype::F64),
-        Err(Error::AccumulatorNarrowingUnsupported { storage: Dtype::F16, acc: Dtype::F64 })
-    ));
+    // (narrow storage, f64 accumulator): now a SINGLE correctly-rounded RNE
+    // f64→narrow (round-to-odd f64→f32, then the RNE from_f32 codec), no longer a
+    // decline. reduce Sum[1.0, 2.0] folds to 3.0 exactly in the f64 accumulator;
+    // 3.0 is f16-exact → f16 3.0.
+    assert_bits(
+        &reduce_ref::<f16>(&x16.view(), Monoid::Sum, &[0], Dtype::F64)
+            .expect("f16 storage / f64 accumulator single-rounds"),
+        &[3.0],
+        &[1],
+    );
     let xe4: Tensor<E4m3> = tn(&[1.0, 0.0, 0.0, 1.0], &[2, 2]);
-    assert!(matches!(
-        matmul_ref::<E4m3>(&xe4.view(), &xe4.view(), Dtype::F64),
-        Err(Error::AccumulatorNarrowingUnsupported { storage: Dtype::E4m3, acc: Dtype::F64 })
-    )); // the guard fires before the contraction — same decline on every op
+    // e4m3 identity·identity: every partial product/sum (1.0, 0.0) is e4m3-exact.
+    assert_bits(
+        &matmul_ref::<E4m3>(&xe4.view(), &xe4.view(), Dtype::F64)
+            .expect("e4m3 storage / f64 accumulator single-rounds"),
+        &[1.0, 0.0, 0.0, 1.0],
+        &[2, 2],
+    );
     // f32 STORAGE with an f64 accumulator is fine (f32 is not a via-f32 narrow):
     assert!(reduce_ref::<f32>(&x32.view(), Monoid::Sum, &[0], Dtype::F64).is_ok());
     // Max/Min are accumulator-invariant (raw-bit selects, no rounding atom): a
@@ -453,6 +458,29 @@ fn narrow_accumulator_width_guard_and_maxmin_route_verbatim() {
     let via_ref = reduce_ref::<E4m3>(&xe.view(), Monoid::Max, &[0], Dtype::F32).unwrap();
     let via_kernel = reduce(&xe.view(), Monoid::Max, &[0]).unwrap();
     assert_eq!(via_ref.as_slice(), via_kernel.as_slice());
+}
+
+#[test]
+fn narrow_f64_accumulator_single_rounds_not_double() {
+    // Fold R = 1 + 2^-11 + 2^-24 EXACTLY in the f64 accumulator (all three inputs
+    // are f16-exact, so widening f16→f64 is lossless and the sum is exact). R sits
+    // just ABOVE the f16 midpoint M = 1 + 2^-11 (between 1.0 [even f16 mantissa]
+    // and 1 + 2^-10 [odd]):
+    //   correct single RNE f64→f16: R > M ⇒ rounds UP to 1 + 2^-10.
+    //   naive f64→f32→f16 double round: R = M + 2^-24 is the EXACT f32 midpoint
+    //     between M and M + 2^-23; RNE ties-to-even → M (even f32 LSB); then M is
+    //     the exact f16 midpoint → RNE ties-to-even → 1.0. WRONG.
+    //   round-to-odd f64→f32: R inexact ⇒ returns the ODD bracket M + 2^-23, which
+    //     RNEs UP to 1 + 2^-10 in f16. CORRECT.
+    let two = |k: i32| 2f32.powi(k);
+    assert_exact::<f16>(two(-11)); // f16 normal, mantissa 0
+    assert_exact::<f16>(two(-24)); // f16 smallest subnormal
+    let x: Tensor<f16> = tn(&[1.0, two(-11), two(-24)], &[3]);
+    let r = reduce_ref::<f16>(&x.view(), Monoid::Sum, &[0], Dtype::F64)
+        .expect("f16 storage / f64 accumulator single-rounds");
+    assert_bits(&r, &[1.0 + two(-10)], &[1]);
+    // Guard against a silent regression to the double-round answer.
+    assert_ne!(r.as_slice()[0].to_bits(), f16::from_f32(1.0).to_bits());
 }
 
 #[test]

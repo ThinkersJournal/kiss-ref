@@ -166,16 +166,12 @@ pub(crate) fn guard_accumulator<T: ScalarFloat>(acc: Dtype) -> Result<(), Error>
         (Some((se, sm)), Some((ae, am))) => {
             if ae < se || am < sm {
                 Err(Error::AccumulatorTooNarrow { storage: T::DTYPE, acc })
-            } else if T::NARROW_FLOAT && acc == Dtype::F64 {
-                // The narrow storage types round via f32, so narrowing an f64
-                // accumulator (`narrow::<f64, S>`) would double-round f64→f32→S
-                // and miss the C3 single-rounding by up to 1 ULP. Decline this
-                // legal-but-not-yet-exact cell rather than return a wrong value
-                // (Pending — the fix is a round-to-odd f64→narrow codec). Every
-                // accumulator ⊆ f32 (incl. the common `acc = f32`) narrows in a
-                // single round and is unaffected.
-                Err(Error::AccumulatorNarrowingUnsupported { storage: T::DTYPE, acc })
             } else {
+                // Every admitted accumulator now narrows in a single correctly-
+                // rounded RNE: narrow() routes the (narrow storage, f64 accumulator)
+                // pivot through round-to-odd f64→f32 then RNE f32→narrow
+                // (double-rounding-is-odd), so the former decline is gone. All other
+                // cells (A ⊆ f32) narrow via a single from_f32 unchanged.
                 Ok(())
             }
         }

@@ -135,14 +135,6 @@ pub enum Error {
     /// A requested accumulator dtype is not a float. A reduction/scan/contraction
     /// accumulator MUST be a float dtype (RFC #92 C1).
     NonFloatAccumulator(Dtype),
-    /// A legal `(narrow storage, wider-than-f32 accumulator)` cell whose exact C3
-    /// reference kiss-ref cannot yet produce: the narrow storage types round via
-    /// `f32`, so narrowing an `f64` accumulator would double-round (`f64→f32→S`)
-    /// and miss the C3 "rounded once A→S" value by up to 1 ULP. Declined rather
-    /// than returned wrong (a **Pending** cell — the follow-up is a correct
-    /// round-to-odd `f64→narrow` codec). The common `acc = f32` path is exact and
-    /// unaffected. RFC #92 (direction b).
-    AccumulatorNarrowingUnsupported { storage: Dtype, acc: Dtype },
 }
 
 /// Coverage of an `(op, dtype)` cell. Three states: a cell is either
