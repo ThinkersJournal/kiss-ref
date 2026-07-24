@@ -105,7 +105,11 @@ fields). So:
   The DTYPE *spelling* is additive per §6.7-0007, but the field-count change is
   schema-affecting (§6.7-0001), so this is **not** zero-cost for reductions/scans.
   *(This corrects the initial draft's "no new key field" over-claim, per the PR #92
-  review; the honest cost is stated so the (a)/(b) comparison stays fair.)*
+  review; the honest cost is stated so the (a)/(b) comparison stays fair.)* **Which
+  mechanism** (a new field vs. extending the field-8 `<reduce>` code) is a
+  KISS-Classify codec choice **deferred to the realization PR** — it does not affect
+  ratification of this direction, but it is schema-affecting (§6.7-0001 field count)
+  and MUST ride a `structure_key` version bump.
 
 Default when the coordinate is absent: `accumulator-dtype == compute-dtype` (the
 §6.17-0005 diagonal), so every existing key is unchanged in meaning and every kernel
