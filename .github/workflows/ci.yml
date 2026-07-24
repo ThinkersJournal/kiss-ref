@@ -1,0 +1,108 @@
+name: CI
+
+# Every gate that was previously run by hand. Four of them:
+#   1. `cargo test --workspace`                  — the conformance suite + unit tests   [HARD]
+#   2. a *genuine* no_std build of kiss-ref-core against a bare-metal target             [HARD]
+#   3. `cargo fmt --all --check`                 — formatting                        [advisory]
+#   4. `cargo clippy --workspace --all-targets`  — warnings denied                   [advisory]
+#
+# (1) and (2) are the load-bearing correctness + contract gates and FAIL the job.
+# (3) and (4) are `continue-on-error` for now: the tree predates any fmt/clippy
+# pass, so hard-gating them would fail CI on unrelated legacy style. They report
+# (visible red X on the step) but do not block; flip `continue-on-error` off once
+# a dedicated `cargo fmt --all` + clippy-cleanup commit lands.
+#
+# (2) is the load-bearing one. kiss-ref-core is `#![cfg_attr(not(test), no_std)]`
+# and Fuel consumes it relying on that property. A host build cannot prove it:
+# `std` is always available to link against, so a leaked `std::` path or a dep
+# that quietly enables its `std` feature can survive. `thumbv7em-none-eabi` has
+# no `std` at all (rustup ships only core/alloc/compiler_builtins for it), so any
+# leak — in kiss-ref-core, kiss-ops-vocab, kiss-classify-vocab, libm, or half —
+# is a hard compile error here rather than a surprise in Fuel's tree.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # The channel every gate runs on. Swap for an exact version (e.g. "1.99.0") if a
+  # future stable's clippy ever adds a lint that breaks `-D warnings` on code that
+  # has not changed.
+  RUST_TOOLCHAIN: stable
+  # Bare-metal ARM Cortex-M4/M7: core + alloc only, `std` does not exist.
+  NOSTD_TARGET: thumbv7em-none-eabi
+
+jobs:
+  gates:
+    name: test / clippy / fmt / no_std
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain and the bare-metal target
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component clippy,rustfmt
+          rustup default "$RUST_TOOLCHAIN"
+          rustup target add "$NOSTD_TARGET"
+          rustc -V
+          cargo -V
+          cargo clippy -V
+          cargo fmt --version
+
+      - name: Toolchain fingerprint (cache key input)
+        id: rust
+        run: echo "fp=$(rustc -V | md5sum | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache cargo registry and target dir
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          # Cargo.lock is .gitignore'd in this repo, so the dependency set is keyed
+          # off the manifests instead. The toolchain fingerprint is in the key so a
+          # stable-channel bump does not reuse artifacts built by the old compiler.
+          key: cargo-${{ runner.os }}-${{ steps.rust.outputs.fp }}-${{ hashFiles('**/Cargo.toml') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-${{ steps.rust.outputs.fp }}-
+            cargo-${{ runner.os }}-
+
+      # Each gate below runs even if an earlier one failed (`!cancelled()`), so one
+      # push reports every broken gate at once instead of one per round trip. Any
+      # failing step still fails the job.
+
+      - name: Format (cargo fmt --check) [advisory]
+        continue-on-error: true
+        run: cargo fmt --all --check
+
+      - name: no_std - build kiss-ref-core for thumbv7em-none-eabi
+        if: ${{ !cancelled() }}
+        # Builds an rlib, so no #[panic_handler] / #[global_allocator] is needed;
+        # `-p` keeps the std-using kiss-ref-conformance crate (and any feature
+        # unification with it) out of the graph. Deps built here: kiss-ops-vocab,
+        # kiss-classify-vocab, libm (pure-Rust no_std), half (default-features off
+        # in both manifests => no `std` feature). Nothing else in the tree.
+        run: cargo build -p kiss-ref-core --target "$NOSTD_TARGET"
+
+      - name: Clippy (warnings denied) [advisory]
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Tests
+        if: ${{ !cancelled() }}
+        run: cargo test --workspace
