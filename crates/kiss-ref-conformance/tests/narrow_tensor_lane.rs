@@ -62,8 +62,10 @@ use half::{bf16, f16};
 use kiss_classify_vocab::Dtype;
 use kiss_ops_vocab::decomp::{ConstSym, Expr};
 use kiss_ops_vocab::Op;
-use kiss_ref_core::kernels::{element_map, gather, prefix_scan, reduce, scatter, sort_network};
-use kiss_ref_core::tensor_ops::{index_select, matmul, scatter_add, softmax};
+use kiss_ref_core::kernels::{
+    element_map, gather, prefix_scan, reduce, reduce_ref, scatter, sort_network,
+};
+use kiss_ref_core::tensor_ops::{index_select, matmul, matmul_ref, scatter_add, softmax};
 use kiss_ref_core::Combine;
 use kiss_ref_core::{
     eval_op, eval_recipe, support, DetClass, Direction, E4m3, E5m2, Error, FlatDag, IndexRef,
@@ -306,6 +308,182 @@ fn narrow_reduce_sum_stagnates_in_a_narrow_accumulator() {
     // implementation (i.e. every FP8 tensor core) returns 192 — a 33% relative
     // divergence between two implementations that are BOTH conformant, with no
     // KISS-declared tolerance bounding it (§6.17-0007 requires one).
+}
+
+// ---- RFC #92 (direction b, RATIFIED): accumulator-dtype tolerance cells --------
+//
+// The OFF-DIAGONAL companion to the stagnation goldens above: the SAME inputs,
+// SAME ascending fold order, but a WIDER accumulator dtype declared via <acc> —
+// which is the (compute, acc) tolerance cell the ratified RFC keys on. kiss-ref
+// holds these Provisional until KISS's clause-text realization PR lands; the
+// numeric reference itself is stable (the C3 per-cell reference).
+
+#[test]
+fn narrow_reduce_f32_accumulator_recovers_the_true_sum() {
+    // THE HEADLINE RECOVERY. reduce with an f32 accumulator over [128, eight 8s]
+    // folds to the true 192 in EVERY narrow storage lane (192 = 1.100b·2^7,
+    // representable everywhere) — exactly where the diagonal (acc==storage)
+    // stagnated to 128 on e4m3/e5m2. This is the (S=fp8, A=f32) cell RFC #92 b
+    // exists to make conformant-and-bounded.
+    fn f32acc<T: Narrow>() {
+        let mut v = vec![128.0f32];
+        v.extend(core::iter::repeat(8.0f32).take(8));
+        let x: Tensor<T> = tn(&v, &[9]);
+        let r = reduce_ref::<T>(&x.view(), Monoid::Sum, &[0], Dtype::F32)
+            .unwrap_or_else(|e| panic!("[{}] reduce_ref f32: {e:?}", T::NAME));
+        assert_bits(&r, &[192.0], &[1]);
+    }
+    f32acc::<f16>();
+    f32acc::<bf16>();
+    f32acc::<E4m3>(); // diagonal gave 128; f32 accumulator gives 192
+    f32acc::<E5m2>(); // diagonal gave 128; f32 accumulator gives 192
+}
+
+#[test]
+fn narrow_reduce_f32_accumulator_result_narrow_is_a_single_rne() {
+    // reduce_ref(Sum, f32) of [1,2,4,8]: the f32 fold is 15 EXACTLY; the ONLY
+    // storage rounding is the single result-narrow A→S. So the outcome must equal
+    // narrowing 15 once: f16/bf16/e4m3 → 15, e5m2 → 16 (15 is midway 14|16, RNE to
+    // even 16). The e5m2 → 16 IS identical to the diagonal's stagnated 16, proving
+    // the result-narrow is a single RNE and does not double-round.
+    fn case<T: Narrow>(want: f32) {
+        let x: Tensor<T> = tn(&[1.0, 2.0, 4.0, 8.0], &[4]);
+        let r = reduce_ref::<T>(&x.view(), Monoid::Sum, &[0], Dtype::F32)
+            .unwrap_or_else(|e| panic!("[{}] reduce_ref f32: {e:?}", T::NAME));
+        assert_bits(&r, &[want], &[1]);
+    }
+    case::<f16>(15.0);
+    case::<bf16>(15.0);
+    case::<E4m3>(15.0);
+    case::<E5m2>(16.0);
+}
+
+#[test]
+fn narrow_matmul_f32_accumulator() {
+    // matmul with an f32 accumulator: products AND adds happen in f32, only the
+    // final result narrows to S. K=8 of 64·1 → f32 512; narrow: f16/bf16/e5m2 →
+    // 512, e4m3 → 448 (512 > e4m3 max finite 448 → saturate, §6.16-0004 — the
+    // e4m3 448 equals its diagonal, pinning the sole S rounding is the final
+    // narrow). Then the [128, eight 8s]·1 contraction → f32 192 everywhere, vs the
+    // diagonal e4m3/e5m2 stagnation to 128 — the multiply-and-add-in-A recovery.
+    fn k8<T: Narrow>(want: f32) {
+        let a: Tensor<T> = tn(&[64.0; 8], &[1, 8]);
+        let b: Tensor<T> = tn(&[1.0; 8], &[8, 1]);
+        let r = matmul_ref::<T>(&a.view(), &b.view(), Dtype::F32)
+            .unwrap_or_else(|e| panic!("[{}] matmul_ref f32: {e:?}", T::NAME));
+        assert_bits(&r, &[want], &[1, 1]);
+    }
+    k8::<f16>(512.0);
+    k8::<bf16>(512.0);
+    k8::<E5m2>(512.0);
+    k8::<E4m3>(448.0);
+
+    fn contract<T: Narrow>() {
+        let mut av = vec![128.0f32];
+        av.extend(core::iter::repeat(8.0f32).take(8));
+        let a: Tensor<T> = tn(&av, &[1, 9]);
+        let b: Tensor<T> = tn(&[1.0; 9], &[9, 1]);
+        let r = matmul_ref::<T>(&a.view(), &b.view(), Dtype::F32)
+            .unwrap_or_else(|e| panic!("[{}] matmul_ref contract f32: {e:?}", T::NAME));
+        assert_bits(&r, &[192.0], &[1, 1]);
+    }
+    contract::<f16>();
+    contract::<bf16>();
+    contract::<E4m3>();
+    contract::<E5m2>();
+}
+
+#[test]
+fn narrow_reduce_cross_storage_f16_accumulator() {
+    // Not only f32 recovers: an f16 accumulator over e5m2 storage also reaches
+    // 192 (f16 ULP at 128 = 0.125, so 128+8=136 and the fold are exact in f16;
+    // narrow 192 → e5m2 = 192). Exercises the legality set (e5m2 → f16 admitted:
+    // f16 subsumes e5m2, exp 5≥5, mant 10≥2).
+    let mut v = vec![128.0f32];
+    v.extend(core::iter::repeat(8.0f32).take(8));
+    let x: Tensor<E5m2> = tn(&v, &[9]);
+    let r = reduce_ref::<E5m2>(&x.view(), Monoid::Sum, &[0], Dtype::F16)
+        .expect("e5m2 storage / f16 accumulator");
+    assert_bits(&r, &[192.0], &[1]);
+}
+
+#[test]
+fn narrow_accumulator_width_guard_and_maxmin_route_verbatim() {
+    // C1 "accumulator at least as wide as storage" — a narrower/incomparable/
+    // non-float accumulator is a TYPED decline, never a silent rounding.
+    let x16: Tensor<f16> = tn(&[1.0, 2.0], &[2]);
+    let xbf: Tensor<bf16> = tn(&[1.0, 2.0], &[2]);
+    // f32 storage isn't a `Narrow` lane (the test infra is narrow-only), so build
+    // it directly to exercise the wide-storage arm of the width guard.
+    let x32: Tensor<f32> = Tensor::from_vec(vec![1.0f32, 2.0], &[2]).unwrap();
+    assert!(matches!(
+        reduce_ref::<f16>(&x16.view(), Monoid::Sum, &[0], Dtype::Bf16),
+        Err(Error::AccumulatorTooNarrow { storage: Dtype::F16, acc: Dtype::Bf16 })
+    )); // bf16 mantissa 7 < f16 mantissa 10 → incomparable, declined
+    assert!(matches!(
+        reduce_ref::<bf16>(&xbf.view(), Monoid::Sum, &[0], Dtype::F16),
+        Err(Error::AccumulatorTooNarrow { storage: Dtype::Bf16, acc: Dtype::F16 })
+    )); // f16 exp 5 < bf16 exp 8 → incomparable, declined
+    assert!(matches!(
+        reduce_ref::<f32>(&x32.view(), Monoid::Sum, &[0], Dtype::F16),
+        Err(Error::AccumulatorTooNarrow { storage: Dtype::F32, acc: Dtype::F16 })
+    ));
+    assert!(matches!(
+        reduce_ref::<f16>(&x16.view(), Monoid::Sum, &[0], Dtype::I32),
+        Err(Error::NonFloatAccumulator(Dtype::I32))
+    ));
+    // (narrow storage, f64 accumulator): legal per C1 but f64→f32→S would
+    // double-round, so kiss-ref DECLINES rather than return a 1-ULP-wrong C3
+    // reference (adversarial-review find; a Pending cell pending a round-to-odd
+    // f64→narrow codec). The common acc=f32 path is exact and unaffected.
+    assert!(matches!(
+        reduce_ref::<f16>(&x16.view(), Monoid::Sum, &[0], Dtype::F64),
+        Err(Error::AccumulatorNarrowingUnsupported { storage: Dtype::F16, acc: Dtype::F64 })
+    ));
+    let xe4: Tensor<E4m3> = tn(&[1.0, 0.0, 0.0, 1.0], &[2, 2]);
+    assert!(matches!(
+        matmul_ref::<E4m3>(&xe4.view(), &xe4.view(), Dtype::F64),
+        Err(Error::AccumulatorNarrowingUnsupported { storage: Dtype::E4m3, acc: Dtype::F64 })
+    )); // the guard fires before the contraction — same decline on every op
+    // f32 STORAGE with an f64 accumulator is fine (f32 is not a via-f32 narrow):
+    assert!(reduce_ref::<f32>(&x32.view(), Monoid::Sum, &[0], Dtype::F64).is_ok());
+    // Max/Min are accumulator-invariant (raw-bit selects, no rounding atom): a
+    // non-diagonal <acc> routes to the verbatim kernel for ANY acc — byte-identical.
+    let xe: Tensor<E4m3> = tn(&[1.0, 3.0, 2.0], &[3]);
+    let via_ref = reduce_ref::<E4m3>(&xe.view(), Monoid::Max, &[0], Dtype::F32).unwrap();
+    let via_kernel = reduce(&xe.view(), Monoid::Max, &[0]).unwrap();
+    assert_eq!(via_ref.as_slice(), via_kernel.as_slice());
+}
+
+#[test]
+fn narrow_accumulator_diagonal_is_byte_identical() {
+    // THE NON-NEGOTIABLE PROPERTY. On the diagonal acc == T::DTYPE, the ref MUST
+    // return the verbatim kernel bit-for-bit — including NaN payloads and signed
+    // zero, which the f64 pivot in widen/narrow could canonicalize if the diagonal
+    // were (wrongly) routed through *_acc::<T,T>. Fails loudly if a future refactor
+    // re-routes the diagonal.
+    fn diag<T: Narrow>() {
+        let v = &[1.0f32, -0.0, f32::NAN, 2.0, 8.0, 128.0];
+        let x: Tensor<T> = tn(v, &[6]);
+        let r_ref = reduce_ref::<T>(&x.view(), Monoid::Sum, &[0], T::DTYPE).unwrap();
+        let r_ker = reduce(&x.view(), Monoid::Sum, &[0]).unwrap();
+        for (a, b) in r_ref.as_slice().iter().zip(r_ker.as_slice()) {
+            assert_eq!(a.bits(), b.bits(), "[{}] reduce diagonal not byte-identical", T::NAME);
+        }
+        let a2: Tensor<T> = tn(&[1.0, -0.0, 2.0, 8.0], &[2, 2]);
+        let b2: Tensor<T> = tn(&[1.0, 0.0, 0.0, 1.0], &[2, 2]);
+        let m_ref = matmul_ref::<T>(&a2.view(), &b2.view(), T::DTYPE).unwrap();
+        let m_ker = matmul(&a2.view(), &b2.view()).unwrap();
+        for (a, b) in m_ref.as_slice().iter().zip(m_ker.as_slice()) {
+            assert_eq!(a.bits(), b.bits(), "[{}] matmul diagonal not byte-identical", T::NAME);
+        }
+    }
+    diag::<f16>();
+    diag::<bf16>();
+    diag::<E4m3>();
+    diag::<E5m2>();
+    // (f32/f64 diagonals take the same `acc == T::DTYPE` short-circuit and are
+    // covered verbatim by the 90 kiss-ref-core lib tests on reduce/matmul.)
 }
 
 fn check_reduce_max<T: Narrow>() {

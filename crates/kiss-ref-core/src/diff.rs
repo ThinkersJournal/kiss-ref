@@ -554,6 +554,61 @@ macro_rules! fp8_diff {
 fp8_diff!(crate::fp8::E4m3, ulp_distance_e4m3, reference_e4m3, diff_e4m3);
 fp8_diff!(crate::fp8::E5m2, ulp_distance_e5m2, reference_e5m2, diff_e5m2);
 
+// ---- accumulator-parameterized reduction reference (RFC #92 direction b) ------
+//
+// The export seam Baracuda's step-3b on-device FP8 diff and Fuel's advisory call
+// to get the per-`<acc>` reduction/scan/contraction REFERENCE for their declared
+// accumulator dtype. Each pairs the reference tensor with its determinism class:
+// §6.17-0007 keeps these OrderInvariantNondeterministic for ANY accumulator
+// (fixing the accumulator does NOT pin the bits — float accumulation stays
+// non-associative across contraction order), so a consumer MUST compare under
+// tolerance, never `Tolerance::Exact`. The reference itself is the pinned profile
+// of RFC #92 C3 (a defined per-cell value), not a bit golden.
+
+use kiss_classify_vocab::Dtype;
+
+use crate::attrs::Monoid;
+use crate::bridge::{monoid_det, DetClass, Evaluated};
+use crate::scalar::ScalarFloat;
+use crate::tensor::View;
+
+/// The `(compute S, accumulator A)` **reduce** reference for a runtime accumulator
+/// `acc` (RFC #92 direction b), paired with its determinism class. `acc ==
+/// T::DTYPE` (and `Max`/`Min` for any `acc`) return the verbatim kernel; a
+/// too-narrow / non-float `acc` is a typed decline.
+pub fn reference_reduce_acc<T: ScalarFloat>(
+    x: &View<T>,
+    monoid: Monoid,
+    axes: &[usize],
+    acc: Dtype,
+) -> Result<Evaluated<T>, Error> {
+    let t = crate::kernels::reduce_ref::<T>(x, monoid, axes, acc)?;
+    Ok(Evaluated::new(t, monoid_det(monoid)))
+}
+
+/// The `(compute S, accumulator A)` **prefix_scan** reference for a runtime `acc`.
+pub fn reference_prefix_scan_acc<T: ScalarFloat>(
+    x: &View<T>,
+    monoid: Monoid,
+    axis: usize,
+    exclusive: bool,
+    acc: Dtype,
+) -> Result<Evaluated<T>, Error> {
+    let t = crate::kernels::prefix_scan_ref::<T>(x, monoid, axis, exclusive, acc)?;
+    Ok(Evaluated::new(t, monoid_det(monoid)))
+}
+
+/// The `(compute S, accumulator A)` **matmul** reference for a runtime `acc`
+/// (always `OrderInvariantNondeterministic` — a float contraction, §6.0-0004).
+pub fn reference_matmul_acc<T: ScalarFloat>(
+    a: &View<T>,
+    b: &View<T>,
+    acc: Dtype,
+) -> Result<Evaluated<T>, Error> {
+    let t = crate::tensor_ops::matmul_ref::<T>(a, b, acc)?;
+    Ok(Evaluated::new(t, DetClass::OrderInvariantNondeterministic))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

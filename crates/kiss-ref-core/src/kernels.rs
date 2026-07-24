@@ -17,7 +17,7 @@ use kiss_ops_vocab::decomp::Expr;
 use crate::attrs::{Combine, Direction, Monoid, OobPolicy};
 use crate::bridge::{monoid_identity, monoid_op};
 use crate::resolve::{eval_expr, eval_op};
-use crate::scalar::ScalarFloat;
+use crate::scalar::{narrow, widen, ScalarFloat};
 use crate::tensor::{
     alloc_exact, numel, row_major_index, IndexTensor, Odometer, Tensor, View, MAX_OPERANDS,
     MAX_RANK,
@@ -128,6 +128,213 @@ pub fn reduce<T: ScalarFloat>(x: &View<T>, monoid: Monoid, axes: &[usize]) -> Re
         data.push(acc);
     }
     Tensor::from_vec(data, out_shape)
+}
+
+// ---- accumulator-parameterized reduction reference (RFC #92 direction b) ------
+//
+// A `(compute-dtype S = T, accumulator-dtype A)` reduction cell (RFC #92 C3):
+// the §6.17-0005-ordered (ascending index) fold with each INPUT promoted exactly
+// S→A, each ACCUMULATE ATOM rounded to A, the RESULT rounded once A→S. The
+// diagonal `A == S` is served by the VERBATIM `reduce`/`prefix_scan` above (byte-
+// identical incl. NaN payload), NOT by `*_acc::<T,T>` — the f64 pivot inside
+// widen/narrow could canonicalize a non-canonical NaN payload, so the runtime
+// dispatchers short-circuit the diagonal. DetClass is UNCHANGED (§6.17-0007:
+// fixing the accumulator does not pin the bits; still order-invariant-nondet).
+
+/// The `(exp_bits, mant_bits)` storage format of a float `Dtype`, or `None` for a
+/// non-float dtype (§6.16 / the classify-vocab dtype table).
+fn float_format(d: Dtype) -> Option<(u8, u8)> {
+    Some(match d {
+        Dtype::F16 => (5, 10),
+        Dtype::Bf16 => (8, 7),
+        Dtype::F32 => (8, 23),
+        Dtype::F64 => (11, 52),
+        Dtype::E4m3 => (4, 3),
+        Dtype::E5m2 => (5, 2),
+        _ => return None,
+    })
+}
+
+/// The C1 "accumulator at least as wide as storage" check, as **exact subsumption
+/// on (exp, mant)** — the same predicate that makes the S→A promotion lossless, so
+/// a too-narrow accumulator can never reach `widen` and silently round an input.
+/// The incomparable `f16`/`bf16` pair (neither subsumes the other) is declined.
+/// Runs AFTER the diagonal + Max/Min short-circuits, so it only ever admits a
+/// strictly-wider legal `A`.
+pub(crate) fn guard_accumulator<T: ScalarFloat>(acc: Dtype) -> Result<(), Error> {
+    match (float_format(T::DTYPE), float_format(acc)) {
+        (Some((se, sm)), Some((ae, am))) => {
+            if ae < se || am < sm {
+                Err(Error::AccumulatorTooNarrow { storage: T::DTYPE, acc })
+            } else if T::NARROW_FLOAT && acc == Dtype::F64 {
+                // The narrow storage types round via f32, so narrowing an f64
+                // accumulator (`narrow::<f64, S>`) would double-round f64→f32→S
+                // and miss the C3 single-rounding by up to 1 ULP. Decline this
+                // legal-but-not-yet-exact cell rather than return a wrong value
+                // (Pending — the fix is a round-to-odd f64→narrow codec). Every
+                // accumulator ⊆ f32 (incl. the common `acc = f32`) narrows in a
+                // single round and is unaffected.
+                Err(Error::AccumulatorNarrowingUnsupported { storage: T::DTYPE, acc })
+            } else {
+                Ok(())
+            }
+        }
+        (_, None) => Err(Error::NonFloatAccumulator(acc)),
+        (None, _) => Err(Error::NonFloatAccumulator(T::DTYPE)),
+    }
+}
+
+/// [`reduce`] accumulating each atom in the wider dtype `A` (RFC #92 C3). Inputs
+/// promote exactly `T→A`, the fold combines via `eval_op::<A>`, the result narrows
+/// once `A→T`. Callers reach this through [`reduce_ref`] (which handles the
+/// diagonal + width guard); `A` MUST subsume `T`.
+pub(crate) fn reduce_acc<T: ScalarFloat, A: ScalarFloat>(
+    x: &View<T>,
+    monoid: Monoid,
+    axes: &[usize],
+) -> Result<Tensor<T>, Error> {
+    if axes.is_empty() {
+        return Err(Error::EmptyAxesMask);
+    }
+    let in_shape = x.shape();
+    let rank = in_shape.len();
+    let mut is_reduced = [false; MAX_RANK];
+    for &a in axes {
+        if a >= rank {
+            return Err(Error::AxisOutOfRange { axis: a, rank });
+        }
+        is_reduced[a] = true;
+    }
+    let mut reduced: Vec<usize> = Vec::new();
+    let mut out_shape = [1usize; MAX_RANK];
+    let mut rnum: usize = 1;
+    for k in 0..rank {
+        if is_reduced[k] {
+            reduced.push(k);
+            rnum = rnum.checked_mul(in_shape[k]).ok_or(Error::ShapeOverflow)?;
+            out_shape[k] = 1;
+        } else {
+            out_shape[k] = in_shape[k];
+        }
+    }
+    let out_shape = &out_shape[..rank];
+    let op = monoid_op(monoid);
+    let ident = monoid_identity::<A>(monoid); // seed in the accumulator dtype
+
+    let count = numel(out_shape)?;
+    let mut data: Vec<T> = alloc_exact(count)?;
+    let mut in_coord = [0usize; MAX_RANK];
+    let mut od = Odometer::new(out_shape)?;
+    while let Some(oc) = od.next_coord() {
+        in_coord[..rank].copy_from_slice(oc);
+        let mut acc: A = ident;
+        for r in 0..rnum {
+            decode_reduced(r, &reduced, in_shape, &mut in_coord[..rank]);
+            let xv: A = widen::<T, A>(x.read(&in_coord[..rank])?);
+            acc = eval_op::<A>(op, &[acc, xv])?;
+        }
+        data.push(narrow::<A, T>(acc));
+    }
+    Tensor::from_vec(data, out_shape)
+}
+
+/// [`prefix_scan`] accumulating each atom in the wider dtype `A` (RFC #92 C3).
+pub(crate) fn prefix_scan_acc<T: ScalarFloat, A: ScalarFloat>(
+    x: &View<T>,
+    monoid: Monoid,
+    axis: usize,
+    exclusive: bool,
+) -> Result<Tensor<T>, Error> {
+    let in_shape = x.shape();
+    let rank = in_shape.len();
+    if axis >= rank {
+        return Err(Error::AxisOutOfRange { axis, rank });
+    }
+    let op = monoid_op(monoid);
+    let ident_t = monoid_identity::<T>(monoid); // result-lane prefill (overwritten)
+    let ident_a = monoid_identity::<A>(monoid); // accumulator seed
+    let count = numel(in_shape)?;
+    let mut data: Vec<T> = if count == 0 {
+        Vec::new()
+    } else {
+        vec![ident_t; count]
+    };
+
+    let mut line_shape = [1usize; MAX_RANK];
+    line_shape[..rank].copy_from_slice(in_shape);
+    line_shape[axis] = 1;
+    let extent = in_shape[axis];
+    let mut coord = [0usize; MAX_RANK];
+    let mut od = Odometer::new(&line_shape[..rank])?;
+    while let Some(start) = od.next_coord() {
+        coord[..rank].copy_from_slice(start);
+        let mut acc: A = ident_a;
+        for j in 0..extent {
+            coord[axis] = j;
+            let xv: A = widen::<T, A>(x.read(&coord[..rank])?);
+            let lin = row_major_index(&coord[..rank], in_shape);
+            let slot = data.get_mut(lin).ok_or(Error::ShapeMismatch { expected: count, got: lin })?;
+            if exclusive {
+                *slot = narrow::<A, T>(acc);
+                acc = eval_op::<A>(op, &[acc, xv])?;
+            } else {
+                acc = eval_op::<A>(op, &[acc, xv])?;
+                *slot = narrow::<A, T>(acc);
+            }
+        }
+    }
+    Tensor::from_vec(data, in_shape)
+}
+
+/// The runtime-`<acc>` [`reduce`] reference (RFC #92 direction b). `Max`/`Min` are
+/// accumulator-invariant (raw-bit selects, no rounding atom) so route to the
+/// verbatim kernel for ANY `acc`; the diagonal `acc == T::DTYPE` also routes
+/// verbatim (byte-identical incl. NaN payload). Otherwise the accumulator width is
+/// guarded (a typed decline on a too-narrow / non-float `acc`) and the fold runs
+/// in the requested `A`.
+pub fn reduce_ref<T: ScalarFloat>(
+    x: &View<T>,
+    monoid: Monoid,
+    axes: &[usize],
+    acc: Dtype,
+) -> Result<Tensor<T>, Error> {
+    if matches!(monoid, Monoid::Max | Monoid::Min) || acc == T::DTYPE {
+        return reduce::<T>(x, monoid, axes);
+    }
+    guard_accumulator::<T>(acc)?;
+    match acc {
+        Dtype::F16 => reduce_acc::<T, half::f16>(x, monoid, axes),
+        Dtype::Bf16 => reduce_acc::<T, half::bf16>(x, monoid, axes),
+        Dtype::F32 => reduce_acc::<T, f32>(x, monoid, axes),
+        Dtype::F64 => reduce_acc::<T, f64>(x, monoid, axes),
+        Dtype::E4m3 => reduce_acc::<T, crate::fp8::E4m3>(x, monoid, axes),
+        Dtype::E5m2 => reduce_acc::<T, crate::fp8::E5m2>(x, monoid, axes),
+        _ => Err(Error::NonFloatAccumulator(acc)),
+    }
+}
+
+/// The runtime-`<acc>` [`prefix_scan`] reference (RFC #92 direction b). Same
+/// dispatch discipline as [`reduce_ref`].
+pub fn prefix_scan_ref<T: ScalarFloat>(
+    x: &View<T>,
+    monoid: Monoid,
+    axis: usize,
+    exclusive: bool,
+    acc: Dtype,
+) -> Result<Tensor<T>, Error> {
+    if matches!(monoid, Monoid::Max | Monoid::Min) || acc == T::DTYPE {
+        return prefix_scan::<T>(x, monoid, axis, exclusive);
+    }
+    guard_accumulator::<T>(acc)?;
+    match acc {
+        Dtype::F16 => prefix_scan_acc::<T, half::f16>(x, monoid, axis, exclusive),
+        Dtype::Bf16 => prefix_scan_acc::<T, half::bf16>(x, monoid, axis, exclusive),
+        Dtype::F32 => prefix_scan_acc::<T, f32>(x, monoid, axis, exclusive),
+        Dtype::F64 => prefix_scan_acc::<T, f64>(x, monoid, axis, exclusive),
+        Dtype::E4m3 => prefix_scan_acc::<T, crate::fp8::E4m3>(x, monoid, axis, exclusive),
+        Dtype::E5m2 => prefix_scan_acc::<T, crate::fp8::E5m2>(x, monoid, axis, exclusive),
+        _ => Err(Error::NonFloatAccumulator(acc)),
+    }
 }
 
 /// **prefix_scan** (§6.11-0003): inclusive/exclusive running `monoid` fold along

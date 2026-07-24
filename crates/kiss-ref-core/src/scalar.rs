@@ -8,6 +8,8 @@
 //! `select`, rounding, `copysign`) use native operators / `libm` directed
 //! rounding; the transcendentals go through `libm` under their §6.8 declared-ULP.
 
+use kiss_classify_vocab::Dtype;
+
 /// A floating-point compute dtype the reference evaluates atoms in. Implemented
 /// for `f32` and `f64` (the dtypes whose native Rust arithmetic *is* the
 /// IEEE-754 reference); `f16`/`bf16`/FP8 are a documented follow-up.
@@ -18,6 +20,12 @@ pub trait ScalarFloat: Copy + PartialEq + PartialOrd {
     /// **decline `nextafter`** on them per §6.9-0003 (stepping in a promoted
     /// `f32` yields the wrong neighbor in the narrow lattice).
     const NARROW_FLOAT: bool = false;
+    /// The runtime [`Dtype`] tag of this compute/accumulator type — the bridge
+    /// from a runtime accumulator `Dtype` to the monomorphized `*_acc` behavior,
+    /// and the diagonal predicate (`acc == T::DTYPE`) that routes an
+    /// accumulator-parameterized reference back to the verbatim kernel
+    /// (RFC #92 direction b, accumulator-dtype tolerance cells).
+    const DTYPE: Dtype;
 
     /// Round an `f64` reference constant into this dtype (§6.12 `const(bits)`).
     fn from_f64(v: f64) -> Self;
@@ -88,7 +96,7 @@ pub trait ScalarFloat: Copy + PartialEq + PartialOrd {
 }
 
 macro_rules! impl_scalar_float {
-    ($t:ty,
+    ($t:ty, dtype=$dtype:expr,
      exp=$exp:path, log=$log:path, sin=$sin:path, cos=$cos:path, sqrt=$sqrt:path,
      erf=$erf:path, atan=$atan:path, lgamma=$lgamma:path, atan2=$atan2:path,
      copysign=$copysign:path, nextafter=$nextafter:path, floor=$floor:path,
@@ -98,6 +106,7 @@ macro_rules! impl_scalar_float {
         impl ScalarFloat for $t {
             const ZERO: $t = 0.0;
             const ONE: $t = 1.0;
+            const DTYPE: Dtype = $dtype;
 
             #[inline]
             fn from_f64(v: f64) -> $t {
@@ -261,6 +270,7 @@ macro_rules! impl_scalar_float {
 
 impl_scalar_float!(
     f64,
+    dtype = Dtype::F64,
     exp = libm::exp, log = libm::log, sin = libm::sin, cos = libm::cos, sqrt = libm::sqrt,
     erf = libm::erf, atan = libm::atan, lgamma = libm::lgamma, atan2 = libm::atan2,
     copysign = libm::copysign, nextafter = libm::nextafter, floor = libm::floor,
@@ -271,6 +281,7 @@ impl_scalar_float!(
 
 impl_scalar_float!(
     f32,
+    dtype = Dtype::F32,
     exp = libm::expf, log = libm::logf, sin = libm::sinf, cos = libm::cosf, sqrt = libm::sqrtf,
     erf = libm::erff, atan = libm::atanf, lgamma = libm::lgammaf, atan2 = libm::atan2f,
     copysign = libm::copysignf, nextafter = libm::nextafterf, floor = libm::floorf,
@@ -291,11 +302,12 @@ impl_scalar_float!(
 // `nextafter` is declined for these types by the resolver (§6.9-0003), so its
 // f32-promoted body here is never reached through `eval_op`.
 macro_rules! impl_scalar_float_via_f32 {
-    ($t:ty) => {
+    ($t:ty, $dtype:expr) => {
         impl ScalarFloat for $t {
             const ZERO: $t = <$t>::ZERO;
             const ONE: $t = <$t>::ONE;
             const NARROW_FLOAT: bool = true;
+            const DTYPE: Dtype = $dtype;
 
             #[inline]
             fn from_f64(v: f64) -> $t {
@@ -432,13 +444,37 @@ macro_rules! impl_scalar_float_via_f32 {
     };
 }
 
-impl_scalar_float_via_f32!(half::f16);
-impl_scalar_float_via_f32!(half::bf16);
+impl_scalar_float_via_f32!(half::f16, Dtype::F16);
+impl_scalar_float_via_f32!(half::bf16, Dtype::Bf16);
 
 // FP8 (e4m3 / e5m2) — same promote-to-f32 lane as the narrow floats (§6.16), with
 // the hand-rolled u8 codec in `crate::fp8` (the `half` crate has no FP8).
-impl_scalar_float_via_f32!(crate::fp8::E4m3);
-impl_scalar_float_via_f32!(crate::fp8::E5m2);
+impl_scalar_float_via_f32!(crate::fp8::E4m3, Dtype::E4m3);
+impl_scalar_float_via_f32!(crate::fp8::E5m2, Dtype::E5m2);
+
+/// **Exact** promotion of a storage value `S` into a wider accumulator dtype `A`
+/// (RFC #92 direction b). `to_f64` is lossless for every float (all ⊆ `f64`), and
+/// `A::from_f64` is lossless whenever `A` subsumes `S` — which the accumulator
+/// width guard (`kernels::guard_accumulator`) enforces before this is ever
+/// called, so the promotion never rounds. On the diagonal `A == S` this is the
+/// round-trip identity `S::from_f64(x.to_f64()) == x` for every finite value.
+#[inline]
+pub(crate) fn widen<S: ScalarFloat, A: ScalarFloat>(x: S) -> A {
+    A::from_f64(x.to_f64())
+}
+
+/// Narrow an accumulator value `A` back to the storage/result dtype `S` (RFC #92
+/// C3 "…and the result rounded to S"). This is a **single** round-to-nearest-even
+/// for every `(A, S)` pair the accumulator width guard admits: when `A ⊆ f32`
+/// (which the guard guarantees for a narrow `S`), `S::from_f64(a.to_f64())`
+/// collapses to `S::from_f32` — one rounding. The only double-rounding pair,
+/// `A = f64` narrowed to a via-`f32` narrow `S` (`f64→f32→S`), is **declined** by
+/// [`crate::kernels::guard_accumulator`] as [`Error::AccumulatorNarrowingUnsupported`],
+/// so it never reaches this helper.
+#[inline]
+pub(crate) fn narrow<A: ScalarFloat, S: ScalarFloat>(a: A) -> S {
+    S::from_f64(a.to_f64())
+}
 
 // ---- Refined non-primitive scalar forms (§6.13-0003) --------------------------
 // The literal reference decompositions of these ops overflow to NaN for large

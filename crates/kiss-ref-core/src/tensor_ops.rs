@@ -23,7 +23,7 @@ use crate::attrs::{Combine, Direction, Monoid, OobPolicy};
 use crate::bridge::DetClass;
 use crate::kernels::{gather, map_views, prefix_scan, reduce, scatter, sort_network};
 use crate::resolve::eval_op;
-use crate::scalar::ScalarFloat;
+use crate::scalar::{narrow, widen, ScalarFloat};
 use crate::tensor::{
     alloc_exact, broadcast_shapes, numel, row_major_index, IndexTensor, Odometer, Tensor, View,
     MAX_RANK,
@@ -281,6 +281,98 @@ pub fn matmul<T: ScalarFloat>(a: &View<T>, b: &View<T>) -> Result<Tensor<T>, Err
         data.push(acc);
     }
     Tensor::from_vec(data, out_shape)
+}
+
+/// [`matmul`] contracting each `(multiply, add)` atom in the wider accumulator
+/// dtype `A` (RFC #92 direction b, C3). Inputs promote exactly `T→A`; the
+/// **multiply rounds to `A`** and the **add rounds to `A`** as two SEPARATE
+/// `eval_op::<A>` atoms (no fused-multiply-add — §6.17-0002 forbids removing the
+/// intermediate product rounding, and an FMA would also move the `A == S`
+/// diagonal, which has a real product rounding to S); the result narrows once
+/// `A→T`. Ruling per §6.17-0005: the profile's "each multiply and add atom at the
+/// accumulator's precision" makes the products (the first fold atoms of the K
+/// contraction) round to `A` — matching an FP8 tensor core, which accumulates
+/// FP8×FP8 products in f32 without rounding the product back to FP8. `A` MUST
+/// subsume `T`; callers reach this through [`matmul_ref`].
+pub(crate) fn matmul_acc<T: ScalarFloat, A: ScalarFloat>(
+    a: &View<T>,
+    b: &View<T>,
+) -> Result<Tensor<T>, Error> {
+    let ash = a.shape();
+    let bsh = b.shape();
+    if ash.len() < 2 || bsh.len() < 2 {
+        return Err(Error::ShapeMismatch { expected: 2, got: ash.len().min(bsh.len()) });
+    }
+    let (ar, br) = (ash.len(), bsh.len());
+    let (m, k) = (ash[ar - 2], ash[ar - 1]);
+    let (k2, n) = (bsh[br - 2], bsh[br - 1]);
+    if k != k2 {
+        return Err(Error::ShapeMismatch { expected: k, got: k2 });
+    }
+    let (batch_buf, batch_rank) = broadcast_shapes(&[&ash[..ar - 2], &bsh[..br - 2]])?;
+    let batch = &batch_buf[..batch_rank];
+    let out_rank = batch_rank + 2;
+    if out_rank > MAX_RANK {
+        return Err(Error::RankExceeded { rank: out_rank, max: MAX_RANK });
+    }
+    let mut a_full = [1usize; MAX_RANK];
+    let mut b_full = [1usize; MAX_RANK];
+    a_full[..batch_rank].copy_from_slice(batch);
+    b_full[..batch_rank].copy_from_slice(batch);
+    a_full[batch_rank] = m;
+    a_full[batch_rank + 1] = k;
+    b_full[batch_rank] = k;
+    b_full[batch_rank + 1] = n;
+    let av = a.broadcast_to(&a_full[..out_rank])?;
+    let bv = b.broadcast_to(&b_full[..out_rank])?;
+
+    let mut out_shape = [1usize; MAX_RANK];
+    out_shape[..batch_rank].copy_from_slice(batch);
+    out_shape[batch_rank] = m;
+    out_shape[batch_rank + 1] = n;
+    let out_shape = &out_shape[..out_rank];
+
+    let count = numel(out_shape)?;
+    let mut data: Vec<T> = alloc_exact(count)?;
+    let mut acoord = [0usize; MAX_RANK];
+    let mut bcoord = [0usize; MAX_RANK];
+    let mut od = Odometer::new(out_shape)?;
+    while let Some(oc) = od.next_coord() {
+        acoord[..batch_rank].copy_from_slice(&oc[..batch_rank]);
+        bcoord[..batch_rank].copy_from_slice(&oc[..batch_rank]);
+        acoord[batch_rank] = oc[batch_rank];
+        bcoord[batch_rank + 1] = oc[batch_rank + 1];
+        let mut acc: A = A::ZERO;
+        for p in 0..k {
+            acoord[batch_rank + 1] = p;
+            bcoord[batch_rank] = p;
+            let a_s = av.read(&acoord[..out_rank])?;
+            let b_s = bv.read(&bcoord[..out_rank])?;
+            let prod = eval_op::<A>(Op::Mul, &[widen::<T, A>(a_s), widen::<T, A>(b_s)])?;
+            acc = eval_op::<A>(Op::Add, &[acc, prod])?;
+        }
+        data.push(narrow::<A, T>(acc));
+    }
+    Tensor::from_vec(data, out_shape)
+}
+
+/// The runtime-`<acc>` [`matmul`] reference (RFC #92 direction b). The diagonal
+/// `acc == T::DTYPE` routes to the verbatim [`matmul`] (byte-identical); otherwise
+/// the accumulator width is guarded and the contraction runs in the requested `A`.
+pub fn matmul_ref<T: ScalarFloat>(a: &View<T>, b: &View<T>, acc: Dtype) -> Result<Tensor<T>, Error> {
+    if acc == T::DTYPE {
+        return matmul::<T>(a, b);
+    }
+    crate::kernels::guard_accumulator::<T>(acc)?;
+    match acc {
+        Dtype::F16 => matmul_acc::<T, half::f16>(a, b),
+        Dtype::Bf16 => matmul_acc::<T, half::bf16>(a, b),
+        Dtype::F32 => matmul_acc::<T, f32>(a, b),
+        Dtype::F64 => matmul_acc::<T, f64>(a, b),
+        Dtype::E4m3 => matmul_acc::<T, crate::fp8::E4m3>(a, b),
+        Dtype::E5m2 => matmul_acc::<T, crate::fp8::E5m2>(a, b),
+        _ => Err(Error::NonFloatAccumulator(acc)),
+    }
 }
 
 // ---- gather / scatter family -------------------------------------------------

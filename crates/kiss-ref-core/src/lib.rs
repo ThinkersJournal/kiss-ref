@@ -57,8 +57,9 @@ pub use diff::{
     diff_bf16, diff_e4m3, diff_e5m2, diff_expr, diff_expr_bf16, diff_expr_f16, diff_expr_f32,
     diff_f16, diff_f32, diff_f64, reference_bf16, reference_e4m3, reference_e5m2, reference_expr,
     reference_expr_bf16, reference_expr_f16, reference_expr_f32, reference_f16, reference_f32,
-    reference_f64, ulp_distance_bf16, ulp_distance_e4m3, ulp_distance_e5m2, ulp_distance_f16,
-    ulp_distance_f32, ulp_distance_f64, DiffReport, Tolerance,
+    reference_f64, reference_matmul_acc, reference_prefix_scan_acc, reference_reduce_acc,
+    ulp_distance_bf16, ulp_distance_e4m3, ulp_distance_e5m2, ulp_distance_f16, ulp_distance_f32,
+    ulp_distance_f64, DiffReport, Tolerance,
 };
 pub use resolve::{
     eval_expr, eval_op, float_supported, implemented, legality, support, tensor_supported,
@@ -126,6 +127,22 @@ pub enum Error {
     /// range (§6.13 `index_select` relies on exactly that), and only an actual
     /// OOB read declines.
     GatherSkipNoBase,
+    /// A requested reduction/scan/contraction accumulator dtype is narrower than
+    /// (or incomparable to) the storage/compute dtype. RFC #92 (direction b) C1:
+    /// a narrower accumulator is forbidden — the storage→accumulator promotion
+    /// would be lossy, so it is a typed decline, not a silent rounding.
+    AccumulatorTooNarrow { storage: Dtype, acc: Dtype },
+    /// A requested accumulator dtype is not a float. A reduction/scan/contraction
+    /// accumulator MUST be a float dtype (RFC #92 C1).
+    NonFloatAccumulator(Dtype),
+    /// A legal `(narrow storage, wider-than-f32 accumulator)` cell whose exact C3
+    /// reference kiss-ref cannot yet produce: the narrow storage types round via
+    /// `f32`, so narrowing an `f64` accumulator would double-round (`f64→f32→S`)
+    /// and miss the C3 "rounded once A→S" value by up to 1 ULP. Declined rather
+    /// than returned wrong (a **Pending** cell — the follow-up is a correct
+    /// round-to-odd `f64→narrow` codec). The common `acc = f32` path is exact and
+    /// unaffected. RFC #92 (direction b).
+    AccumulatorNarrowingUnsupported { storage: Dtype, acc: Dtype },
 }
 
 /// Coverage of an `(op, dtype)` cell. Three states: a cell is either
