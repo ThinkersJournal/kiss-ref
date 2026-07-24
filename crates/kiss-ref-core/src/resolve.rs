@@ -111,7 +111,30 @@ pub fn eval_op<T: ScalarFloat>(op: Op, args: &[T]) -> Result<T, Error> {
         Op::Pow => bin(op, args, |a, b| a.pow(b)),
         Op::Hypot => bin(op, args, |a, b| a.hypot(b)),
         // exact 2^b scaling via IEEE pow (§6.13-0003 permits the exact form).
-        Op::Ldexp => bin(op, args, |a, b| a.mul(T::from_f64(2.0).pow(b))),
+        // The direct `a * 2^b` is exact for integer `b`, but materializing `2^b`
+        // spuriously overflows to +inf for `b >= 1024` (f64) even when the
+        // product `a * 2^b` is finite (e.g. `ldexp(1e-300, 1024)` = ~1.8e8, not
+        // inf — found by the §6.13 decomposition self-differential). When `2^b`
+        // genuinely overflows to infinity, recover the possibly-finite product
+        // by splitting the exponent into two parts (`b = lo + hi` with
+        // `lo = floor(b/2)`); each `2^k` stays in range for |b| < 2048, and the
+        // floor/ceil split keeps every integer `b` exact (each half is an exact
+        // power of two). Narrow-lane saturation (`2^b` -> a *finite* max under
+        // §6.16-0004/-0005) is deliberately left alone — the guard is on an
+        // actual infinity, not on saturation.
+        Op::Ldexp => bin(op, args, |a, b| {
+            let p = T::from_f64(2.0).pow(b);
+            if p.to_f64().is_infinite() {
+                let bf = b.to_f64();
+                let lo = (bf * 0.5).floor();
+                let hi = bf - lo;
+                let sl = T::from_f64(2.0).pow(T::from_f64(lo));
+                let sh = T::from_f64(2.0).pow(T::from_f64(hi));
+                a.mul(sl).mul(sh)
+            } else {
+                a.mul(p)
+            }
+        }),
 
         // everything else: resolve via the §6.13 decomposition (§6.14).
         other => resolve_nonprimitive(other, args),

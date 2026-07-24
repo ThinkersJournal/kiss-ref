@@ -31,6 +31,21 @@ pub fn numel(shape: &[usize]) -> Result<usize, Error> {
     Ok(n)
 }
 
+/// An empty `Vec` with capacity for `count` elements reserved **without
+/// panicking or aborting**. `Vec::with_capacity(count)` panics when
+/// `count * size_of::<T>()` exceeds `isize::MAX` and *aborts the process* when
+/// the allocator refuses (e.g. a shape-derived `count` of `2^41` on a huge
+/// padding). A shape-derived count is attacker-influenceable, so every tensor
+/// buffer sized from `numel` / an extent must use this instead — the count is a
+/// valid `usize` that only fails at allocation, which `Vec::try_reserve` reports
+/// as a typed [`Error::ShapeOverflow`] rather than a never-panic violation.
+/// (Found by the window-family allocation fuzzer, 2026-07-23.)
+pub(crate) fn alloc_exact<T>(count: usize) -> Result<Vec<T>, Error> {
+    let mut v: Vec<T> = Vec::new();
+    v.try_reserve(count).map_err(|_| Error::ShapeOverflow)?;
+    Ok(v)
+}
+
 /// The row-major linear index of `coord` within `shape` (kernels that write along
 /// a non-row-major axis address the contiguous output buffer through this).
 /// Caller guarantees `coord` is in range (only used with validated coordinates).

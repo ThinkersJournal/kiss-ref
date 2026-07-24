@@ -40,7 +40,7 @@ use crate::bridge::{monoid_det, DetClass};
 use crate::kernels::{gather, map_views, prefix_scan, reduce, scatter, sort_network};
 use crate::resolve::eval_op;
 use crate::scalar::ScalarFloat;
-use crate::tensor::{broadcast_shapes, numel, IndexTensor, Tensor, View, MAX_RANK};
+use crate::tensor::{alloc_exact, broadcast_shapes, numel, IndexTensor, Tensor, View, MAX_RANK};
 use crate::tensor_ops::{flip, matmul};
 use crate::Error;
 
@@ -521,7 +521,7 @@ fn compute_node<T: ScalarFloat>(
                 stride = stride.checked_mul(d).ok_or(Error::ShapeOverflow)?;
             }
             let extent = shape[*axis];
-            let mut buf = Vec::with_capacity(count);
+            let mut buf: Vec<T> = alloc_exact(count)?;
             for i in 0..count {
                 buf.push(T::from_f64(((i / stride) % extent) as f64));
             }

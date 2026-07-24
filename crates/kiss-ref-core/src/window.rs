@@ -22,7 +22,7 @@ use kiss_ops_vocab::Op;
 
 use crate::resolve::eval_op;
 use crate::scalar::ScalarFloat;
-use crate::tensor::{numel, Odometer, Tensor, View, MAX_RANK};
+use crate::tensor::{alloc_exact, numel, Odometer, Tensor, View, MAX_RANK};
 use crate::Error;
 
 /// The output extent of a pooled axis: `floor((in + 2·pad − dilation·(k−1) − 1) /
@@ -104,7 +104,7 @@ pub fn avg_pool<T: ScalarFloat>(
     let count_total = numel(kernel)?;
 
     let count = numel(out_shape)?;
-    let mut data: Vec<T> = Vec::with_capacity(count);
+    let mut data: Vec<T> = alloc_exact(count)?;
     let mut src = [0usize; MAX_RANK];
     let mut od = Odometer::new(out_shape)?;
     while let Some(oc) = od.next_coord() {
@@ -150,7 +150,7 @@ pub fn max_pool<T: ScalarFloat>(
     let out_shape = &out_shape_buf[..rank];
 
     let count = numel(out_shape)?;
-    let mut data: Vec<T> = Vec::with_capacity(count);
+    let mut data: Vec<T> = alloc_exact(count)?;
     let ident = T::from_f64(f64::NEG_INFINITY);
     let mut src = [0usize; MAX_RANK];
     let mut od = Odometer::new(out_shape)?;
@@ -206,7 +206,7 @@ pub fn im2col<T: ScalarFloat>(
     let out_shape = &out_shape[..out_rank];
 
     let count = numel(out_shape)?;
-    let mut data: Vec<T> = Vec::with_capacity(count);
+    let mut data: Vec<T> = alloc_exact(count)?;
     let mut src = [0usize; MAX_RANK];
     let mut od = Odometer::new(out_shape)?;
     while let Some(oc) = od.next_coord() {

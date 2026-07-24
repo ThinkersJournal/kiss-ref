@@ -19,7 +19,8 @@ use crate::bridge::{monoid_identity, monoid_op};
 use crate::resolve::{eval_expr, eval_op};
 use crate::scalar::ScalarFloat;
 use crate::tensor::{
-    numel, row_major_index, IndexTensor, Odometer, Tensor, View, MAX_OPERANDS, MAX_RANK,
+    alloc_exact, numel, row_major_index, IndexTensor, Odometer, Tensor, View, MAX_OPERANDS,
+    MAX_RANK,
 };
 use crate::Error;
 
@@ -45,7 +46,7 @@ pub(crate) fn map_views<T: ScalarFloat>(
         bviews.push(v.broadcast_to(out_shape)?);
     }
     let count = numel(out_shape)?;
-    let mut data: Vec<T> = Vec::with_capacity(count);
+    let mut data: Vec<T> = alloc_exact(count)?;
     let mut buf = [T::ZERO; MAX_OPERANDS];
     let mut od = Odometer::new(out_shape)?;
     while let Some(coord) = od.next_coord() {
@@ -113,7 +114,7 @@ pub fn reduce<T: ScalarFloat>(x: &View<T>, monoid: Monoid, axes: &[usize]) -> Re
     let ident = monoid_identity::<T>(monoid);
 
     let count = numel(out_shape)?;
-    let mut data: Vec<T> = Vec::with_capacity(count);
+    let mut data: Vec<T> = alloc_exact(count)?;
     let mut in_coord = [0usize; MAX_RANK];
     let mut od = Odometer::new(out_shape)?;
     while let Some(oc) = od.next_coord() {
@@ -253,7 +254,7 @@ pub fn gather<T: ScalarFloat>(
     };
 
     let count = numel(out_shape)?;
-    let mut buf: Vec<T> = Vec::with_capacity(count);
+    let mut buf: Vec<T> = alloc_exact(count)?;
     let mut src = [0usize; MAX_RANK];
     let mut od = Odometer::new(out_shape)?;
     while let Some(oc) = od.next_coord() {
@@ -393,7 +394,7 @@ pub fn sort_network<T: ScalarFloat>(
     let mut od = Odometer::new(&line_shape[..rank])?;
     while let Some(start) = od.next_coord() {
         coord[..rank].copy_from_slice(start);
-        let mut pairs: Vec<(i64, T)> = Vec::with_capacity(extent);
+        let mut pairs: Vec<(i64, T)> = alloc_exact(extent)?;
         for j in 0..extent {
             coord[axis] = j;
             pairs.push((j as i64, keys.read(&coord[..rank])?));

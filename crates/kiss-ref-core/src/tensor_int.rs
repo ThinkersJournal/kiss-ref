@@ -23,7 +23,8 @@ use crate::attrs::{Combine, Direction, Monoid, OobPolicy};
 use crate::bridge::monoid_op;
 use crate::scalar_int::{eval_int_expr, eval_int_op, int_spec};
 use crate::tensor::{
-    numel, row_major_index, IndexTensor, Odometer, Tensor, View, MAX_OPERANDS, MAX_RANK,
+    alloc_exact, numel, row_major_index, IndexTensor, Odometer, Tensor, View, MAX_OPERANDS,
+    MAX_RANK,
 };
 use crate::Error;
 
@@ -98,7 +99,7 @@ pub fn element_map(
         bviews.push(v.broadcast_to(out_shape)?);
     }
     let count = numel(out_shape)?;
-    let mut data: Vec<i128> = Vec::with_capacity(count);
+    let mut data: Vec<i128> = alloc_exact(count)?;
     let mut buf = [0i128; MAX_OPERANDS];
     let mut od = Odometer::new(out_shape)?;
     while let Some(coord) = od.next_coord() {
@@ -155,7 +156,7 @@ pub fn reduce(
     let ident = int_identity(monoid, dtype)?;
 
     let count = numel(out_shape)?;
-    let mut data: Vec<i128> = Vec::with_capacity(count);
+    let mut data: Vec<i128> = alloc_exact(count)?;
     let mut in_coord = [0usize; MAX_RANK];
     let mut od = Odometer::new(out_shape)?;
     while let Some(oc) = od.next_coord() {
@@ -273,7 +274,7 @@ pub fn gather(
     };
 
     let count = numel(out_shape)?;
-    let mut buf: Vec<i128> = Vec::with_capacity(count);
+    let mut buf: Vec<i128> = alloc_exact(count)?;
     let mut src = [0usize; MAX_RANK];
     let mut od = Odometer::new(out_shape)?;
     while let Some(oc) = od.next_coord() {
@@ -392,7 +393,7 @@ pub fn sort_network(
     let mut od = Odometer::new(&line_shape[..rank])?;
     while let Some(start) = od.next_coord() {
         coord[..rank].copy_from_slice(start);
-        let mut pairs: Vec<(i64, i128)> = Vec::with_capacity(extent);
+        let mut pairs: Vec<(i64, i128)> = alloc_exact(extent)?;
         for j in 0..extent {
             coord[axis] = j;
             pairs.push((j as i64, keys.read(&coord[..rank])?));
@@ -433,7 +434,7 @@ pub fn argmax(x: &View<i128>, axis: usize) -> Result<IndexTensor, Error> {
     let out_shape = &out_shape[..rank];
     let n = numel(out_shape)?;
     let isl = idx.as_slice();
-    let mut data: Vec<i64> = Vec::with_capacity(n);
+    let mut data: Vec<i64> = alloc_exact(n)?;
     let mut od = Odometer::new(out_shape)?;
     let mut coord = [0usize; MAX_RANK];
     while let Some(oc) = od.next_coord() {
@@ -449,7 +450,7 @@ pub fn argmax(x: &View<i128>, axis: usize) -> Result<IndexTensor, Error> {
 fn ne_zero(x: &View<i128>, dtype: Dtype) -> Result<Tensor<i128>, Error> {
     let shape = x.shape();
     let count = numel(shape)?;
-    let mut data: Vec<i128> = Vec::with_capacity(count);
+    let mut data: Vec<i128> = alloc_exact(count)?;
     let mut od = Odometer::new(shape)?;
     while let Some(c) = od.next_coord() {
         data.push(eval_int_op(Op::CmpNe, dtype, &[x.read(c)?, 0])?);

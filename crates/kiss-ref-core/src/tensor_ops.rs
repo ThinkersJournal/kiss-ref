@@ -25,7 +25,8 @@ use crate::kernels::{gather, map_views, prefix_scan, reduce, scatter, sort_netwo
 use crate::resolve::eval_op;
 use crate::scalar::ScalarFloat;
 use crate::tensor::{
-    broadcast_shapes, numel, row_major_index, IndexTensor, Odometer, Tensor, View, MAX_RANK,
+    alloc_exact, broadcast_shapes, numel, row_major_index, IndexTensor, Odometer, Tensor, View,
+    MAX_RANK,
 };
 use crate::Error;
 
@@ -132,7 +133,7 @@ pub fn argmax<T: ScalarFloat>(x: &View<T>, axis: usize) -> Result<IndexTensor, E
     let out_shape = &out_shape[..rank];
     let n = numel(out_shape)?;
     let isl = idx.as_slice();
-    let mut data: Vec<i64> = Vec::with_capacity(n);
+    let mut data: Vec<i64> = alloc_exact(n)?;
     let mut od = Odometer::new(out_shape)?;
     let mut coord = [0usize; MAX_RANK];
     while let Some(oc) = od.next_coord() {
@@ -259,7 +260,7 @@ pub fn matmul<T: ScalarFloat>(a: &View<T>, b: &View<T>) -> Result<Tensor<T>, Err
     let out_shape = &out_shape[..out_rank];
 
     let count = numel(out_shape)?;
-    let mut data: Vec<T> = Vec::with_capacity(count);
+    let mut data: Vec<T> = alloc_exact(count)?;
     let mut acoord = [0usize; MAX_RANK];
     let mut bcoord = [0usize; MAX_RANK];
     let mut od = Odometer::new(out_shape)?;
@@ -328,7 +329,7 @@ pub fn flip<T: ScalarFloat>(data: &View<T>, axis: usize) -> Result<Tensor<T>, Er
     }
     let n = numel(shape)?;
     let extent = shape[axis];
-    let mut buf = Vec::with_capacity(n);
+    let mut buf: Vec<T> = alloc_exact(n)?;
     let mut src = [0usize; MAX_RANK];
     let mut od = Odometer::new(shape)?;
     while let Some(oc) = od.next_coord() {
