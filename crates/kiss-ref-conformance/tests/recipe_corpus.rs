@@ -1277,3 +1277,137 @@ fn test_recipe_attention_causal_single_head() {
         1e-9,
     );
 }
+
+/// R13: RoPE `out = x·cos + rotate_half(x)·sin`, the rotate_half convention (a
+/// single d=2 rotation pair). `rotate_half([x0,x1]) = [-x1, x0]` is built as
+/// `Flip` (reverse the pair) × a `[-1, 1]` sign — the only corpus recipe that
+/// exercises `Node::Flip` in a real pattern. cos/sin tables are inputs (the
+/// position·freq schedule is the consumer's; kiss-ref gets the logical tables).
+/// The interesting bug site: the half-swap indexing and the sign placement.
+fn r13_dag() -> FlatDag {
+    FlatDag::new(
+        vec![
+            Node::Bind(0),                    // 0 x [1,2]
+            Node::Bind(1),                    // 1 cos [2]
+            Node::Bind(2),                    // 2 sin [2]
+            Node::Flip { child: 0, axis: 1 }, // 3 [x1, x0]
+            Node::Bind(3),                    // 4 sign = [-1, 1]
+            Node::Apply {
+                op: Op::Mul,
+                children: vec![3, 4],
+            }, // 5 rotate_half = [-x1, x0]
+            Node::Apply {
+                op: Op::Mul,
+                children: vec![0, 1],
+            }, // 6 x·cos
+            Node::Apply {
+                op: Op::Mul,
+                children: vec![5, 2],
+            }, // 7 rotate_half·sin
+            Node::Apply {
+                op: Op::Add,
+                children: vec![6, 7],
+            }, // 8 out
+        ],
+        vec![8],
+    )
+}
+fn r13_inputs() -> Vec<Tensor<f64>> {
+    let (c, s) = (1.0_f64.cos(), 1.0_f64.sin()); // angle = 1 rad
+    vec![
+        t64(&[1.0, 0.0], &[1, 2]), // x = [1, 0]
+        t64(&[c, c], &[2]),        // cos table
+        t64(&[s, s], &[2]),        // sin table
+        t64(&[-1.0, 1.0], &[2]),   // sign for rotate_half
+    ]
+}
+
+#[test]
+fn test_recipe_rope_rotate_half() {
+    let r = eval_recipe(&r13_dag(), &r13_inputs(), &[], &[]).expect("R13 must evaluate");
+    // x=[1,0]: rotate_half=[-0,1]; out = [1·cos + (-0)·sin, 0·cos + 1·sin] = [cos1, sin1]
+    // (the 2-D rotation of the unit x-vector by 1 rad). Exact given the cos/sin inputs.
+    let (c, s) = (1.0_f64.cos(), 1.0_f64.sin());
+    assert_close(&r.outputs[0], &[c, s], &[1, 2], 1e-15);
+}
+
+/// R14: PRE-NORM RESIDUAL BLOCK `y = x + (RMSNorm(x) · W)` — the structural spine
+/// of a decoder layer (the two defining patterns: pre-normalization before a
+/// sublayer, and the residual add around it). Composes R10's RMSNorm into a
+/// projection + residual; with R11 (SwiGLU) and R12 (attention) as the sublayers,
+/// this is how a consumer wires a full layer. The bug site: threading the SAME `x`
+/// into both the norm AND the residual add (a mis-wire silently drops the skip).
+fn r14_dag() -> FlatDag {
+    FlatDag::new(
+        vec![
+            Node::Bind(0), // 0 x [2,4]
+            Node::Apply {
+                op: Op::Mul,
+                children: vec![0, 0],
+            }, // 1 x^2
+            Node::Reduce {
+                monoid: Monoid::Sum,
+                axes: vec![1],
+                keepdim: true,
+                child: 1,
+            }, // 2 sum x^2 [2,1]
+            Node::ReducedCount(vec![1]), // 3 d=4
+            Node::Apply {
+                op: Op::Div,
+                children: vec![2, 3],
+            }, // 4 mean
+            Node::RuntimeScalar(0), // 5 eps
+            Node::Apply {
+                op: Op::Add,
+                children: vec![4, 5],
+            }, // 6 mean+eps
+            Node::Apply {
+                op: Op::Sqrt,
+                children: vec![6],
+            }, // 7 rms [2,1]
+            Node::Apply {
+                op: Op::Div,
+                children: vec![0, 7],
+            }, // 8 x/rms [2,4]
+            Node::Bind(1), // 9 w_rms [4]
+            Node::Apply {
+                op: Op::Mul,
+                children: vec![8, 9],
+            }, // 10 normed = RMSNorm(x) [2,4]
+            Node::Bind(2), // 11 W [4,4]
+            Node::Matmul { lhs: 10, rhs: 11 }, // 12 sublayer = normed·W [2,4]
+            Node::Apply {
+                op: Op::Add,
+                children: vec![0, 12],
+            }, // 13 y = x + sublayer (residual; x is node 0, reused)
+        ],
+        vec![13],
+    )
+}
+fn r14_inputs() -> Vec<Tensor<f64>> {
+    vec![
+        t64(&[2.0, 2.0, 2.0, 2.0, 4.0, 0.0, 0.0, 0.0], &[2, 4]), // x (R10's inputs)
+        t64(&[1.0, 2.0, 1.0, 2.0], &[4]),                        // w_rms
+        // W = 2·I -> sublayer = 2·normed (exercises the matmul, stays dyadic).
+        t64(
+            &[
+                2.0, 0.0, 0.0, 0.0, 0.0, 2.0, 0.0, 0.0, 0.0, 0.0, 2.0, 0.0, 0.0, 0.0, 0.0, 2.0,
+            ],
+            &[4, 4],
+        ),
+    ]
+}
+
+#[test]
+fn test_recipe_prenorm_residual_block() {
+    // eps=12 -> RMSNorm(x) = R10's [0.5,1,0.5,1, 1,0,0,0]; ·2I -> [1,2,1,2, 2,0,0,0];
+    // residual + x([2,2,2,2, 4,0,0,0]) -> [3,4,3,4, 6,0,0,0]. Exact dyadic; root is a
+    // residual Add over a Sum-reduce + Matmul chain (OIN) so compared with tolerance.
+    let r = eval_recipe(&r14_dag(), &r14_inputs(), &[12.0], &[]).expect("R14 must evaluate");
+    assert_close(
+        &r.outputs[0],
+        &[3.0, 4.0, 3.0, 4.0, 6.0, 0.0, 0.0, 0.0],
+        &[2, 4],
+        1e-12,
+    );
+}
