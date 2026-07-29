@@ -10,10 +10,32 @@
 
 use kiss_classify_vocab::Dtype;
 
-/// A floating-point compute dtype the reference evaluates atoms in. Implemented
-/// for `f32` and `f64` (the dtypes whose native Rust arithmetic *is* the
-/// IEEE-754 reference); `f16`/`bf16`/FP8 are a documented follow-up.
-pub trait ScalarFloat: Copy + PartialEq + PartialOrd {
+/// Private supertrait that SEALS [`ScalarFloat`]: only this crate can name and
+/// implement `sealed::Sealed`, so `ScalarFloat` is a CLOSED set — exactly the six
+/// built-in float lanes below. This is deliberate. A differential reference must
+/// DEFINE the arithmetic it checks against; if a consumer could implement
+/// `ScalarFloat`, the party being checked would supply the very semantics the
+/// oracle uses to check it, and "kiss-ref says X" would become "whose kiss-ref."
+/// Exotic floats (FP8 variants, MX formats, posits) are added HERE — upstreamed
+/// and reviewed — not plugged in downstream.
+mod sealed {
+    pub trait Sealed {}
+}
+// The sealed set: exactly the six built-in float lanes. These are the ONLY impls
+// of `Sealed`, so no downstream crate can satisfy `ScalarFloat`'s supertrait bound.
+impl sealed::Sealed for f64 {}
+impl sealed::Sealed for f32 {}
+impl sealed::Sealed for half::f16 {}
+impl sealed::Sealed for half::bf16 {}
+impl sealed::Sealed for crate::fp8::E4m3 {}
+impl sealed::Sealed for crate::fp8::E5m2 {}
+
+/// A floating-point compute dtype the reference evaluates atoms in. A **sealed**
+/// trait: implemented for exactly `f64`, `f32`, `half::f16`, `half::bf16`, `E4m3`,
+/// and `E5m2` — the six KISS float lanes. Downstream crates cannot implement it
+/// (see [`sealed`]), which is what lets kiss-ref be an authoritative differential
+/// reference rather than a mirror of a consumer's own arithmetic.
+pub trait ScalarFloat: sealed::Sealed + Copy + PartialEq + PartialOrd {
     const ZERO: Self;
     const ONE: Self;
     /// True for the narrow floats (`f16`/`bf16`). Used by the resolver to
