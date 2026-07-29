@@ -81,7 +81,12 @@ use kiss_ops_vocab::Op;
 /// A reference-evaluation failure. The reference never panics; every problem is
 /// one of these (honoring the never-panic discipline of a consumer's execution
 /// path).
+// `#[non_exhaustive]`: this crate is published, and the error set has grown
+// (the accumulator work added variants) and will grow again. Marking it here
+// makes future additions non-breaking — downstream `match`es must already carry
+// a wildcard arm, so no consumer churns on a new variant.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Error {
     /// The op has no reference kernel and no bound §6.13 decomposition in this
     /// seed (a PENDING region — e.g. a structural-atom-based reduction).

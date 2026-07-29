@@ -1,6 +1,9 @@
 [package]
 name         = "kiss-classify-vocab"
 description  = "Rust binding of the KISS-Classify pinned scalar dtype set (a conformant implementation, no privilege)."
+keywords     = ["kiss", "dtype", "reference", "no-std"]
+categories   = ["no-std", "mathematics"]
+readme       = "README.md"
 edition.workspace      = true
 version.workspace      = true
 license.workspace      = true

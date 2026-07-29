@@ -1,6 +1,9 @@
 [package]
 name         = "kiss-ops-vocab"
 description  = "Rust binding of the KISS-Ops op vocabulary: primitive floor, non-primitive ops + reference decompositions (a conformant implementation, no privilege)."
+keywords     = ["kiss", "ops", "reference", "no-std"]
+categories   = ["no-std", "mathematics"]
+readme       = "README.md"
 edition.workspace      = true
 version.workspace      = true
 license.workspace      = true

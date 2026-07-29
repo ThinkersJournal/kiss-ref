@@ -9,9 +9,11 @@ members = [
 
 [workspace.package]
 edition    = "2021"
-version    = "0.0.1"
+version    = "0.1.0"
 license    = "MIT OR Apache-2.0"
-repository = "https://github.com/ThinkersJournal/KISS"
+# The code repository (crates.io links here). The KISS *spec* the code binds
+# lives at github.com/ThinkersJournal/KISS — cited in DESIGN.md's "Spec pin".
+repository = "https://github.com/ThinkersJournal/kiss-ref"
 rust-version = "1.74"
 
 # The reference implementation targets the KISS working-tree drafts as of
@@ -25,6 +27,6 @@ rust-version = "1.74"
 libm = "0.2"
 half = "2"
 
-kiss-classify-vocab = { path = "crates/kiss-classify-vocab", version = "0.0.1" }
-kiss-ops-vocab      = { path = "crates/kiss-ops-vocab", version = "0.0.1" }
-kiss-ref-core       = { path = "crates/kiss-ref-core", version = "0.0.1" }
+kiss-classify-vocab = { path = "crates/kiss-classify-vocab", version = "0.1.0" }
+kiss-ops-vocab      = { path = "crates/kiss-ops-vocab", version = "0.1.0" }
+kiss-ref-core       = { path = "crates/kiss-ref-core", version = "0.1.0" }

@@ -1,6 +1,9 @@
 [package]
 name         = "kiss-ref-core"
 description  = "The KISS base-op reference kernels: the floor atoms + the §6.13/§6.14 recursive-resolution engine. Spec-exact, obvious, slow."
+keywords     = ["kiss", "reference", "tensor", "numerics", "no-std"]
+categories   = ["no-std", "mathematics"]
+readme       = "README.md"
 edition.workspace      = true
 version.workspace      = true
 license.workspace      = true
