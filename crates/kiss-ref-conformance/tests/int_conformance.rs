@@ -3,7 +3,7 @@
 
 use kiss_classify_vocab::Dtype;
 use kiss_ops_vocab::Op;
-use kiss_ref_core::{eval_int_op, tensor_int, Error, Tensor};
+use kiss_ref_core::{eval_int_op, tensor_int, Error, Monoid, Tensor};
 
 fn ev(op: Op, d: Dtype, args: &[i128]) -> i128 {
     eval_int_op(op, d, args).unwrap_or_else(|e| panic!("{op:?}/{d:?} failed: {e:?}"))
@@ -220,4 +220,20 @@ fn test_ops_int_im2col_zero_fill_oob() {
     let y = tensor_int::im2col(&x.view(), &[0], &[2], &[1], &[1], &[1]).unwrap();
     assert_eq!(y.shape(), &[4, 2]);
     assert_eq!(y.as_slice(), &[0, 10, 10, 20, 20, 30, 30, 0]);
+}
+
+#[test]
+fn test_ops_int_packed_subbyte_tensor_lane() {
+    // The PACKED sub-byte dtypes evaluated through the TENSOR fold (tensor_int::reduce),
+    // not just scalar eval_int_op — confirms the width-wrap propagates through the
+    // reduction. KISS-OPS-6.11-0002 Sum monoid + KISS-OPS-6.2-0002 two's-complement wrap.
+    // s4: sum [7,1] = 8 -> wraps to -8 (bit3 set).
+    let s = tensor_int::reduce(&t(&[7, 1], &[2]).view(), Dtype::S4, Monoid::Sum, &[0]).unwrap();
+    assert_eq!(s.as_slice(), &[-8]);
+    // u4: sum [15,1] = 16 -> 16 & 0xF = 0.
+    let u = tensor_int::reduce(&t(&[15, 1], &[2]).view(), Dtype::U4, Monoid::Sum, &[0]).unwrap();
+    assert_eq!(u.as_slice(), &[0]);
+    // b1: sum [1,1] = 2 -> 2 & 1 = 0.
+    let b = tensor_int::reduce(&t(&[1, 1], &[2]).view(), Dtype::B1, Monoid::Sum, &[0]).unwrap();
+    assert_eq!(b.as_slice(), &[0]);
 }

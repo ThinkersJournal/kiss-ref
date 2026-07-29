@@ -1083,3 +1083,197 @@ fn test_recipe_constbits_exact_roundtrip() {
     assert_eq!(via_const & 0x7F80_0000, 0x7F80_0000); // still exp all-ones...
     assert_ne!(via_const & 0x007F_FFFF, 0); // ...a NaN (nonzero mantissa); payload not pinned
 }
+
+// ---- canonical transformer fragments (worked recipe examples) --------------
+// Named, hand-checked goldens for the fragments a decoder forward is built from.
+// A consumer models its own recipe on these rather than inventing the shape — the
+// keepdim-reduce-then-broadcast, the additive -inf mask, and softmax-as-a-sub-DAG
+// are exactly where graph-construction bugs hide. Exact where the arithmetic is
+// dyadic; tolerance (per the root DetClass) where a transcendental or a
+// nondeterministic reduction/matmul is involved. Goldens for the transcendental
+// fragments are DERIVED from the math (std `exp`), not hand-typed literals.
+
+/// R10: RMSNorm `y = x / sqrt(mean(x^2) + eps) * w`. The 11-node shape a fused
+/// RMSNorm kernel is diffed against — KISS-OPS-6.11-0002 keepdim Sum, the
+/// ReducedCount mean idiom, a RuntimeScalar eps, two broadcasts.
+fn r10_dag() -> FlatDag {
+    FlatDag::new(
+        vec![
+            Node::Bind(0), // 0 x [2,4]
+            Node::Apply {
+                op: Op::Mul,
+                children: vec![0, 0],
+            }, // 1 x^2
+            Node::Reduce {
+                monoid: Monoid::Sum,
+                axes: vec![1],
+                keepdim: true,
+                child: 1,
+            }, // 2 sum x^2 [2,1]
+            Node::ReducedCount(vec![1]), // 3 d = 4
+            Node::Apply {
+                op: Op::Div,
+                children: vec![2, 3],
+            }, // 4 mean
+            Node::RuntimeScalar(0), // 5 eps
+            Node::Apply {
+                op: Op::Add,
+                children: vec![4, 5],
+            }, // 6 mean+eps
+            Node::Apply {
+                op: Op::Sqrt,
+                children: vec![6],
+            }, // 7 rms [2,1]
+            Node::Apply {
+                op: Op::Div,
+                children: vec![0, 7],
+            }, // 8 x/rms [2,4] (broadcast [2,1] over [2,4])
+            Node::Bind(1), // 9 w [4]
+            Node::Apply {
+                op: Op::Mul,
+                children: vec![8, 9],
+            }, // 10 * w [2,4] (broadcast [4] over [2,4])
+        ],
+        vec![10],
+    )
+}
+fn r10_inputs() -> Vec<Tensor<f64>> {
+    // row0 all-2 (mean x^2 = 4), row1 = [4,0,0,0] (mean x^2 = 4); eps=12 -> rms=4.
+    vec![
+        t64(&[2.0, 2.0, 2.0, 2.0, 4.0, 0.0, 0.0, 0.0], &[2, 4]),
+        t64(&[1.0, 2.0, 1.0, 2.0], &[4]),
+    ]
+}
+
+#[test]
+fn test_recipe_rmsnorm_rows() {
+    // eps=12 keeps rms exact (sqrt(4+12)=4), so the whole fragment is dyadic-exact;
+    // the root chains through a Sum reduce (OIN) so it is compared with tolerance.
+    let r = eval_recipe(&r10_dag(), &r10_inputs(), &[12.0], &[]).expect("R10 must evaluate");
+    // row0: [2,2,2,2]/4 * [1,2,1,2] = [.5,1,.5,1]; row1: [4,0,0,0]/4 * w = [1,0,0,0].
+    assert_close(
+        &r.outputs[0],
+        &[0.5, 1.0, 0.5, 1.0, 1.0, 0.0, 0.0, 0.0],
+        &[2, 4],
+        1e-12,
+    );
+}
+
+/// R11: SwiGLU MLP `(silu(x·Wg) ⊙ (x·Wu)) · Wd` — two parallel matmuls, a silu
+/// gate, an elementwise product, an output matmul. Golden derived from silu(1).
+fn r11_dag() -> FlatDag {
+    FlatDag::new(
+        vec![
+            Node::Bind(0),                   // 0 x [1,2]
+            Node::Bind(1),                   // 1 Wg [2,2]
+            Node::Matmul { lhs: 0, rhs: 1 }, // 2 x·Wg [1,2]
+            Node::Apply {
+                op: Op::Silu,
+                children: vec![2],
+            }, // 3 silu [1,2]
+            Node::Bind(2),                   // 4 Wu [2,2]
+            Node::Matmul { lhs: 0, rhs: 4 }, // 5 x·Wu [1,2]
+            Node::Apply {
+                op: Op::Mul,
+                children: vec![3, 5],
+            }, // 6 gate ⊙ up [1,2]
+            Node::Bind(3),                   // 7 Wd [2,2]
+            Node::Matmul { lhs: 6, rhs: 7 }, // 8 · Wd [1,2]
+        ],
+        vec![8],
+    )
+}
+fn r11_inputs() -> Vec<Tensor<f64>> {
+    vec![
+        t64(&[1.0, 1.0], &[1, 2]),           // x
+        t64(&[1.0, 0.0, 0.0, 1.0], &[2, 2]), // Wg = I  -> x·Wg = [1,1]
+        t64(&[1.0, 0.0, 0.0, 1.0], &[2, 2]), // Wu = I  -> x·Wu = [1,1]
+        t64(&[1.0, 1.0, 1.0, 1.0], &[2, 2]), // Wd = ones -> sums both lanes
+    ]
+}
+
+#[test]
+fn test_recipe_swiglu_mlp() {
+    let r = eval_recipe(&r11_dag(), &r11_inputs(), &[], &[]).expect("R11 must evaluate");
+    // x·Wg = x·Wu = [1,1]; gate ⊙ up = [silu(1), silu(1)]; ·Wd(ones) sums lanes.
+    let silu1 = 1.0 / (1.0 + (-1.0_f64).exp());
+    assert_close(&r.outputs[0], &[2.0 * silu1, 2.0 * silu1], &[1, 2], 1e-9);
+}
+
+/// R12: single-head CAUSAL scaled-dot-product attention `softmax(Q·Kᵀ·scale +
+/// mask)·V`. Softmax is the R2 sub-DAG (max-shift / exp / sum / div); the causal
+/// mask is the ADDITIVE -inf form (what most kernels use). K is passed
+/// pre-transposed — layout is the consumer's job, kiss-ref gets the logical Kᵀ.
+/// The interesting fragment: mask broadcast, softmax axis, the two matmuls.
+fn r12_dag() -> FlatDag {
+    FlatDag::new(
+        vec![
+            Node::Bind(0),                   // 0 Q [2,2]
+            Node::Bind(1),                   // 1 Kᵀ [2,2]
+            Node::Matmul { lhs: 0, rhs: 1 }, // 2 scores [2,2]
+            Node::RuntimeScalar(0),          // 3 scale = 1/sqrt(d)
+            Node::Apply {
+                op: Op::Mul,
+                children: vec![2, 3],
+            }, // 4 scaled [2,2]
+            Node::Bind(2),                   // 5 causal mask [2,2] (0 / -inf)
+            Node::Apply {
+                op: Op::Add,
+                children: vec![4, 5],
+            }, // 6 masked [2,2]
+            Node::Reduce {
+                monoid: Monoid::Max,
+                axes: vec![1],
+                keepdim: true,
+                child: 6,
+            }, // 7 rowmax [2,1]
+            Node::Apply {
+                op: Op::Sub,
+                children: vec![6, 7],
+            }, // 8 shifted [2,2]
+            Node::Apply {
+                op: Op::Exp,
+                children: vec![8],
+            }, // 9 exp [2,2]
+            Node::Reduce {
+                monoid: Monoid::Sum,
+                axes: vec![1],
+                keepdim: true,
+                child: 9,
+            }, // 10 denom [2,1]
+            Node::Apply {
+                op: Op::Div,
+                children: vec![9, 10],
+            }, // 11 weights [2,2]
+            Node::Bind(3),                   // 12 V [2,2]
+            Node::Matmul { lhs: 11, rhs: 12 }, // 13 out [2,2]
+        ],
+        vec![13],
+    )
+}
+fn r12_inputs() -> Vec<Tensor<f64>> {
+    vec![
+        t64(&[1.0, 0.0, 0.0, 1.0], &[2, 2]),               // Q = I
+        t64(&[1.0, 0.0, 0.0, 1.0], &[2, 2]),               // Kᵀ = I -> scores = I
+        t64(&[0.0, f64::NEG_INFINITY, 0.0, 0.0], &[2, 2]), // causal: (0,1) = -inf
+        t64(&[1.0, 2.0, 3.0, 4.0], &[2, 2]),               // V
+    ]
+}
+
+#[test]
+fn test_recipe_attention_causal_single_head() {
+    let inv_sqrt2 = 1.0 / 2.0_f64.sqrt(); // scale = 1/sqrt(d), d=2
+    let r = eval_recipe(&r12_dag(), &r12_inputs(), &[inv_sqrt2], &[]).expect("R12 must evaluate");
+    // scaled scores = diag(s); mask sends (0,1) -> -inf.
+    // row0: softmax([s, -inf]) = [1, 0] -> out0 = V[0] = [1, 2].
+    // row1: softmax([0, s]) = [e^-s, 1]/(e^-s + 1) -> out1 = w0·V[0] + w1·V[1].
+    let e = (-inv_sqrt2).exp();
+    let w0 = e / (e + 1.0);
+    let w1 = 1.0 / (e + 1.0);
+    assert_close(
+        &r.outputs[0],
+        &[1.0, 2.0, w0 * 1.0 + w1 * 3.0, w0 * 2.0 + w1 * 4.0],
+        &[2, 2],
+        1e-9,
+    );
+}

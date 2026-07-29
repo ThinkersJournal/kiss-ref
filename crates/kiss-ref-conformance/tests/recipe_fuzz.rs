@@ -1491,7 +1491,16 @@ fn gen_chaos_index(rng: &mut Rng) -> IndexTensor {
 fn chaos_node(rng: &mut Rng, n: usize) -> Node {
     match rng.below(12) {
         0 => Node::Bind(wild_usize(rng, n)),
-        1 => Node::Const(chaos_const(rng)),
+        1 => {
+            // Split the const leaf: sometimes the bit-exact ConstBits carrying a
+            // chaos bit pattern (NaN payloads / inf / subnormals reinterpreted at
+            // each lane's width), so its never-panic path is fuzzed too.
+            if rng.chance(3) {
+                Node::ConstBits(chaos_const(rng).to_bits())
+            } else {
+                Node::Const(chaos_const(rng))
+            }
+        }
         2 => Node::RuntimeScalar(wild_usize(rng, n)),
         3 => Node::ReducedCount((0..rng.below(6)).map(|_| wild_usize(rng, n)).collect()),
         4 => {

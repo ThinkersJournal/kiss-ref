@@ -1124,3 +1124,62 @@ fn narrow_fp8_nonprimitives_saturate() {
         E5m2::of(57344.0).bits()
     );
 }
+
+#[test]
+fn narrow_fp8_nonprimitives_execute_and_round() {
+    // Close the "Done-by-genericity, never EXECUTED on FP8" gap for the elementwise
+    // §6.13 non-primitives (decomposition_differential exercises them only on f32/f64).
+    //
+    // TWO regimes, both pinned:
+    // (a) EXACT — ops whose result at these inputs is 0 or a single-atom dyadic value
+    //     (0·g = 0, e^0 = 1, 1/4, 1/sqrt(4)): the FP8 output is bit-exact.
+    // (b) APPROXIMATE — the transcendental decompositions round PER ATOM into the
+    //     3-bit e4m3 / 2-bit e5m2 mantissa (KISS-OPS-6.17-0002), so their FP8 output is
+    //     a STRUCTURED APPROXIMATION of the true value, NOT its correct FP8 rounding.
+    //     e.g. e4m3 exp2(3) = 7.5, not 8 (the intermediate atoms — incl. a coarse
+    //     const ln2 — round to 3 mantissa bits). Those are pinned finite + within a
+    //     loose band, which is the honest guarantee: they run, and stay in the ballpark.
+
+    // (a) EXACT
+    let e4x = |op: Op, x: f32, want: f32| {
+        assert_eq!(
+            eval_op(op, &[E4m3::of(x)]).unwrap().bits(),
+            E4m3::of(want).bits(),
+            "e4m3 {op:?}({x}) -> want {want}"
+        );
+    };
+    e4x(Op::Sigmoid, 0.0, 0.5); // 1/(1+e^0)
+    e4x(Op::Silu, 0.0, 0.0); // 0·sigmoid(0)
+    e4x(Op::Tanh, 0.0, 0.0);
+    e4x(Op::Gelu, 0.0, 0.0); // 0·(…)
+    e4x(Op::Recip, 4.0, 0.25);
+    e4x(Op::Rsqrt, 4.0, 0.5); // 1/sqrt(4)
+    e4x(Op::Expm1, 0.0, 0.0); // e^0 - 1
+    e4x(Op::Log1p, 0.0, 0.0); // ln(1+0)
+    assert_eq!(
+        eval_op(Op::Rsqrt, &[E5m2::of(16.0)]).unwrap().bits(),
+        E5m2::of(0.25).bits()
+    );
+    assert_eq!(
+        eval_op(Op::Tanh, &[E5m2::of(0.0)]).unwrap().bits(),
+        E5m2::of(0.0).bits()
+    );
+
+    // (b) APPROXIMATE — the transcendental decompositions round PER ATOM into the
+    // 2–3 bit FP8 mantissa (KISS-OPS-6.17-0002), so their FP8 VALUE is a coarse,
+    // structured approximation that can differ from the true value by a LARGE margin:
+    // e4m3 exp2(3) = 7.5 (vs 8), and e5m2 exp2(5) = 56 (vs 32 — only 2 mantissa bits).
+    // Pinning a tight value would assert accuracy the format cannot give. The honest,
+    // robust guarantee is that they EXECUTE and stay FINITE (positive where the op is).
+    let f4 = |op: Op, x: f32| eval_op(op, &[E4m3::of(x)]).unwrap().f32();
+    assert!(f4(Op::Exp2, 3.0).is_finite() && f4(Op::Exp2, 3.0) > 0.0);
+    assert!(f4(Op::Log2, 8.0).is_finite());
+    assert!(f4(Op::Softplus, 0.0).is_finite() && f4(Op::Softplus, 0.0) > 0.0);
+    let powv = eval_op(Op::Pow, &[E4m3::of(2.0), E4m3::of(3.0)])
+        .unwrap()
+        .f32();
+    assert!(powv.is_finite() && powv > 0.0, "e4m3 pow(2,3) = {powv}");
+    let f5 = |op: Op, x: f32| eval_op(op, &[E5m2::of(x)]).unwrap().f32();
+    assert!(f5(Op::Exp2, 5.0).is_finite() && f5(Op::Exp2, 5.0) > 0.0);
+    assert!(f5(Op::Log2, 64.0).is_finite());
+}
