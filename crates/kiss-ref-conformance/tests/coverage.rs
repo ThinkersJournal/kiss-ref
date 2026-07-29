@@ -208,7 +208,8 @@ fn coverage_bool_truth_cells_done() {
     assert_eq!(support(Op::ReduceMean, Dtype::Bool), Support::NotApplicable);
     assert_eq!(support(Op::ScatterAdd, Dtype::Bool), Support::NotApplicable); // sum escapes {0,1}
     assert_eq!(support(Op::CmpLt, Dtype::Bool), Support::NotApplicable); // ordered cmp declined
-                                                                         // im2col is bool-LEGAL (data movement) but has no integer/bool kernel yet, so
-                                                                         // it is Pending — not over-claimed as Done (adversarial review).
-    assert_eq!(support(Op::Im2col, Dtype::Bool), Support::Pending);
+                                                                         // im2col is bool-LEGAL (pure {0,1}-preserving data movement, OOB → 0) and
+                                                                         // is now backed by the shared integer tensor_int::im2col kernel that the
+                                                                         // bool lane reuses over {0,1}, so it genuinely evaluates → Done.
+    assert_eq!(support(Op::Im2col, Dtype::Bool), Support::Done);
 }

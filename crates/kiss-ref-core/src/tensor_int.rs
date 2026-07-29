@@ -5,9 +5,12 @@
 //! Reuses the dtype-agnostic tensor machinery (`Tensor<i128>`/`View<i128>`/
 //! `Odometer`/`IndexTensor`); the difference from the float lane is that combines
 //! go through [`eval_int_op`] with an explicit `dtype` (for two's-complement
-//! wrapping) rather than `eval_op`, and there is no NaN. Ops whose decomposition
-//! needs `div`/`sqrt`/`exp` (`reduce_mean`/`reduce_var`/`softmax`/norms/`matmul`)
-//! are float-only and are **not** in this lane.
+//! wrapping) rather than `eval_op`, and there is no NaN. `matmul` (multiply-add
+//! only), `max_pool` (integer compare/max only) and `im2col` (pure data movement)
+//! ARE in this lane. Only the ops that genuinely need `div`/`sqrt`/`exp` stay
+//! float-only: `avg_pool` (divides by the window count) and the
+//! `reduce_mean`/`reduce_var`/`reduce_std`/`reduce_norm2`/`logsumexp`/`softmax`/
+//! `log_softmax`/`rms_norm`/`layer_norm` family — they are **not** in this lane.
 //!
 //! Never panics; every access checked; a bad shape/index is a typed [`Error`].
 
@@ -23,9 +26,10 @@ use crate::attrs::{Combine, Direction, Monoid, OobPolicy};
 use crate::bridge::monoid_op;
 use crate::scalar_int::{eval_int_expr, eval_int_op, int_spec};
 use crate::tensor::{
-    alloc_exact, numel, row_major_index, IndexTensor, Odometer, Tensor, View, MAX_OPERANDS,
-    MAX_RANK,
+    alloc_exact, broadcast_shapes, numel, row_major_index, IndexTensor, Odometer, Tensor, View,
+    MAX_OPERANDS, MAX_RANK,
 };
+use crate::window::{tap_pos, window_out_shape};
 use crate::Error;
 
 /// The identity element of `monoid` in integer `dtype` (§6.11-0002): sum=0,
@@ -52,10 +56,13 @@ fn int_identity(m: Monoid, dtype: Dtype) -> Result<i128, Error> {
     })
 }
 
-/// Whether the integer tensor lane evaluates `op` (over integer dtypes). The
-/// float-only ops (`reduce_mean`/`reduce_var`/`reduce_std`/`reduce_norm2`/
-/// `softmax`/`log_softmax`/`rms_norm`/`layer_norm`/`matmul`/`logsumexp`/window)
-/// are excluded — their decompositions need `div`/`sqrt`/`exp`.
+/// Whether the integer tensor lane evaluates `op` (over integer dtypes). Includes
+/// the structural atoms, `argmax`/`any`/`all`/`cum*`, and the integer-closed
+/// heavyweights `matmul` (multiply-add), `max_pool` (compare/max) and `im2col`
+/// (data movement). The excluded ops genuinely need `div`/`sqrt`/`exp`:
+/// `avg_pool` (window-count division) and the
+/// `reduce_mean`/`reduce_var`/`reduce_std`/`reduce_norm2`/`softmax`/`log_softmax`/
+/// `rms_norm`/`layer_norm`/`logsumexp` family.
 pub fn int_tensor_supported(op: Op) -> bool {
     matches!(
         op,
@@ -74,6 +81,9 @@ pub fn int_tensor_supported(op: Op) -> bool {
             | Op::IndexSelect
             | Op::Embedding
             | Op::ScatterAdd
+            | Op::Matmul
+            | Op::MaxPool
+            | Op::Im2col
     )
 }
 
@@ -513,6 +523,213 @@ pub fn cummax(x: &View<i128>, dtype: Dtype, axis: usize) -> Result<Tensor<i128>,
     prefix_scan(x, dtype, Monoid::Max, axis, false)
 }
 
+// ---- contraction + window family (integer lane) ------------------------------
+
+/// **matmul** (integer lane) — §6.13: `reduce(sum, axis=K) of
+/// element_map(mul(input(0), input(1)))`, batched exactly like the float
+/// [`tensor_ops::matmul`](crate::tensor_ops::matmul): `[..batch, M, K] ·
+/// [..batch, K, N] → [..batch, M, N]`, leading batch dims broadcast numpy-style.
+/// Every multiply and add goes through [`eval_int_op`] with the tensor `dtype`
+/// (two's-complement wrap per atom, §6.2-0002 — the exact analogue of the float
+/// lane's per-atom rounding); there is NO wide accumulator that escapes the
+/// dtype. Integer add is associative, so — unlike the float lane — the ascending-K
+/// contraction is fully deterministic (no §6.0-0004 order caveat).
+pub fn matmul(a: &View<i128>, b: &View<i128>, dtype: Dtype) -> Result<Tensor<i128>, Error> {
+    let ash = a.shape();
+    let bsh = b.shape();
+    if ash.len() < 2 || bsh.len() < 2 {
+        return Err(Error::ShapeMismatch {
+            expected: 2,
+            got: ash.len().min(bsh.len()),
+        });
+    }
+    let (ar, br) = (ash.len(), bsh.len());
+    let (m, k) = (ash[ar - 2], ash[ar - 1]);
+    let (k2, n) = (bsh[br - 2], bsh[br - 1]);
+    if k != k2 {
+        return Err(Error::ShapeMismatch {
+            expected: k,
+            got: k2,
+        });
+    }
+    // Broadcast the batch dims (everything but the trailing two).
+    let (batch_buf, batch_rank) = broadcast_shapes(&[&ash[..ar - 2], &bsh[..br - 2]])?;
+    let batch = &batch_buf[..batch_rank];
+    let out_rank = batch_rank + 2;
+    if out_rank > MAX_RANK {
+        return Err(Error::RankExceeded {
+            rank: out_rank,
+            max: MAX_RANK,
+        });
+    }
+    // Full (broadcast) operand shapes: `batch ++ [m,k]` and `batch ++ [k,n]`.
+    let mut a_full = [1usize; MAX_RANK];
+    let mut b_full = [1usize; MAX_RANK];
+    a_full[..batch_rank].copy_from_slice(batch);
+    b_full[..batch_rank].copy_from_slice(batch);
+    a_full[batch_rank] = m;
+    a_full[batch_rank + 1] = k;
+    b_full[batch_rank] = k;
+    b_full[batch_rank + 1] = n;
+    let av = a.broadcast_to(&a_full[..out_rank])?;
+    let bv = b.broadcast_to(&b_full[..out_rank])?;
+
+    let mut out_shape = [1usize; MAX_RANK];
+    out_shape[..batch_rank].copy_from_slice(batch);
+    out_shape[batch_rank] = m;
+    out_shape[batch_rank + 1] = n;
+    let out_shape = &out_shape[..out_rank];
+
+    let count = numel(out_shape)?;
+    let mut data: Vec<i128> = alloc_exact(count)?;
+    let mut acoord = [0usize; MAX_RANK];
+    let mut bcoord = [0usize; MAX_RANK];
+    let mut od = Odometer::new(out_shape)?;
+    while let Some(oc) = od.next_coord() {
+        // oc = batch(batch_rank) ++ [i, j]
+        acoord[..batch_rank].copy_from_slice(&oc[..batch_rank]);
+        bcoord[..batch_rank].copy_from_slice(&oc[..batch_rank]);
+        acoord[batch_rank] = oc[batch_rank]; // a's M index = i
+        bcoord[batch_rank + 1] = oc[batch_rank + 1]; // b's N index = j
+        let mut acc: i128 = 0; // sum identity, §6.11-0002
+        for p in 0..k {
+            acoord[batch_rank + 1] = p; // a's K index
+            bcoord[batch_rank] = p; // b's K index
+            let prod = eval_int_op(
+                Op::Mul,
+                dtype,
+                &[av.read(&acoord[..out_rank])?, bv.read(&bcoord[..out_rank])?],
+            )?;
+            acc = eval_int_op(Op::Add, dtype, &[acc, prod])?;
+        }
+        data.push(acc);
+    }
+    Tensor::from_vec(data, out_shape)
+}
+
+/// **max_pool** (integer lane) — §6.13 `reduce(max)` over the window; OOB taps
+/// skipped. A wholly-out-of-bounds window yields the max monoid identity in
+/// `dtype` (the dtype minimum, via [`int_identity`]), NOT `−inf`. Combines via
+/// [`eval_int_op`]`(Op::MaxProp, …)`, which on integers is `args[0] >= args[1] ?
+/// args[0] : args[1]` (`scalar_int.rs`): there is no NaN to propagate/suppress and
+/// no `−0.0`/`+0.0` ordering, so the IEEE `fmax`/`max` distinction that motivates
+/// `MaxProp` on floats vanishes — it degenerates to plain integer max.
+#[allow(clippy::too_many_arguments)]
+pub fn max_pool(
+    x: &View<i128>,
+    axes: &[usize],
+    kernel: &[usize],
+    stride: &[usize],
+    padding: &[usize],
+    dilation: &[usize],
+    dtype: Dtype,
+) -> Result<Tensor<i128>, Error> {
+    let in_shape = x.shape();
+    let rank = in_shape.len();
+    let (out_shape_buf, _) = window_out_shape(in_shape, axes, kernel, stride, padding, dilation)?;
+    let out_shape = &out_shape_buf[..rank];
+
+    let count = numel(out_shape)?;
+    let mut data: Vec<i128> = alloc_exact(count)?;
+    let ident = int_identity(Monoid::Max, dtype)?;
+    let mut src = [0usize; MAX_RANK];
+    let mut od = Odometer::new(out_shape)?;
+    while let Some(oc) = od.next_coord() {
+        let mut acc = ident;
+        let mut tod = Odometer::new(kernel)?;
+        while let Some(tap) = tod.next_coord() {
+            src[..rank].copy_from_slice(oc);
+            let mut in_bounds = true;
+            for (i, &ax) in axes.iter().enumerate() {
+                match tap_pos(
+                    oc[ax],
+                    tap[i],
+                    stride[i],
+                    dilation[i],
+                    padding[i],
+                    in_shape[ax],
+                ) {
+                    Some(p) => src[ax] = p,
+                    None => {
+                        in_bounds = false;
+                        break;
+                    }
+                }
+            }
+            if in_bounds {
+                acc = eval_int_op(Op::MaxProp, dtype, &[acc, x.read(&src[..rank])?])?;
+            }
+        }
+        data.push(acc);
+    }
+    Tensor::from_vec(data, out_shape)
+}
+
+/// **im2col** (integer lane) — §6.13 closed-form zero-filled gather; a verbatim
+/// mirror of the float [`window::im2col`](crate::window::im2col) with the fill
+/// value `T::ZERO → 0i128`. Output shape = the pooled output-spatial shape (the
+/// "patch" axes) with the window (tap) axes appended; OOB taps are zero-filled.
+/// Pure data movement — no arithmetic, so trivially integer-closed and exact
+/// (no `dtype` needed).
+pub fn im2col(
+    x: &View<i128>,
+    axes: &[usize],
+    kernel: &[usize],
+    stride: &[usize],
+    padding: &[usize],
+    dilation: &[usize],
+) -> Result<Tensor<i128>, Error> {
+    let in_shape = x.shape();
+    let rank = in_shape.len();
+    let n = axes.len();
+    let (patch_shape_buf, _) = window_out_shape(in_shape, axes, kernel, stride, padding, dilation)?;
+    let patch_shape = &patch_shape_buf[..rank];
+
+    let out_rank = rank + n;
+    if out_rank > MAX_RANK {
+        return Err(Error::RankExceeded {
+            rank: out_rank,
+            max: MAX_RANK,
+        });
+    }
+    let mut out_shape = [1usize; MAX_RANK];
+    out_shape[..rank].copy_from_slice(patch_shape);
+    out_shape[rank..out_rank].copy_from_slice(&kernel[..n]);
+    let out_shape = &out_shape[..out_rank];
+
+    let count = numel(out_shape)?;
+    let mut data: Vec<i128> = alloc_exact(count)?;
+    let mut src = [0usize; MAX_RANK];
+    let mut od = Odometer::new(out_shape)?;
+    while let Some(oc) = od.next_coord() {
+        // oc = patch coord (first `rank`) ++ tap coord (last `n`)
+        src[..rank].copy_from_slice(&oc[..rank]);
+        let mut in_bounds = true;
+        for (i, &ax) in axes.iter().enumerate() {
+            match tap_pos(
+                oc[ax],
+                oc[rank + i],
+                stride[i],
+                dilation[i],
+                padding[i],
+                in_shape[ax],
+            ) {
+                Some(p) => src[ax] = p,
+                None => {
+                    in_bounds = false;
+                    break;
+                }
+            }
+        }
+        data.push(if in_bounds {
+            x.read(&src[..rank])?
+        } else {
+            0i128
+        });
+    }
+    Tensor::from_vec(data, out_shape)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -590,5 +807,49 @@ mod tests {
         let body = kiss_ops_vocab::decomp::parse("add(input(0), input(1))").unwrap();
         let r = element_map(&body, &[a.view(), b.view()], Dtype::U8, &[1]).unwrap();
         assert_eq!(r.as_slice(), &[44]);
+    }
+
+    #[test]
+    fn int_matmul_basic_and_wraps() {
+        // [[1,2],[3,4]] · [[5,6],[7,8]] = [[19,22],[43,50]] — no wrap in i32.
+        let a = t(&[1, 2, 3, 4], &[2, 2]);
+        let b = t(&[5, 6, 7, 8], &[2, 2]);
+        let r = matmul(&a.view(), &b.view(), Dtype::I32).unwrap();
+        assert_eq!(r.shape(), &[2, 2]);
+        assert_eq!(r.as_slice(), &[19, 22, 43, 50]);
+
+        // s8 accumulator wrap: [100,100]·[1;1] = 200 → wraps to -56 (two's-
+        // complement per §6.2-0002); the wrap happens IN the s8 dtype, no wide
+        // accumulator escapes it (100+100=200 → -56).
+        let av = t(&[100, 100], &[1, 2]);
+        let bv = t(&[1, 1], &[2, 1]);
+        let rw = matmul(&av.view(), &bv.view(), Dtype::S8).unwrap();
+        assert_eq!(rw.shape(), &[1, 1]);
+        assert_eq!(rw.as_slice(), &[-56]);
+    }
+
+    #[test]
+    fn int_max_pool_window_and_ident() {
+        // [1,3,2,5], kernel 2 stride 1 → [max(1,3),max(3,2),max(2,5)] = [3,3,5]
+        let x = t(&[1, 3, 2, 5], &[4]);
+        let y = max_pool(&x.view(), &[0], &[2], &[1], &[0], &[1], Dtype::S8).unwrap();
+        assert_eq!(y.as_slice(), &[3, 3, 5]);
+
+        // A wholly-padded window yields the max identity = the S8 minimum (-128),
+        // not -inf: input extent 1, kernel 2 stride 1 pad 2 → the first output
+        // window's taps land at positions -2,-1 (both OOB) → identity.
+        let z = t(&[7], &[1]);
+        let yz = max_pool(&z.view(), &[0], &[2], &[1], &[2], &[1], Dtype::S8).unwrap();
+        assert_eq!(yz.as_slice()[0], -128);
+    }
+
+    #[test]
+    fn int_im2col_patch_zero_fill_oob() {
+        // [10,20,30], kernel 2 stride 1 pad 1 → patches 4, taps 2.
+        // patch0=[0,10]; patch1=[10,20]; patch2=[20,30]; patch3=[30,0]
+        let x = t(&[10, 20, 30], &[3]);
+        let y = im2col(&x.view(), &[0], &[2], &[1], &[1], &[1]).unwrap();
+        assert_eq!(y.shape(), &[4, 2]);
+        assert_eq!(y.as_slice(), &[0, 10, 10, 20, 20, 30, 30, 0]);
     }
 }

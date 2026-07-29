@@ -107,6 +107,9 @@ pub fn int_supported(op: Op) -> bool {
         // integer-valued non-primitives
         | Op::Sign | Op::MaxProp | Op::MinProp
         | Op::LogicalAnd | Op::LogicalOr | Op::LogicalNot
+        // §6.13 non-primitive activations / minmax over integers (no NaN, no
+        // signed zero — the IEEE/NaN guards in their decompositions are inert)
+        | Op::Sqr | Op::Step | Op::Relu | Op::FmaxIeee | Op::FminIeee
     )
 }
 
@@ -257,6 +260,36 @@ pub fn eval_int_op(op: Op, dtype: Dtype, args: &[i128]) -> Result<i128, Error> {
             arity(op, args, 2)?;
             Ok(if args[0] <= args[1] { args[0] } else { args[1] })
         }
+        // §6.13: sqr(x) = mul(x, x). Same two's-complement wrap as Mul
+        // (§6.2-0002); wrapping_mul keeps the low bits at i128 width — a u64
+        // square exceeds i128, so a plain `*` would overflow.
+        Op::Sqr => {
+            arity(op, args, 1)?;
+            Ok(w(args[0].wrapping_mul(args[0])))
+        }
+        // §6.13: step = select(cmp_gt(x, const(0)), const(1), const(0)).
+        // Strict threshold at 0 (step(0) = 0); output +1/0 fits every width.
+        Op::Step => {
+            arity(op, args, 1)?;
+            Ok(b(args[0] > 0))
+        }
+        // §6.13: relu = select(cmp_lt(x, const(0)), const(0), x) = max(x, 0).
+        // On unsigned dtypes x < 0 is impossible, so relu is the identity.
+        Op::Relu => {
+            arity(op, args, 1)?;
+            Ok(if args[0] < 0 { 0 } else { args[0] })
+        }
+        // §6.13 IEEE max/min. With no NaN to propagate/suppress and no ±0.0
+        // to order, the _ieee distinction vanishes: both degenerate to plain
+        // integer max/min — identical to the MaxProp/MinProp arms above.
+        Op::FmaxIeee => {
+            arity(op, args, 2)?;
+            Ok(if args[0] >= args[1] { args[0] } else { args[1] })
+        }
+        Op::FminIeee => {
+            arity(op, args, 2)?;
+            Ok(if args[0] <= args[1] { args[0] } else { args[1] })
+        }
         Op::LogicalAnd => {
             arity(op, args, 2)?;
             Ok(b(args[0] != 0 && args[1] != 0))
@@ -337,5 +370,60 @@ mod tests {
         assert_eq!(eval_int_op(Op::Sign, Dtype::S8, &[0]).unwrap(), 0);
         assert_eq!(eval_int_op(Op::LogicalAnd, Dtype::U8, &[5, 0]).unwrap(), 0);
         assert_eq!(eval_int_op(Op::LogicalNot, Dtype::U8, &[0]).unwrap(), 1);
+    }
+
+    #[test]
+    fn int_sqr_wraps_like_mul() {
+        // §6.13: sqr(x) = mul(x, x), wrapped to width (§6.2-0002).
+        assert_eq!(eval_int_op(Op::Sqr, Dtype::S8, &[5]).unwrap(), 25);
+        assert_eq!(eval_int_op(Op::Sqr, Dtype::S8, &[-5]).unwrap(), 25);
+        // 16^2 = 256 overflows s8; low 8 bits are 0.
+        assert_eq!(eval_int_op(Op::Sqr, Dtype::S8, &[16]).unwrap(), 0);
+        // s8: 12^2 = 144 = 0b1001_0000 → sign-extends to -112.
+        assert_eq!(eval_int_op(Op::Sqr, Dtype::S8, &[12]).unwrap(), -112);
+        // u8: 12^2 = 144 fits the pattern, unsigned.
+        assert_eq!(eval_int_op(Op::Sqr, Dtype::U8, &[12]).unwrap(), 144);
+        // u64::MAX^2 exceeds i128 — must use wrapping_mul, not `*`. Low 64
+        // bits of (2^64-1)^2 = 2^128 - 2^65 + 1 are 1.
+        assert_eq!(
+            eval_int_op(Op::Sqr, Dtype::U64, &[u64::MAX as i128]).unwrap(),
+            1
+        );
+    }
+
+    #[test]
+    fn int_step_strict_threshold_at_zero() {
+        // Strict `> 0`: step(0) = 0, step(neg) = 0, step(pos) = 1.
+        assert_eq!(eval_int_op(Op::Step, Dtype::S8, &[0]).unwrap(), 0);
+        assert_eq!(eval_int_op(Op::Step, Dtype::S8, &[-1]).unwrap(), 0);
+        assert_eq!(eval_int_op(Op::Step, Dtype::S8, &[7]).unwrap(), 1);
+        // fits the 1-bit b1 lane.
+        assert_eq!(eval_int_op(Op::Step, Dtype::B1, &[1]).unwrap(), 1);
+    }
+
+    #[test]
+    fn int_relu_clamps_negatives() {
+        // signed: max(x, 0).
+        assert_eq!(eval_int_op(Op::Relu, Dtype::S8, &[-5]).unwrap(), 0);
+        assert_eq!(eval_int_op(Op::Relu, Dtype::S8, &[5]).unwrap(), 5);
+        assert_eq!(eval_int_op(Op::Relu, Dtype::S8, &[0]).unwrap(), 0);
+        // unsigned: the `< 0` branch is dead → identity.
+        assert_eq!(eval_int_op(Op::Relu, Dtype::U8, &[200]).unwrap(), 200);
+    }
+
+    #[test]
+    fn int_fmax_fmin_are_plain_minmax() {
+        // No NaN, no signed zero → _ieee degenerates to plain max/min, and
+        // matches MaxProp/MinProp byte-for-byte.
+        assert_eq!(eval_int_op(Op::FmaxIeee, Dtype::S8, &[-3, 7]).unwrap(), 7);
+        assert_eq!(eval_int_op(Op::FminIeee, Dtype::S8, &[-3, 7]).unwrap(), -3);
+        assert_eq!(
+            eval_int_op(Op::FmaxIeee, Dtype::S8, &[-3, 7]).unwrap(),
+            eval_int_op(Op::MaxProp, Dtype::S8, &[-3, 7]).unwrap()
+        );
+        assert_eq!(
+            eval_int_op(Op::FminIeee, Dtype::S8, &[-3, 7]).unwrap(),
+            eval_int_op(Op::MinProp, Dtype::S8, &[-3, 7]).unwrap()
+        );
     }
 }

@@ -30,10 +30,11 @@ pub fn norm(v: i128) -> i128 {
 /// Whether the bool lane **evaluates** `op` — the ops with an actual reference
 /// path: the scalar truth ops ([`bool_scalar_supported`]) plus the tensor ops that
 /// are both bool-legal *and* backed by an integer tensor kernel (reused over
-/// `{0,1}` values). This is a **subset** of [`crate::legality`] for `bool`:
-/// `im2col` is bool-*legal* (pure data movement) but has no integer/bool kernel in
-/// this seed (only the float `window::im2col`), so `(im2col, bool)` stays
-/// `Pending`, not over-claimed as `Done`.
+/// `{0,1}` values). This is a **subset** of [`crate::legality`] for `bool`: a
+/// bool-*legal* op with no backing integer kernel in this seed stays `Pending`,
+/// not over-claimed as `Done`. `im2col` (pure `{0,1}`-preserving data movement,
+/// OOB → `0`) IS backed by [`crate::tensor_int::im2col`], so `(im2col, bool)` is
+/// `Done` via that shared integer kernel.
 pub fn bool_supported(op: Op) -> bool {
     bool_scalar_supported(op) || (bool_legal(op) && crate::tensor_int::int_tensor_supported(op))
 }

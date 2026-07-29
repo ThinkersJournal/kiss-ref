@@ -3,10 +3,14 @@
 
 use kiss_classify_vocab::Dtype;
 use kiss_ops_vocab::Op;
-use kiss_ref_core::{eval_int_op, Error};
+use kiss_ref_core::{eval_int_op, tensor_int, Error, Tensor};
 
 fn ev(op: Op, d: Dtype, args: &[i128]) -> i128 {
     eval_int_op(op, d, args).unwrap_or_else(|e| panic!("{op:?}/{d:?} failed: {e:?}"))
+}
+
+fn t(data: &[i128], shape: &[usize]) -> Tensor<i128> {
+    Tensor::from_vec(data.to_vec(), shape).unwrap_or_else(|e| panic!("tensor {shape:?}: {e:?}"))
 }
 
 #[test]
@@ -48,4 +52,134 @@ fn test_ops_u32_ordinary_dtype() {
     // KISS-OPS-6.2-0007: u32 is an ordinary unsigned integer dtype.
     assert_eq!(ev(Op::Add, Dtype::U32, &[u32::MAX as i128, 1]), 0);
     assert_eq!(ev(Op::CmpGt, Dtype::U32, &[5, 3]), 1);
+}
+
+// ---- §6.13 non-primitive activations / minmax on the integer lane -----------
+// The reference decompositions (`decomp.rs`) for these ops are float-shaped —
+// they carry NaN guards (`cmp_ne(a,a)`) and select on a strict/loose threshold —
+// but over integers there is NO NaN and NO ±0.0, so those guards are inert and
+// the ops degenerate to their pure integer forms. Goldens are hand-computed from
+// the decomposition string, wrapped two's-complement per KISS-OPS-6.2-0002.
+
+#[test]
+fn test_ops_int_sqr_wraps() {
+    // KISS-OPS-6.13: sqr(x) = "mul(x, x)"; the product wraps to width exactly
+    // like Op::Mul (KISS-OPS-6.2-0002) — there is NO wide accumulator.
+    assert_eq!(ev(Op::Sqr, Dtype::S8, &[5]), 25);
+    assert_eq!(ev(Op::Sqr, Dtype::S8, &[-5]), 25); // (-5)^2 = 25
+    assert_eq!(ev(Op::Sqr, Dtype::S8, &[16]), 0); // 256 ≡ 0 (mod 256)
+    assert_eq!(ev(Op::Sqr, Dtype::S8, &[12]), -112); // 144 = 0b1001_0000 → sign-ext
+    assert_eq!(ev(Op::Sqr, Dtype::U8, &[12]), 144); // fits the unsigned pattern
+    assert_eq!(ev(Op::Sqr, Dtype::U8, &[20]), 144); // 400 ≡ 144 (mod 256)
+                                                    // (2^64-1)^2 exceeds i128 — must use wrapping_mul; low 64 bits are 1.
+    assert_eq!(ev(Op::Sqr, Dtype::U64, &[u64::MAX as i128]), 1);
+}
+
+#[test]
+fn test_ops_int_step_strict_threshold() {
+    // KISS-OPS-6.13: step(x) = "select(cmp_gt(x, const(0)), const(1), const(0))"
+    // — strict threshold at 0, so step(0) = 0. Output {0,1} fits every width.
+    assert_eq!(ev(Op::Step, Dtype::S8, &[7]), 1);
+    assert_eq!(ev(Op::Step, Dtype::S8, &[0]), 0); // strict: not > 0
+    assert_eq!(ev(Op::Step, Dtype::S8, &[-1]), 0);
+    assert_eq!(ev(Op::Step, Dtype::U8, &[200]), 1);
+    assert_eq!(ev(Op::Step, Dtype::U8, &[0]), 0);
+    assert_eq!(ev(Op::Step, Dtype::B1, &[1]), 1); // fits the 1-bit lane
+}
+
+#[test]
+fn test_ops_int_relu_clamps_at_zero() {
+    // KISS-OPS-6.13: relu(x) = "select(cmp_lt(x, const(0)), const(0), x)" = max(x,0).
+    assert_eq!(ev(Op::Relu, Dtype::S8, &[-5]), 0);
+    assert_eq!(ev(Op::Relu, Dtype::S8, &[5]), 5);
+    assert_eq!(ev(Op::Relu, Dtype::S8, &[0]), 0);
+    assert_eq!(ev(Op::Relu, Dtype::S8, &[-128]), 0); // INT_MIN clamps to 0
+                                                     // On an unsigned dtype `x < 0` is impossible → relu is the identity.
+    assert_eq!(ev(Op::Relu, Dtype::U8, &[200]), 200);
+}
+
+#[test]
+fn test_ops_int_fmax_fmin_degenerate_to_minmax() {
+    // KISS-OPS-6.13: fmax_ieee/fmin_ieee carry NaN-propagation guards
+    // (`cmp_ne(a,a)`) in their decompositions. On integers there is no NaN and no
+    // ±0.0 ordering, so those guards are inert and the ops are plain integer
+    // max/min — byte-identical to max_prop/min_prop.
+    assert_eq!(ev(Op::FmaxIeee, Dtype::S8, &[-3, 7]), 7);
+    assert_eq!(ev(Op::FminIeee, Dtype::S8, &[-3, 7]), -3);
+    assert_eq!(ev(Op::FmaxIeee, Dtype::U8, &[200, 100]), 200);
+    assert_eq!(ev(Op::FminIeee, Dtype::U8, &[200, 100]), 100);
+    // parity with the ordered min/max props on the same inputs.
+    assert_eq!(
+        ev(Op::FmaxIeee, Dtype::S8, &[-3, 7]),
+        ev(Op::MaxProp, Dtype::S8, &[-3, 7])
+    );
+    assert_eq!(
+        ev(Op::FminIeee, Dtype::S8, &[-3, 7]),
+        ev(Op::MinProp, Dtype::S8, &[-3, 7])
+    );
+}
+
+// ---- integer tensor lane: matmul / max_pool / im2col ------------------------
+
+#[test]
+fn test_ops_int_matmul_wraps_per_atom() {
+    // KISS-OPS-6.13: matmul = reduce(sum, axis=K) of element_map(mul(a, b)); the
+    // sum identity is 0 (KISS-OPS-6.11-0002). Every multiply and add wraps IN the
+    // dtype (KISS-OPS-6.2-0002) — no wide accumulator escapes it.
+    // [[1,2],[3,4]] · [[5,6],[7,8]] = [[19,22],[43,50]] (no wrap in i32).
+    let a = t(&[1, 2, 3, 4], &[2, 2]);
+    let b = t(&[5, 6, 7, 8], &[2, 2]);
+    let r = tensor_int::matmul(&a.view(), &b.view(), Dtype::I32).unwrap();
+    assert_eq!(r.shape(), &[2, 2]);
+    assert_eq!(r.as_slice(), &[19, 22, 43, 50]);
+
+    // s8 1×1 · 1×1: the single product 100*100 = 10000 wraps IN s8 to 16
+    // (10000 mod 256 = 16) — proof the *multiply* itself is at dtype width, not a
+    // wide i128 accumulator (which would keep 10000).
+    let rp = tensor_int::matmul(
+        &t(&[100], &[1, 1]).view(),
+        &t(&[100], &[1, 1]).view(),
+        Dtype::S8,
+    )
+    .unwrap();
+    assert_eq!(rp.as_slice(), &[16]);
+
+    // u8 accumulator wrap: [200,200] · [1;1] = 400 ≡ 144 (mod 256); the wrap is
+    // in the running sum, not saturation.
+    let ru = tensor_int::matmul(
+        &t(&[200, 200], &[1, 2]).view(),
+        &t(&[1, 1], &[2, 1]).view(),
+        Dtype::U8,
+    )
+    .unwrap();
+    assert_eq!(ru.as_slice(), &[144]);
+}
+
+#[test]
+fn test_ops_int_max_pool_window_and_identity() {
+    // KISS-OPS-6.13: max_pool = reduce(max) over the window; the max identity is
+    // the dtype minimum (KISS-OPS-6.11-0002), NOT −inf (no float infinities).
+    // [1,3,2,5], kernel 2 stride 1 → [max(1,3), max(3,2), max(2,5)] = [3,3,5].
+    let x = t(&[1, 3, 2, 5], &[4]);
+    let y = tensor_int::max_pool(&x.view(), &[0], &[2], &[1], &[0], &[1], Dtype::S8).unwrap();
+    assert_eq!(y.as_slice(), &[3, 3, 5]);
+
+    // A wholly-out-of-bounds (padded) window yields the S8 max identity = -128,
+    // not −inf: extent 1, kernel 2 stride 1 pad 2 → first window taps land at
+    // -2,-1 (both OOB) → identity.
+    let z = t(&[7], &[1]);
+    let yz = tensor_int::max_pool(&z.view(), &[0], &[2], &[1], &[2], &[1], Dtype::S8).unwrap();
+    assert_eq!(yz.as_slice()[0], -128);
+}
+
+#[test]
+fn test_ops_int_im2col_zero_fill_oob() {
+    // KISS-OPS-6.13: im2col is pure zero-filled data movement — OOB taps read 0,
+    // exact and integer-closed (no arithmetic, so no wrap can occur).
+    // [10,20,30], kernel 2 stride 1 pad 1 → 4 patches × 2 taps:
+    // patch0=[0,10], patch1=[10,20], patch2=[20,30], patch3=[30,0].
+    let x = t(&[10, 20, 30], &[3]);
+    let y = tensor_int::im2col(&x.view(), &[0], &[2], &[1], &[1], &[1]).unwrap();
+    assert_eq!(y.shape(), &[4, 2]);
+    assert_eq!(y.as_slice(), &[0, 10, 10, 20, 20, 30, 30, 0]);
 }

@@ -27,7 +27,13 @@ use crate::Error;
 
 /// The output extent of a pooled axis: `floor((in + 2·pad − dilation·(k−1) − 1) /
 /// stride) + 1`, or `0` when the effective window is larger than the padded input.
-fn pool_out_dim(in_d: usize, k: usize, s: usize, p: usize, dil: usize) -> Result<usize, Error> {
+pub(crate) fn pool_out_dim(
+    in_d: usize,
+    k: usize,
+    s: usize,
+    p: usize,
+    dil: usize,
+) -> Result<usize, Error> {
     if s == 0 || k == 0 {
         return Err(Error::ShapeMismatch {
             expected: 1,
@@ -54,7 +60,7 @@ fn pool_out_dim(in_d: usize, k: usize, s: usize, p: usize, dil: usize) -> Result
 
 /// Validate the parallel window-parameter arrays and build the output shape (input
 /// shape with each spatial axis replaced by its pooled extent).
-fn window_out_shape(
+pub(crate) fn window_out_shape(
     in_shape: &[usize],
     axes: &[usize],
     kernel: &[usize],
@@ -84,7 +90,7 @@ fn window_out_shape(
 /// The source spatial position of window tap `t` at output position `o`:
 /// `o·stride + t·dilation − padding`. Returns `None` (out of bounds) if negative
 /// or `>= extent`.
-fn tap_pos(
+pub(crate) fn tap_pos(
     o: usize,
     t: usize,
     stride: usize,

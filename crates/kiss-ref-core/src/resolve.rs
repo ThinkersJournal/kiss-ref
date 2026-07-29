@@ -426,6 +426,31 @@ mod tests {
     }
 
     #[test]
+    fn select_moves_arm_bit_for_bit() {
+        // §6.5: raw-bit select performs NO arithmetic on the chosen arm — it moves
+        // the operand bit-for-bit. A value-only check (`== 2.0`) cannot see this,
+        // because `-0.0 == +0.0` and `NaN != NaN`. Prove bit-identity via
+        // `.to_bits()` for the two payloads arithmetic would clobber: a signed zero
+        // (arithmetic could canonicalize the sign) and a NaN with a specific,
+        // non-canonical mantissa payload (arithmetic could quiet/canonicalize it).
+        let neg_zero = -0.0f64;
+        let nan_payload = f64::from_bits(0x7FF8_0000_ABCD_1234);
+        assert_ne!(neg_zero.to_bits(), 0.0f64.to_bits()); // sanity: -0.0 ≠ +0.0 in bits
+
+        // TRUE branch (cond = 1.0, truthy) → arm b selected, moved unchanged.
+        let r = eval_op(Op::Select, &[1.0f64, neg_zero, 9.0]).unwrap();
+        assert_eq!(r.to_bits(), neg_zero.to_bits());
+        let r = eval_op(Op::Select, &[1.0f64, nan_payload, 9.0]).unwrap();
+        assert_eq!(r.to_bits(), nan_payload.to_bits());
+
+        // FALSE branch (cond = +0.0, not truthy) → arm c selected, moved unchanged.
+        let r = eval_op(Op::Select, &[0.0f64, 9.0, neg_zero]).unwrap();
+        assert_eq!(r.to_bits(), neg_zero.to_bits());
+        let r = eval_op(Op::Select, &[0.0f64, 9.0, nan_payload]).unwrap();
+        assert_eq!(r.to_bits(), nan_payload.to_bits());
+    }
+
+    #[test]
     fn cmp_ne_nan_is_true() {
         let nan = f64::NAN;
         assert_eq!(eval_op(Op::CmpNe, &[nan, nan]).unwrap(), 1.0);
