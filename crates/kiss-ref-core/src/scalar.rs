@@ -30,6 +30,12 @@ pub trait ScalarFloat: Copy + PartialEq + PartialOrd {
     /// Round an `f64` reference constant into this dtype (§6.12 `const(bits)`).
     fn from_f64(v: f64) -> Self;
 
+    /// Reinterpret the low `Self`-width bits of `bits` as a `Self`, verbatim — the
+    /// bit-exact `const(bits)` leaf (KISS-OPS-6.12-0002). Any pattern round-trips
+    /// bit-for-bit (signalling-NaN payload, ±0, subnormal), unlike `from_f64` which
+    /// rounds an `f64` real value into the dtype.
+    fn from_bits(bits: u64) -> Self;
+
     /// Round an `f64` ACCUMULATOR into this storage dtype with a SINGLE
     /// correctly-rounded RNE, even when the accumulator is wider than this type's
     /// internal pivot (RFC #92 C3 "result rounded once A→S"). Default is `from_f64`
@@ -111,7 +117,7 @@ pub trait ScalarFloat: Copy + PartialEq + PartialOrd {
 }
 
 macro_rules! impl_scalar_float {
-    ($t:ty, dtype=$dtype:expr,
+    ($t:ty, dtype=$dtype:expr, bits=$uint:ty,
      exp=$exp:path, log=$log:path, sin=$sin:path, cos=$cos:path, sqrt=$sqrt:path,
      erf=$erf:path, atan=$atan:path, lgamma=$lgamma:path, atan2=$atan2:path,
      copysign=$copysign:path, nextafter=$nextafter:path, floor=$floor:path,
@@ -126,6 +132,10 @@ macro_rules! impl_scalar_float {
             #[inline]
             fn from_f64(v: f64) -> $t {
                 v as $t
+            }
+            #[inline]
+            fn from_bits(bits: u64) -> $t {
+                <$t>::from_bits(bits as $uint)
             }
             #[inline]
             fn to_f64(self) -> f64 {
@@ -286,6 +296,7 @@ macro_rules! impl_scalar_float {
 impl_scalar_float!(
     f64,
     dtype = Dtype::F64,
+    bits = u64,
     exp = libm::exp,
     log = libm::log,
     sin = libm::sin,
@@ -313,6 +324,7 @@ impl_scalar_float!(
 impl_scalar_float!(
     f32,
     dtype = Dtype::F32,
+    bits = u32,
     exp = libm::expf,
     log = libm::logf,
     sin = libm::sinf,
@@ -349,7 +361,7 @@ impl_scalar_float!(
 // `nextafter` is declined for these types by the resolver (§6.9-0003), so its
 // f32-promoted body here is never reached through `eval_op`.
 macro_rules! impl_scalar_float_via_f32 {
-    ($t:ty, $dtype:expr) => {
+    ($t:ty, $dtype:expr, $uint:ty) => {
         impl ScalarFloat for $t {
             const ZERO: $t = <$t>::ZERO;
             const ONE: $t = <$t>::ONE;
@@ -359,6 +371,10 @@ macro_rules! impl_scalar_float_via_f32 {
             #[inline]
             fn from_f64(v: f64) -> $t {
                 <$t>::from_f32(v as f32)
+            }
+            #[inline]
+            fn from_bits(bits: u64) -> $t {
+                <$t>::from_bits(bits as $uint)
             }
             #[inline]
             fn from_f64_single_round(v: f64) -> $t {
@@ -495,13 +511,13 @@ macro_rules! impl_scalar_float_via_f32 {
     };
 }
 
-impl_scalar_float_via_f32!(half::f16, Dtype::F16);
-impl_scalar_float_via_f32!(half::bf16, Dtype::Bf16);
+impl_scalar_float_via_f32!(half::f16, Dtype::F16, u16);
+impl_scalar_float_via_f32!(half::bf16, Dtype::Bf16, u16);
 
 // FP8 (e4m3 / e5m2) — same promote-to-f32 lane as the narrow floats (§6.16), with
 // the hand-rolled u8 codec in `crate::fp8` (the `half` crate has no FP8).
-impl_scalar_float_via_f32!(crate::fp8::E4m3, Dtype::E4m3);
-impl_scalar_float_via_f32!(crate::fp8::E5m2, Dtype::E5m2);
+impl_scalar_float_via_f32!(crate::fp8::E4m3, Dtype::E4m3, u8);
+impl_scalar_float_via_f32!(crate::fp8::E5m2, Dtype::E5m2, u8);
 
 /// **Exact** promotion of a storage value `S` into a wider accumulator dtype `A`
 /// (RFC #92 direction b). `to_f64` is lossless for every float (all ⊆ `f64`), and

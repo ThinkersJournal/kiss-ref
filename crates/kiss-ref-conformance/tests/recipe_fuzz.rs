@@ -810,7 +810,11 @@ fn gen_valid(rng: &mut Rng) -> Case {
 fn child_slots(node: &mut Node) -> Vec<&mut usize> {
     let mut v: Vec<&mut usize> = Vec::new();
     match node {
-        Node::Bind(_) | Node::Const(_) | Node::RuntimeScalar(_) | Node::ReducedCount(_) => {}
+        Node::Bind(_)
+        | Node::Const(_)
+        | Node::ConstBits(_)
+        | Node::RuntimeScalar(_)
+        | Node::ReducedCount(_) => {}
         Node::Apply { children, .. } => v.extend(children.iter_mut()),
         Node::Reduce { child, .. } | Node::PrefixScan { child, .. } => v.push(child),
         Node::Matmul { lhs, rhs } => {
@@ -1772,6 +1776,7 @@ fn variant_bit(node: &Node) -> u16 {
     match node {
         Node::Bind(_) => 0,
         Node::Const(_) => 1,
+        Node::ConstBits(_) => 13,
         Node::RuntimeScalar(_) => 2,
         Node::ReducedCount(_) => 3,
         Node::Apply { .. } => 4,

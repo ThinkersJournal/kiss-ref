@@ -65,8 +65,16 @@ pub enum IndexRef {
 pub enum Node {
     /// Bind the fused op's `inputs[i]` (§6.4-0009 `Bind`).
     Bind(usize),
-    /// A `const(bits)` leaf (the reference holds the value as `f64`).
+    /// A real-valued `const` leaf: the reference holds an `f64` and RE-ROUNDS it into
+    /// the lane via `T::from_f64` — ergonomic and dtype-generic, but a signalling-NaN
+    /// payload survives only on the f64 lane. For a bit-exact leaf use [`Node::ConstBits`].
     Const(f64),
+    /// A bit-exact `const(bits)` leaf (KISS-OPS-6.12-0002): the low `T`-width bits of the
+    /// `u64` are reinterpreted as a `T` verbatim (`T::from_bits`), so ANY pattern —
+    /// signalling-NaN payload, ±0, subnormal — round-trips bit-for-bit on every lane.
+    /// The bits are dtype-specific (the same node evaluated at a wider `T` reads more
+    /// bits). `ExactByte`.
+    ConstBits(u64),
     /// A `runtime_scalar(slot)` leaf → `params[slot]`.
     RuntimeScalar(usize),
     /// A `reduced_count(axes)` value leaf — ∏ of the reduced extents (resolved
@@ -422,7 +430,11 @@ fn read_children<T: Clone>(
 fn children_of(node: &Node) -> Vec<usize> {
     let mut v = Vec::new();
     match node {
-        Node::Bind(_) | Node::Const(_) | Node::RuntimeScalar(_) | Node::ReducedCount(_) => {}
+        Node::Bind(_)
+        | Node::Const(_)
+        | Node::ConstBits(_)
+        | Node::RuntimeScalar(_)
+        | Node::ReducedCount(_) => {}
         Node::Apply { children, .. } => v.extend_from_slice(children),
         Node::Reduce { child, .. } | Node::PrefixScan { child, .. } => v.push(*child),
         Node::Matmul { lhs, rhs } => {
@@ -484,6 +496,7 @@ fn compute_node<T: ScalarFloat>(
             Ok((t, DetClass::ExactByte, None))
         }
         Node::Const(v) => Ok((rank0(T::from_f64(*v))?, DetClass::ExactByte, None)),
+        Node::ConstBits(bits) => Ok((rank0(T::from_bits(*bits))?, DetClass::ExactByte, None)),
         Node::RuntimeScalar(s) => {
             let v = params
                 .get(*s)

@@ -16,7 +16,7 @@
 use kiss_classify_vocab::Dtype;
 use kiss_ops_vocab::Op;
 use kiss_ref_core::{
-    eval_recipe, ulp_distance_f64, Combine, DetClass, Direction, Error, FlatDag, IndexRef,
+    eval_recipe, ulp_distance_f64, Combine, DetClass, Direction, E4m3, Error, FlatDag, IndexRef,
     IndexTensor, Monoid, Node, OobPolicy, ScalarFloat, Tensor,
 };
 
@@ -760,7 +760,11 @@ const ITERATIONS: usize = 128;
 /// The settable value-lane child-edge slots of `node`.
 fn edge_count(node: &Node) -> usize {
     match node {
-        Node::Bind(_) | Node::Const(_) | Node::RuntimeScalar(_) | Node::ReducedCount(_) => 0,
+        Node::Bind(_)
+        | Node::Const(_)
+        | Node::ConstBits(_)
+        | Node::RuntimeScalar(_)
+        | Node::ReducedCount(_) => 0,
         Node::Apply { children, .. } => children.len(),
         Node::Reduce { .. }
         | Node::PrefixScan { .. }
@@ -1024,42 +1028,58 @@ fn test_recipe_fuzz_mutations_decline_typed() {
 }
 
 #[test]
-fn test_recipe_const_bits_roundtrip_and_snan_limit() {
-    // KISS-OPS-6.12-0002: a const leaf carries its value as the exact dtype bit
-    // pattern, round-tripping ±0, ±inf, subnormals, and quiet/signaling NaN payloads.
-    // kiss-ref's `Node::Const` holds an f64 REAL value (materialized via `T::from_f64`),
-    // so the guarantee holds FULLY on the f64 lane, but a signaling-NaN PAYLOAD is NOT
-    // representable on the narrow lanes: `from_f64` narrows and the reference platform
-    // quiets the sNaN. This test pins what holds and DOCUMENTS the limitation; fully
-    // meeting 6.12-0002 on the narrow lanes would need a bit-typed const variant (e.g.
-    // `Node::ConstBits(u64)`) — a design decision routed to the spec/impl owners, not
-    // something to paper over in a test.
-    let f64_const = |v: f64| -> u64 {
-        let dag = FlatDag::new(vec![Node::Const(v)], vec![0]);
+fn test_recipe_constbits_exact_roundtrip() {
+    // KISS-OPS-6.12-0002: a const(bits) leaf carries its value as the EXACT dtype bit
+    // pattern, round-tripping ±0, ±inf, subnormals, and quiet/signalling NaN payloads.
+    // kiss-ref has two const leaves:
+    //   * Node::ConstBits(u64) — the BIT-EXACT leaf (T::from_bits): the low T-width bits
+    //     are reinterpreted verbatim, so ANY pattern round-trips bit-for-bit on EVERY
+    //     lane. This is the 6.12-0002-compliant const(bits).
+    //   * Node::Const(f64) — the ergonomic real-valued leaf (T::from_f64), re-rounded per
+    //     lane; a signalling-NaN payload survives only on the f64 lane.
+    // The signalling-NaN payload is the discriminating case.
+    let bits_f64 = |n: Node| -> u64 {
+        let dag = FlatDag::new(vec![n], vec![0]);
         eval_recipe::<f64>(&dag, &[], &[], &[]).unwrap().outputs[0].as_slice()[0].to_bits()
     };
-    let f32_const = |v: f64| -> u32 {
-        let dag = FlatDag::new(vec![Node::Const(v)], vec![0]);
+    let bits_f32 = |n: Node| -> u32 {
+        let dag = FlatDag::new(vec![n], vec![0]);
         eval_recipe::<f32>(&dag, &[], &[], &[]).unwrap().outputs[0].as_slice()[0].to_bits()
     };
+    let bits_e4m3 = |n: Node| -> u8 {
+        let dag = FlatDag::new(vec![n], vec![0]);
+        eval_recipe::<E4m3>(&dag, &[], &[], &[]).unwrap().outputs[0].as_slice()[0].to_bits()
+    };
 
-    // f64 lane: exact bit round-trip, INCLUDING a signaling-NaN payload — `from_f64`
-    // is the identity on f64, so the payload AND the signaling bit survive verbatim.
-    let snan = 0x7FF0_0000_0000_0001u64; // exp all-ones, mantissa-MSB clear, payload 1
-    assert_eq!(f64_const(f64::from_bits(snan)), snan);
-    assert_eq!(f64_const(-0.0), 0x8000_0000_0000_0000);
-    assert_eq!(f64_const(f64::INFINITY), 0x7FF0_0000_0000_0000);
-    assert_eq!(f64_const(f64::from_bits(1)), 1); // smallest positive subnormal
+    // --- Node::ConstBits: bit-exact on EVERY lane (6.12-0002 satisfied) ---
+    let f64_snan = 0x7FF0_0000_0000_0001u64; // exp all-ones, mantissa-MSB clear, payload 1
+    assert_eq!(bits_f64(Node::ConstBits(f64_snan)), f64_snan); // signalling payload survives
+    assert_eq!(
+        bits_f64(Node::ConstBits(0x8000_0000_0000_0000)),
+        0x8000_0000_0000_0000
+    ); // -0.0
+    assert_eq!(bits_f64(Node::ConstBits(1)), 1); // smallest subnormal
 
-    // f32 lane: finite / ±0 / ±inf / subnormal round-trip exactly...
-    assert_eq!(f32_const(-0.0), 0x8000_0000);
-    assert_eq!(f32_const(f64::INFINITY), 0x7F80_0000);
-    assert_eq!(f32_const(f64::from_bits(1)), 0); // 2^-1074 underflows f32 -> +0.0
-                                                 // ...but the sNaN payload is LOST. We assert only that the result IS a NaN (exp
-                                                 // all-ones, mantissa nonzero) — Rust does not pin f64->f32 NaN bits, and the
-                                                 // signaling f64 payload cannot survive narrowing into f32's f64-valued Const.
-                                                 // (On the f64 lane above it DID survive, exact — that is the 6.12-0002 boundary.)
-    let nan_bits = f32_const(f64::from_bits(snan));
-    assert_eq!(nan_bits & 0x7F80_0000, 0x7F80_0000);
-    assert_ne!(nan_bits & 0x007F_FFFF, 0);
+    let f32_snan = 0x7F80_0001u32; // f32 signalling NaN, payload 1
+    assert_eq!(bits_f32(Node::ConstBits(f32_snan as u64)), f32_snan); // payload survives on f32!
+    assert_eq!(bits_f32(Node::ConstBits(0x8000_0000)), 0x8000_0000); // -0.0
+
+    // e4m3fn: the 8-bit pattern is taken verbatim — even the canonical-NaN code and -0.0
+    // round-trip, patterns no real-value from_f64 path could target distinctly.
+    assert_eq!(bits_e4m3(Node::ConstBits(0x7F)), 0x7F); // e4m3 NaN code
+    assert_eq!(bits_e4m3(Node::ConstBits(0x80)), 0x80); // e4m3 -0.0
+    assert_eq!(bits_e4m3(Node::ConstBits(0x01)), 0x01); // e4m3 smallest subnormal
+
+    // --- Node::Const(f64): the ergonomic real-valued leaf, for contrast ---
+    // f64 lane: from_f64 is identity, so the signalling payload survives here too...
+    assert_eq!(bits_f64(Node::Const(f64::from_bits(f64_snan))), f64_snan);
+    assert_eq!(bits_f64(Node::Const(-0.0)), 0x8000_0000_0000_0000);
+    // ...but on a narrow lane the real value is RE-ROUNDED, so the signalling payload is
+    // NOT preserved (only guaranteed to still be *a* NaN) — exactly why the bit-exact
+    // ConstBits leaf exists. Finite / ±0 / ±inf DO round-trip through Const:
+    assert_eq!(bits_f32(Node::Const(-0.0)), 0x8000_0000);
+    assert_eq!(bits_f32(Node::Const(f64::INFINITY)), 0x7F80_0000);
+    let via_const = bits_f32(Node::Const(f64::from_bits(f64_snan)));
+    assert_eq!(via_const & 0x7F80_0000, 0x7F80_0000); // still exp all-ones...
+    assert_ne!(via_const & 0x007F_FFFF, 0); // ...a NaN (nonzero mantissa); payload not pinned
 }
