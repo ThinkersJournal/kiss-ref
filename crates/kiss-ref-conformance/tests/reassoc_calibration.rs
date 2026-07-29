@@ -8,7 +8,7 @@
 //!     tol = k(S,A) * N * eps_A * |max partial sum|          (a ULP-of-A band)
 //!
 //! with eps_A = 2^-mant(A) (spacing at 1.0), N the runtime extent, and k(S,A) an
-//! extent-free per-cell constant. §6.0-0004 leaves the reduction ORDER and the
+//! extent-free per-cell constant. KISS-OPS-6.0-0004 leaves the reduction ORDER and the
 //! accumulator WIDTH unpinned; the pinned reference is the ascending-INDEX fold
 //! with the accumulator held wholly in A and a single terminal narrow A->S
 //! (== `kernels::reduce_acc` / `diff::reference_reduce_acc`). k is NOT derivable
@@ -213,7 +213,7 @@ fn narrow<A: ScalarFloat, S: ScalarFloat>(a: A) -> S {
     S::from_f64_single_round(a.to_f64())
 }
 
-/// A fold schedule a conformant kernel may emit (§6.0-0004 leaves ORDER unpinned).
+/// A fold schedule a conformant kernel may emit (KISS-OPS-6.0-0004 leaves ORDER unpinned).
 /// Design 2's crisp taxonomy: every intermediate is held in A, one terminal narrow.
 #[derive(Clone)]
 enum Schedule {
@@ -261,8 +261,12 @@ fn fold_a<A: ScalarFloat>(t: &[A], s: &Schedule) -> A {
     }
 }
 
-/// Reference = ascending-INDEX A-fold + |max partial sum| (as f64), the pinned
-/// §6.17-0005 profile (== `reduce_acc`'s accumulator, pre-narrow).
+/// Reference = ascending-INDEX A-fold + |max partial sum| (as f64). KISS-OPS-6.17-0005
+/// pins the ORDERING (ascending-index); because A is WIDER than S here, the per-cell
+/// reference VALUE is KISS-OPS-6.17-0009 (inputs->S, each accumulate atom->A, result->S)
+/// — this is `reduce_acc`'s accumulator, pre-narrow. Per KISS-CONFORM-6.5-0010 a Conform
+/// suite MUST tolerance such a cell against THIS own per-cell reference, never a
+/// cross-accumulator wide truth.
 fn reference<A: ScalarFloat>(t: &[A]) -> (A, f64) {
     let mut acc = A::ZERO;
     let mut mp = 0.0f64;

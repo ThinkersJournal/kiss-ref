@@ -20,7 +20,7 @@
 //!
 //! - **KISS-OPS-6.2-0001** — for `bf16`/`e4m3fn`/`e5m2` "the arithmetic MUST
 //!   follow the encodings, rounding, saturation, and NaN/infinity conventions
-//!   pinned in §6.16"; §6.16-0003/-0004/-0005 pin round-to-nearest-even results
+//!   pinned in §6.16"; KISS-OPS-6.16-0003/-0004/-0005 pin round-to-nearest-even results
 //!   and, for FP8, **saturation to max-finite**. Per-atom rounding *into the
 //!   narrow dtype* is therefore mandatory — the reference is right about the
 //!   per-atom step.
@@ -43,7 +43,7 @@
 //! reference by **arbitrarily much** — see
 //! [`narrow_reduce_sum_stagnates_in_a_narrow_accumulator`] (128 vs 192 on the
 //! same inputs) and [`narrow_matmul_saturates_in_e4m3`] (448 vs 512). No KISS
-//! clause declares a tolerance that bounds this, which §6.17-0007 requires of
+//! clause declares a tolerance that bounds this, which KISS-OPS-6.17-0007 requires of
 //! every order-invariant/nondeterministic cell. That is a genuine spec gap and
 //! the tests below pin the reference's actual behavior rather than dodge it.
 //!
@@ -55,7 +55,7 @@
 //! `scatter`(assign), `sort_network`, max/min folds, `flip`, `iota`) are compared
 //! **raw-bit**; order-invariant/nondeterministic cells (sum/prod folds, `matmul`,
 //! `scatter_add`, `softmax`) are *also* compared raw-bit here because this file
-//! pins the REFERENCE's own bits (the §6.17-0005 profile), not a candidate's —
+//! pins the REFERENCE's own bits (the KISS-OPS-6.17-0005 profile), not a candidate's —
 //! the class governs how a candidate is judged, which is exactly the gap above.
 
 use half::{bf16, f16};
@@ -82,11 +82,11 @@ trait Narrow: ScalarFloat + core::fmt::Debug {
     const NAME: &'static str;
     /// Explicit mantissa bits (§6.16): f16 10, bf16 7, e4m3fn 3, e5m2 2.
     const MANTISSA_BITS: u32;
-    /// Round an `f32` into this lane (RNE, FP8 saturating — §6.16-0003/-0004/-0005).
+    /// Round an `f32` into this lane (RNE, FP8 saturating — KISS-OPS-6.16-0003/-0004/-0005).
     fn of(v: f32) -> Self;
     /// Widen back to `f32` (lossless — every narrow lane is an f32 subset).
     fn f32(self) -> f32;
-    /// The raw storage bits, for exact-byte comparison (§6.0-0002).
+    /// The raw storage bits, for exact-byte comparison (KISS-OPS-6.0-0002).
     fn bits(self) -> u64;
 }
 
@@ -163,7 +163,7 @@ fn ix(data: &[i64], shape: &[usize]) -> IndexTensor {
         .unwrap_or_else(|e| panic!("index {shape:?}: {e:?}"))
 }
 
-/// Raw-bit equality against `want` re-rounded into the lane (§6.0-0002): keeps
+/// Raw-bit equality against `want` re-rounded into the lane (KISS-OPS-6.0-0002): keeps
 /// ±0 distinct and matches a NaN only by its actual payload.
 fn assert_bits<T: Narrow>(got: &Tensor<T>, want: &[f32], shape: &[usize]) {
     assert_eq!(got.shape(), shape, "[{}] output shape", T::NAME);
@@ -180,7 +180,7 @@ fn assert_bits<T: Narrow>(got: &Tensor<T>, want: &[f32], shape: &[usize]) {
 }
 
 /// The same fold this reference performs, but with an `f32` accumulator — the
-/// *other* legal reading of §6.0-0004 (accumulator width unpinned). Used to make
+/// *other* legal reading of KISS-OPS-6.0-0004 (accumulator width unpinned). Used to make
 /// the divergence explicit in a failing message, never as an expectation.
 fn wide_sum(v: &[f32]) -> f32 {
     v.iter().fold(0.0f32, |a, &b| a + b)
@@ -198,16 +198,16 @@ fn assert_exact<T: Narrow>(v: f32) {
     );
 }
 
-// ---- element_map (§6.11-0001) ------------------------------------------------
+// ---- element_map (KISS-OPS-6.11-0001) ------------------------------------------------
 
 fn check_element_map_mul<T: Narrow>() {
     for &v in &[1.0f32, 2.0, 4.0, 8.0, 0.5] {
         assert_exact::<T>(v);
     }
-    // body = mul(input(0), input(1)) — the §6.11-0001 per-element scalar body.
+    // body = mul(input(0), input(1)) — the KISS-OPS-6.11-0001 per-element scalar body.
     let body = Expr::Apply(Op::Mul, vec![Expr::Input(0), Expr::Input(1)]);
     let a: Tensor<T> = tn(&[1.0, 2.0, 4.0, 8.0], &[2, 2]);
-    // rank-1 `b` broadcasts over the leading axis (stride-0, §6.11-0001).
+    // rank-1 `b` broadcasts over the leading axis (stride-0, KISS-OPS-6.11-0001).
     let b: Tensor<T> = tn(&[2.0, 0.5], &[2]);
     let out = element_map(&body, &[a.view(), b.view()], &[2, 2])
         .unwrap_or_else(|e| panic!("[{}] element_map: {e:?}", T::NAME));
@@ -243,7 +243,7 @@ fn narrow_element_map_const_leaf_rounds_into_the_lane() {
     check_element_map_const_leaf::<E5m2>();
 }
 
-// ---- reduce (§6.11-0002 / -0008) ---------------------------------------------
+// ---- reduce (KISS-OPS-6.11-0002 / -0008) ---------------------------------------------
 
 fn check_reduce_sum_exact<T: Narrow>(want: f32) {
     for &v in &[1.0f32, 2.0, 4.0, 8.0] {
@@ -252,7 +252,7 @@ fn check_reduce_sum_exact<T: Narrow>(want: f32) {
     let x: Tensor<T> = tn(&[1.0, 2.0, 4.0, 8.0], &[4]);
     let r = reduce(&x.view(), Monoid::Sum, &[0])
         .unwrap_or_else(|e| panic!("[{}] reduce sum: {e:?}", T::NAME));
-    // Ascending-index fold from the +0 identity (§6.11-0002, §6.17-0005 profile):
+    // Ascending-index fold from the +0 identity (KISS-OPS-6.11-0002, KISS-OPS-6.17-0005 profile):
     // 0 → 1 → 3 → 7 → 15. Partials 1, 3, 7 need ≤ 2 mantissa bits, so they are
     // exact in every lane; the FINAL 15 = 1.111b·2^3 needs 3.
     assert_bits(&r, &[want], &[1]);
@@ -266,7 +266,7 @@ fn narrow_reduce_sum_folds_in_the_narrow_dtype() {
     check_reduce_sum_exact::<E4m3>(15.0);
     // e5m2 has only 2 mantissa bits: 15 sits EXACTLY midway between 14
     // (1.11b·2^3, mantissa 11 = odd) and 16 (1.00b·2^4, mantissa 00 = even), so
-    // §6.16-0005 round-half-to-even lands on 16. The reduction of four exactly
+    // KISS-OPS-6.16-0005 round-half-to-even lands on 16. The reduction of four exactly
     // representable inputs is 1 ULP ABOVE the exact answer. Pinned, not dodged.
     check_reduce_sum_exact::<E5m2>(16.0);
     assert_eq!(
@@ -311,7 +311,7 @@ fn narrow_reduce_sum_stagnates_in_a_narrow_accumulator() {
     // => on e4m3/e5m2 this reference returns 128 where an f32-accumulator
     // implementation (i.e. every FP8 tensor core) returns 192 — a 33% relative
     // divergence between two implementations that are BOTH conformant, with no
-    // KISS-declared tolerance bounding it (§6.17-0007 requires one).
+    // KISS-declared tolerance bounding it (KISS-OPS-6.17-0007 requires one).
 }
 
 // ---- accumulator-dtype tolerance cells (KISS-OPS-6.17-0008/-0009, RFC #92 b) ----
@@ -320,6 +320,11 @@ fn narrow_reduce_sum_stagnates_in_a_narrow_accumulator() {
 // SAME ascending fold order, but a WIDER accumulator dtype declared via <acc> —
 // the (compute, acc) tolerance cell of KISS-OPS-6.17-0008 (C1). These pin the
 // KISS-OPS-6.17-0009 (C3) per-cell reference (inputs->S, each atom->A, result->S).
+// The <acc> coordinate is the KISS-Classify structure_key surface: KISS-CLASSIFY-6.7-0006
+// (field-9 <acc> of a dense CONTRACTION cell — the matmul case) and KISS-CLASSIFY-6.7-0012
+// (the non-contraction reduction/scan accumulator coordinate — the reduce case). Per
+// KISS-CONFORM-6.5-0010 these cells are validated against their OWN per-cell reference,
+// never a cross-A wide truth.
 // NORMATIVE now: KISS PR #96 (the #92 realization) merged 2026-07-24 (KISS main
 // @ 46e69a8), so these cells are no longer Provisional — they BACK 6.17-0008/-0009.
 
@@ -367,7 +372,7 @@ fn narrow_reduce_f32_accumulator_result_narrow_is_a_single_rne() {
 fn narrow_matmul_f32_accumulator() {
     // matmul with an f32 accumulator: products AND adds happen in f32, only the
     // final result narrows to S. K=8 of 64·1 → f32 512; narrow: f16/bf16/e5m2 →
-    // 512, e4m3 → 448 (512 > e4m3 max finite 448 → saturate, §6.16-0004 — the
+    // 512, e4m3 → 448 (512 > e4m3 max finite 448 → saturate, KISS-OPS-6.16-0004 — the
     // e4m3 448 equals its diagonal, pinning the sole S rounding is the final
     // narrow). Then the [128, eight 8s]·1 contraction → f32 192 everywhere, vs the
     // diagonal e4m3/e5m2 stagnation to 128 — the multiply-and-add-in-A recovery.
@@ -542,11 +547,11 @@ fn check_reduce_max<T: Narrow>() {
     let x: Tensor<T> = tn(&[1.0, -2.0, 4.0, 0.5], &[4]);
     let r = reduce(&x.view(), Monoid::Max, &[0])
         .unwrap_or_else(|e| panic!("[{}] reduce max: {e:?}", T::NAME));
-    // max is exact-byte (§6.0-0002): a raw-bit select, no arithmetic, so it is
+    // max is exact-byte (KISS-OPS-6.0-0002): a raw-bit select, no arithmetic, so it is
     // accumulator-width-independent and identical on every lane.
     assert_bits(&r, &[4.0], &[1]);
 
-    // §6.11-0002: the max/min monoids are NaN-PROPAGATING.
+    // KISS-OPS-6.11-0002: the max/min monoids are NaN-PROPAGATING.
     let n: Tensor<T> = tn(&[1.0, f32::NAN, 3.0], &[3]);
     let rn = reduce(&n.view(), Monoid::Max, &[0])
         .unwrap_or_else(|e| panic!("[{}] reduce max nan: {e:?}", T::NAME));
@@ -557,7 +562,7 @@ fn check_reduce_max<T: Narrow>() {
         wide(&rn)
     );
 
-    // keepdim (§6.11-0008): reducing axis 1 of [2,3] leaves [2,1].
+    // keepdim (KISS-OPS-6.11-0008): reducing axis 1 of [2,3] leaves [2,1].
     let m: Tensor<T> = tn(&[1.0, 2.0, 4.0, 8.0, 0.5, 0.25], &[2, 3]);
     let rk = reduce(&m.view(), Monoid::Max, &[1])
         .unwrap_or_else(|e| panic!("[{}] reduce keepdim: {e:?}", T::NAME));
@@ -573,7 +578,7 @@ fn narrow_reduce_max_is_exact_byte_on_every_narrow_dtype() {
 }
 
 fn check_reduce_empty_axis<T: Narrow>(max_ident: f32, min_ident: f32) {
-    // §6.11-0002: a reduction over an EMPTY axis yields the monoid identity.
+    // KISS-OPS-6.11-0002: a reduction over an EMPTY axis yields the monoid identity.
     let x: Tensor<T> = tn(&[], &[2, 0]);
     let s = reduce(&x.view(), Monoid::Sum, &[1])
         .unwrap_or_else(|e| panic!("[{}] empty sum: {e:?}", T::NAME));
@@ -588,21 +593,21 @@ fn check_reduce_empty_axis<T: Narrow>(max_ident: f32, min_ident: f32) {
 
 #[test]
 fn narrow_reduce_empty_axis_identity_is_the_representable_one() {
-    // §6.11-0002 spells the max/min identities as "−∞ / +∞ for float"; the
+    // KISS-OPS-6.11-0002 spells the max/min identities as "−∞ / +∞ for float"; the
     // reference materializes them with `T::from_f64(±inf)`.
     check_reduce_empty_axis::<f16>(f32::NEG_INFINITY, f32::INFINITY);
     check_reduce_empty_axis::<bf16>(f32::NEG_INFINITY, f32::INFINITY);
-    // e5m2 has IEEE-style infinities (§6.16-0005), so ±∞ survives verbatim.
+    // e5m2 has IEEE-style infinities (KISS-OPS-6.16-0005), so ±∞ survives verbatim.
     check_reduce_empty_axis::<E5m2>(f32::NEG_INFINITY, f32::INFINITY);
-    // e4m3fn has NO INFINITY ENCODING (§6.16-0004), and conversion saturates to
+    // e4m3fn has NO INFINITY ENCODING (KISS-OPS-6.16-0004), and conversion saturates to
     // max-finite — so the "−∞" identity materializes as −448 and "+∞" as +448.
     // That is still a correct monoid identity for the lane (±448 ARE the dtype
-    // min/max), but it is NOT the literal value §6.11-0002 names, and an
+    // min/max), but it is NOT the literal value KISS-OPS-6.11-0002 names, and an
     // empty-axis max on e4m3 therefore returns a FINITE −448.
     check_reduce_empty_axis::<E4m3>(-448.0, 448.0);
 }
 
-// ---- prefix_scan (§6.11-0003) ------------------------------------------------
+// ---- prefix_scan (KISS-OPS-6.11-0003) ------------------------------------------------
 
 fn check_prefix_scan<T: Narrow>(inclusive: &[f32], exclusive: &[f32]) {
     let x: Tensor<T> = tn(&[1.0, 2.0, 4.0, 8.0], &[4]);
@@ -666,11 +671,11 @@ fn check_matmul_k8<T: Narrow>(want: f32) {
 fn narrow_matmul_saturates_in_e4m3() {
     // A K=8 contraction of 64·1. Ascending-K partials: 64,128,192,256,320,384,
     // 448, 512 — every one representable in e4m3 EXCEPT the last (max finite
-    // ±448, §6.16-0004).
+    // ±448, KISS-OPS-6.16-0004).
     check_matmul_k8::<f16>(512.0);
     check_matmul_k8::<bf16>(512.0);
     check_matmul_k8::<E5m2>(512.0); // max finite 57344, plenty of room
-                                    // e4m3fn has no infinity encoding and §6.16-0004 mandates SATURATION, so the
+                                    // e4m3fn has no infinity encoding and KISS-OPS-6.16-0004 mandates SATURATION, so the
                                     // eighth accumulation step clamps: the reference returns 448, not 512 and not
                                     // inf. A candidate accumulating in f32 and rounding once at the end returns
                                     // 448 too (512 → saturate) — but a candidate accumulating in f16 and storing
@@ -699,25 +704,25 @@ fn check_matmul_overflow_head<T: Narrow>(input_as_stored: f32, want: f32) {
 
 #[test]
 fn narrow_matmul_overflow_is_inf_on_f16_but_saturates_on_fp8() {
-    // f16 is IEEE 754-2019 binary16 (§6.16-0002): 65536 > 65504 overflows to +inf.
+    // f16 is IEEE 754-2019 binary16 (KISS-OPS-6.16-0002): 65536 > 65504 overflows to +inf.
     check_matmul_overflow_head::<f16>(32768.0, f32::INFINITY);
-    // bf16 carries the binary32 exponent range (§6.16-0003): 65536 is exact.
+    // bf16 carries the binary32 exponent range (KISS-OPS-6.16-0003): 65536 is exact.
     check_matmul_overflow_head::<bf16>(32768.0, 65536.0);
-    // e5m2 has IEEE-style infinities, but §6.16-0005 pins SATURATION of an
+    // e5m2 has IEEE-style infinities, but KISS-OPS-6.16-0005 pins SATURATION of an
     // overflowing finite value → 57344, NOT inf. Two IEEE-ish lanes, opposite
     // overflow behavior, both per spec.
     check_matmul_overflow_head::<E5m2>(32768.0, 57344.0);
-    // e4m3 cannot even hold the operand: 32768 stores as 448 (§6.16-0004
+    // e4m3 cannot even hold the operand: 32768 stores as 448 (KISS-OPS-6.16-0004
     // saturating conversion), so the contraction is 448+448 = 896 → 448 again.
     check_matmul_overflow_head::<E4m3>(448.0, 448.0);
 }
 
-// ---- gather / scatter (§6.11-0004 / -0005 / -0006) ---------------------------
+// ---- gather / scatter (KISS-OPS-6.11-0004 / -0005 / -0006) ---------------------------
 
 fn check_gather<T: Narrow>() {
     let d: Tensor<T> = tn(&[2.0, 4.0, 6.0], &[3]);
     let idx = ix(&[0, 2, 5, -1], &[4]);
-    // §6.11-0004: negative is always OOB (no from-end wrap).
+    // KISS-OPS-6.11-0004: negative is always OOB (no from-end wrap).
     let zf = gather(&d.view(), &idx, 0, OobPolicy::ZeroFill, None)
         .unwrap_or_else(|e| panic!("[{}] gather zero-fill: {e:?}", T::NAME));
     assert_bits(&zf, &[2.0, 6.0, 0.0, 0.0], &[4]);
@@ -760,7 +765,7 @@ fn narrow_gather_is_a_raw_bit_move_on_every_narrow_dtype() {
 }
 
 fn check_scatter_assign<T: Narrow>() {
-    // §6.11-0005 raw-bit assign scatter on a narrow lane (the exact-byte move —
+    // KISS-OPS-6.11-0005 raw-bit assign scatter on a narrow lane (the exact-byte move —
     // the `AtomicAdd` path is exercised separately; this pins the `Assign`
     // combine so `Op::Scatter` in EXECUTED_HERE is execution-backed, not just
     // reached transitively through scatter_add). Values chosen exactly
@@ -775,7 +780,7 @@ fn check_scatter_assign<T: Narrow>() {
 }
 
 fn check_scatter_add<T: Narrow>() {
-    // §6.11-0006 float atomic-add, in pinned row-major source order.
+    // KISS-OPS-6.11-0006 float atomic-add, in pinned row-major source order.
     let dest: Tensor<T> = tn(&[0.0, 0.0, 0.0], &[3]);
     let upd: Tensor<T> = tn(&[1.0, 2.0, 4.0], &[3]);
     let out = scatter_add(dest, &ix(&[0, 1, 0], &[3]), &upd.view(), 0)
@@ -785,7 +790,7 @@ fn check_scatter_add<T: Narrow>() {
 }
 
 fn check_scatter_add_stagnation<T: Narrow>(want: f32) {
-    // The same accumulator-width lesson at the §6.11-0006 atomic-add combine:
+    // The same accumulator-width lesson at the KISS-OPS-6.11-0006 atomic-add combine:
     // eight 8s folded into a destination already holding 128.
     let dest: Tensor<T> = tn(&[128.0, 0.0], &[2]);
     let upd: Tensor<T> = tn(&[8.0; 8], &[8]);
@@ -812,7 +817,7 @@ fn narrow_scatter_add_folds_in_the_narrow_dtype() {
     check_scatter_add_stagnation::<E5m2>(128.0);
 }
 
-// ---- sort_network (§6.11-0007) -----------------------------------------------
+// ---- sort_network (KISS-OPS-6.11-0007) -----------------------------------------------
 
 fn check_sort_network<T: Narrow>() {
     let x: Tensor<T> = tn(&[3.0, 1.0, f32::NAN, 2.0], &[4]);
@@ -942,7 +947,7 @@ fn check_recipe_dot<T: Narrow>(want: f32) {
     // products [2,4,8]; ascending fold 0→2→6→14. 6 = 1.10b·2^2 and 14 = 1.11b·2^3
     // both need only 2 mantissa bits, so the dot product is EXACT on all four.
     assert_bits(&ev.outputs[0], &[want], &[]);
-    // §6.0-0004: the float sum node is order-invariant/nondeterministic; the
+    // KISS-OPS-6.0-0004: the float sum node is order-invariant/nondeterministic; the
     // elementwise mul above it is exact-byte.
     assert_eq!(ev.dets[2], DetClass::ExactByte, "[{}] mul det", T::NAME);
     assert_eq!(
@@ -1045,7 +1050,7 @@ fn narrow_eval_recipe_full_graph_runs_on_every_narrow_dtype() {
 
 #[test]
 fn narrow_nextafter_declines_on_fp8_as_well_as_f16_bf16() {
-    // §6.9-0003: nextafter is undefined on every narrow lane — stepping in a
+    // KISS-OPS-6.9-0003: nextafter is undefined on every narrow lane — stepping in a
     // promoted f32 yields the wrong neighbor in the narrow lattice. The FP8 lanes
     // inherit the decline through `ScalarFloat::NARROW_FLOAT`.
     assert_eq!(
@@ -1087,4 +1092,35 @@ fn narrow_executed_cells_are_the_cells_the_ledger_calls_done() {
             assert_eq!(support(op, d), Support::Done, "{op:?}/{d:?}");
         }
     }
+}
+
+#[test]
+fn narrow_fp8_nonprimitives_saturate() {
+    // KISS-OPS-6.13-0001 elementwise non-primitives resolve to their decomposition,
+    // per-atom rounded into the FP8 lane; the FP8-SPECIFIC behavior is SATURATION —
+    // KISS-OPS-6.16-0004 (e4m3fn has no inf, saturates to ±448) and KISS-OPS-6.16-0005
+    // (e5m2 finite-overflow saturates to ±57344 while a TRUE inf stays inf). The
+    // elementwise non-primitives were value-tested only on f16/bf16/f32/f64; these pin
+    // the shared FP8 saturation path (every such op funnels through `from_f32`). Each
+    // input is exactly FP8-representable; the expectation is `of` (from_f32) of the
+    // saturated real value.
+
+    // sqr(24) = 576 -> e4m3 saturates to the finite max 448 (no inf encoding).
+    assert_eq!(
+        eval_op(Op::Sqr, &[E4m3::of(24.0)]).unwrap().bits(),
+        E4m3::of(448.0).bits()
+    );
+    // recip(2^-9) = 512 -> e4m3 saturates to 448 (a different non-primitive, same rule).
+    assert_eq!(
+        eval_op(Op::Recip, &[E4m3::of(2f32.powi(-9))])
+            .unwrap()
+            .bits(),
+        E4m3::of(448.0).bits()
+    );
+    // sqr(256) = 65536 -> e5m2 saturates the FINITE overflow to 57344, NOT inf
+    // (KISS-OPS-6.16-0005: a finite*finite overflow saturates; only a true inf is inf).
+    assert_eq!(
+        eval_op(Op::Sqr, &[E5m2::of(256.0)]).unwrap().bits(),
+        E5m2::of(57344.0).bits()
+    );
 }

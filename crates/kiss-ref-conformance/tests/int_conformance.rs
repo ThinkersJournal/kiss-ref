@@ -22,6 +22,44 @@ fn test_ops_int_wrapping() {
 }
 
 #[test]
+fn test_ops_int_packed_subbyte_wrap() {
+    // KISS-OPS-6.2-0002 wrapping two's-complement at the PACKED sub-byte widths, and
+    // KISS-OPS-6.4-0005 (neg/abs of INT_MIN stay INT_MIN). s4/u4/b1 were Done by
+    // genericity (eval_int_op wraps via int_spec width) but never value-tested — these
+    // pin the 4-bit and 1-bit boundaries.
+
+    // s4: signed 4-bit, range -8..=7
+    assert_eq!(ev(Op::Add, Dtype::S4, &[7, 1]), -8); // 8 & 0xF = 8, bit3 set -> 8-16
+    assert_eq!(ev(Op::Add, Dtype::S4, &[-8, -1]), 7); // -9 & 0xF = 7
+    assert_eq!(ev(Op::Sub, Dtype::S4, &[-8, 1]), 7);
+    assert_eq!(ev(Op::Mul, Dtype::S4, &[3, 3]), -7); // 9 -> 9-16
+    assert_eq!(ev(Op::Mul, Dtype::S4, &[-3, 3]), 7); // -9 & 0xF = 7
+    assert_eq!(ev(Op::Neg, Dtype::S4, &[-8]), -8); // KISS-OPS-6.4-0005
+    assert_eq!(ev(Op::Abs, Dtype::S4, &[-8]), -8);
+
+    // u4: unsigned 4-bit, range 0..=15
+    assert_eq!(ev(Op::Add, Dtype::U4, &[15, 1]), 0);
+    assert_eq!(ev(Op::Add, Dtype::U4, &[15, 15]), 14); // 30 & 0xF
+    assert_eq!(ev(Op::Sub, Dtype::U4, &[0, 1]), 15);
+    assert_eq!(ev(Op::Mul, Dtype::U4, &[4, 4]), 0); // 16 & 0xF
+    assert_eq!(ev(Op::Mul, Dtype::U4, &[3, 6]), 2); // 18 & 0xF
+    assert_eq!(ev(Op::BitNot, Dtype::U4, &[0]), 15);
+    assert_eq!(ev(Op::BitNot, Dtype::U4, &[5]), 10);
+
+    // b1: unsigned 1-bit, range 0..=1
+    assert_eq!(ev(Op::Add, Dtype::B1, &[1, 1]), 0); // 2 & 1
+    assert_eq!(ev(Op::Sub, Dtype::B1, &[0, 1]), 1); // -1 & 1
+    assert_eq!(ev(Op::Mul, Dtype::B1, &[1, 1]), 1);
+    assert_eq!(ev(Op::BitXor, Dtype::B1, &[1, 1]), 0);
+    assert_eq!(ev(Op::BitOr, Dtype::B1, &[1, 0]), 1);
+    assert_eq!(ev(Op::BitAnd, Dtype::B1, &[1, 0]), 0);
+    assert_eq!(ev(Op::BitNot, Dtype::B1, &[0]), 1);
+    assert_eq!(ev(Op::LogicalAnd, Dtype::B1, &[1, 1]), 1);
+    assert_eq!(ev(Op::LogicalNot, Dtype::B1, &[0]), 1);
+    assert_eq!(ev(Op::CmpLt, Dtype::B1, &[0, 1]), 1);
+}
+
+#[test]
 fn test_ops_int_neg_abs_wrap() {
     // KISS-OPS-6.4-0005: neg/abs of INT_MIN stay INT_MIN, no UB, no saturation.
     assert_eq!(

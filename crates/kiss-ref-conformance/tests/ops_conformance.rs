@@ -7,8 +7,11 @@
 //! signed-zero boundary — with the tolerance taken from each op's §6.8 ULP
 //! ceiling where one applies.
 
+use kiss_classify_vocab::Dtype;
 use kiss_ops_vocab::Op;
-use kiss_ref_core::{eval_op, ulp_distance_f64};
+use kiss_ref_core::kernels::scatter;
+use kiss_ref_core::tensor_ops::matmul;
+use kiss_ref_core::{eval_op, ulp_distance_f64, Combine, IndexTensor, Tensor};
 
 fn ev(op: Op, args: &[f64]) -> f64 {
     eval_op(op, args).unwrap_or_else(|e| panic!("{op:?} eval failed: {e:?}"))
@@ -40,7 +43,7 @@ fn test_ops_signed_zero_preserved() {
     // KISS-OPS-6.2-0004.
     assert!(ev(Op::Neg, &[-0.0]).is_sign_positive());
     assert!(ev(Op::Abs, &[-0.0]).is_sign_positive());
-    assert!(ev(Op::Trunc, &[-0.0]).is_sign_negative()); // §6.7-0002
+    assert!(ev(Op::Trunc, &[-0.0]).is_sign_negative()); // KISS-OPS-6.7-0002
 }
 
 // ---- §6.4 arithmetic atoms --------------------------------------------------
@@ -236,6 +239,60 @@ fn test_ops_min_max_prop_nan() {
     assert!(ev(Op::MaxProp, &[f64::NAN, 1.0]).is_nan());
     assert_eq!(ev(Op::MaxProp, &[2.0, 1.0]), 2.0);
     assert_eq!(ev(Op::FmaxIeee, &[f64::NAN, 1.0]), 1.0);
+}
+
+#[test]
+fn test_ops_scatter_atomic_minmax_nan() {
+    // KISS-OPS-6.11-0010: the float scatter atomic-max / atomic-min combines MUST be
+    // NaN-propagating, consistent with the KISS-OPS-6.11-0002 max/min reduce monoids —
+    // a NaN in EITHER the update stream or the destination makes the combined result
+    // NaN. scatter's AtomicMax/AtomicMin route through Op::MaxProp/Op::MinProp, the
+    // same monoid `test_ops_min_max_prop_nan` pins scalar-side (two-angle coverage).
+    let mk_dest = || Tensor::from_vec(vec![1.0f64, 5.0, 2.0], &[3]).unwrap();
+    let index = IndexTensor::new(vec![0i64, 1, 1, 2], &[4], Dtype::I64).unwrap();
+    let updates = Tensor::from_vec(vec![f64::NAN, 3.0, 9.0, 7.0], &[4]).unwrap();
+
+    // AtomicMax: idx0 <- max_prop(1, NaN)=NaN; idx1 <- max_prop(max_prop(5,3),9)=9;
+    //            idx2 <- max_prop(2,7)=7.
+    let out = scatter(mk_dest(), &index, &updates.view(), 0, Combine::AtomicMax).unwrap();
+    assert!(out.as_slice()[0].is_nan());
+    assert_eq!(out.as_slice()[1], 9.0);
+    assert_eq!(out.as_slice()[2], 7.0);
+
+    // AtomicMin: idx0 <- min_prop(1, NaN)=NaN; idx1 <- min_prop(min_prop(5,3),9)=3;
+    //            idx2 <- min_prop(2,7)=2.
+    let out = scatter(mk_dest(), &index, &updates.view(), 0, Combine::AtomicMin).unwrap();
+    assert!(out.as_slice()[0].is_nan());
+    assert_eq!(out.as_slice()[1], 3.0);
+    assert_eq!(out.as_slice()[2], 2.0);
+
+    // Destination already holds NaN, finite update -> destination NaN wins.
+    let dest2 = Tensor::from_vec(vec![f64::NAN, 5.0], &[2]).unwrap();
+    let index2 = IndexTensor::new(vec![0i64, 1], &[2], Dtype::I64).unwrap();
+    let upd2 = Tensor::from_vec(vec![100.0f64, 3.0], &[2]).unwrap();
+    let out = scatter(dest2, &index2, &upd2.view(), 0, Combine::AtomicMax).unwrap();
+    assert!(out.as_slice()[0].is_nan());
+    assert_eq!(out.as_slice()[1], 5.0);
+}
+
+#[test]
+fn test_ops_no_fma_contraction_exact_byte() {
+    // KISS-OPS-6.17-0002: no fused multiply-add — matmul MUST round after the
+    // multiply AND after the add separately, never as one fused rounding of a*b+c.
+    // K=2 dot product engineered so the two-separate-roundings result is exactly
+    // +0.0, while a single fused rounding would yield 2^-24 (0x3380_0000):
+    //   k0: prod = -(1+2^-11) * 1        = -(1+2^-11)           (exact)
+    //   k1: prod = (1+2^-12)^2 = 1+2^-11+2^-24 -> round_f32 = 1+2^-11 (ties-to-even)
+    //       acc  = round_f32( -(1+2^-11) + (1+2^-11) ) = +0.0
+    // A fused fma(1+2^-12, 1+2^-12, -(1+2^-11)) = round_f32(2^-24) = 2^-24 != 0.
+    let a = Tensor::from_vec(
+        vec![-(1.0f32 + 2f32.powi(-11)), 1.0 + 2f32.powi(-12)],
+        &[1, 2],
+    )
+    .unwrap();
+    let b = Tensor::from_vec(vec![1.0f32, 1.0 + 2f32.powi(-12)], &[2, 1]).unwrap();
+    let out = matmul(&a.view(), &b.view()).unwrap();
+    assert_eq!(out.as_slice()[0].to_bits(), 0u32); // +0.0, NOT 2^-24
 }
 
 #[test]

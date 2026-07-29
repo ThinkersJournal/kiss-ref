@@ -6,9 +6,9 @@
 //! 2026-07-21). Each test cites its clause id.
 //!
 //! Comparison mode follows the §6.0 determinism class of the pinned op:
-//! `ExactByte` → per-element raw-bit (`to_bits`) equality (§6.0-0002); float
+//! `ExactByte` → per-element raw-bit (`to_bits`) equality (KISS-OPS-6.0-0002); float
 //! `atomic_add` / `sum` → `OrderInvariantNondeterministic`, compared under
-//! tolerance, NEVER byte-exact (§6.0-0004). The §6.11 structural atoms are
+//! tolerance, NEVER byte-exact (KISS-OPS-6.0-0004). The §6.11 structural atoms are
 //! pinned at the kernel (op) level — the reference mirror of KISS-Conform's
 //! op tests — including the §6.13 non-primitives (`index_select`/`scatter_add`)
 //! the rulings flow through. The §6.19 recipe-encoding clauses are pinned at the
@@ -34,7 +34,7 @@ fn ix(data: &[i64], shape: &[usize]) -> IndexTensor {
         .unwrap_or_else(|e| panic!("index {shape:?}: {e:?}"))
 }
 
-/// ExactByte class → per-element raw-bit equality (§6.0-0002): distinguishes
+/// ExactByte class → per-element raw-bit equality (KISS-OPS-6.0-0002): distinguishes
 /// −0.0 from +0.0 and any NaN payload, so a value-compare cannot pass vacuously.
 fn assert_bits(got: &Tensor<f64>, want: &[f64], shape: &[usize]) {
     assert_eq!(got.shape(), shape, "output shape");
@@ -49,7 +49,7 @@ fn assert_bits(got: &Tensor<f64>, want: &[f64], shape: &[usize]) {
 }
 
 /// OrderInvariantNondeterministic class → tolerance compare, never byte-exact
-/// (§6.0-0004). The values here are exact under any fold order, but the class
+/// (KISS-OPS-6.0-0004). The values here are exact under any fold order, but the class
 /// describes the candidate's reassociation freedom, so OIN is never bit-pinned.
 fn assert_close(got: &Tensor<f64>, want: &[f64], shape: &[usize], tol: f64) {
     assert_eq!(got.shape(), shape, "output shape");
@@ -147,7 +147,7 @@ fn test_ops_scatter_dest_operand() {
 fn test_ops_scatter_updates_broadcast() {
     // KISS-OPS-6.11-0017 (ruled 2026-07-23): scatter `updates` GENERAL-broadcast
     // to the write shape (dest.shape with [axis] = index.len()) under the ordinary
-    // §6.11-0001 rules — rank-0 is the DEGENERATE case, NOT a rank-0-only carve
+    // KISS-OPS-6.11-0001 rules — rank-0 is the DEGENERATE case, NOT a rank-0-only carve
     // out; an incompatible extent is the typed Error::BroadcastIncompatible.
     // dest [0,0,0]; index [0,1,1,9] (idx 9 OOB → skipped); write shape = [4].
     let dest = t(&[0.0, 0.0, 0.0], &[3]);

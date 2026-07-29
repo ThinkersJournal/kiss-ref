@@ -9,7 +9,7 @@ fn ev(op: Op, args: &[f64]) -> f64 {
     eval_op(op, args).unwrap_or_else(|e| panic!("{op:?} failed: {e:?}"))
 }
 
-// ---- infinities (IEEE, §6.2-0001) -------------------------------------------
+// ---- infinities (IEEE, KISS-OPS-6.2-0001) -------------------------------------------
 
 #[test]
 fn test_ops_inf_arithmetic() {

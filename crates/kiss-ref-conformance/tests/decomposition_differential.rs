@@ -15,7 +15,7 @@
 //! `eval_expr` (`resolve.rs:117`). So for an unmarked op, "evaluate the op" and
 //! "evaluate its decomposition" are literally the same call sequence and agree
 //! bit-for-bit by construction. Those tests are kept as **pins**, not discoveries:
-//! §6.13-0003 ends with *"an op **not** marked MUST reproduce the reference under
+//! KISS-OPS-6.13-0003 ends with *"an op **not** marked MUST reproduce the reference under
 //! its determinism class"*, so the day anyone adds a direct kernel for an unmarked
 //! op — the exact way an implementation silently drifts from the spec — the pin
 //! turns red. They also prove **total cover**: every bound decomposition evaluates
@@ -38,14 +38,14 @@
 //! decomposition, refine-marked ones included, down to the primitive floor. That
 //! is deliberately *not* what `eval_expr` does: `eval_expr` evaluates a
 //! decomposition over the *pinned* meaning of each child op (a child `tanh` is the
-//! mandatory overflow-safe `tanh`, §6.13-0002 + §6.13-0003), which is the correct
+//! mandatory overflow-safe `tanh`, KISS-OPS-6.13-0002 + KISS-OPS-6.13-0003), which is the correct
 //! reading of a composite reference — see
 //! [`test_decomp_gelu_tanh_inherits_the_mandatory_tanh_refinement`].
 //!
 //! # Tensor non-primitives
 //!
-//! §6.13 tensor decompositions are §6.13-0009 *structured* bodies (a named §6.11
-//! structural op under an attribute record), explicitly **not** §6.13-0006
+//! §6.13 tensor decompositions are KISS-OPS-6.13-0009 *structured* bodies (a named §6.11
+//! structural op under an attribute record), explicitly **not** KISS-OPS-6.13-0006
 //! expression trees, so there is nothing to `parse` and no mechanical expansion.
 //! What is checkable is a **re-composition from the structural atoms** plus
 //! **mathematical equivalences implied by the decomposition**, and that is what the
@@ -72,7 +72,7 @@ use kiss_ref_core::{
 /// **The literal path.** Evaluate `e` with EVERY op that carries a §6.13
 /// decomposition expanded through that decomposition — *including* the
 /// refine-marked ops — so only primitive-floor atoms ever reach `eval_op`. This is
-/// the "literal reference decomposition" of §6.13-0003, with no refinement
+/// the "literal reference decomposition" of KISS-OPS-6.13-0003, with no refinement
 /// anywhere in the tree.
 ///
 /// `budget` bounds the recursion (KISS-OPS-6.14 guarantees termination at the
@@ -127,7 +127,7 @@ fn literal_f32(op: Op, args: &[f32]) -> f32 {
     eval_literal(&tree(op), args, 32).unwrap_or_else(|e| panic!("{op:?} literal path: {e:?}"))
 }
 
-/// `op` evaluated by the reference (refined where §6.13-0003 marks it), `f64`.
+/// `op` evaluated by the reference (refined where KISS-OPS-6.13-0003 marks it), `f64`.
 fn pinned_f64(op: Op, args: &[f64]) -> f64 {
     eval_op::<f64>(op, args).unwrap_or_else(|e| panic!("{op:?} eval_op: {e:?}"))
 }
@@ -137,7 +137,7 @@ fn pinned_f32(op: Op, args: &[f32]) -> f32 {
     eval_op::<f32>(op, args).unwrap_or_else(|e| panic!("{op:?} eval_op: {e:?}"))
 }
 
-/// The operand count a decomposition reads (`1 + max input index`): the §6.13-0004
+/// The operand count a decomposition reads (`1 + max input index`): the KISS-OPS-6.13-0004
 /// naming makes `x`/`a` = `input(0)` and `b` = `input(1)`.
 fn arity_of(e: &Expr) -> usize {
     match e {
@@ -360,12 +360,12 @@ fn test_decomp_bound_set_matches_the_section_6_13_scalar_table() {
     assert_eq!(
         refined.len(),
         11,
-        "§6.13-0003 marks exactly 11 ops ✓ in the Refine column"
+        "KISS-OPS-6.13-0003 marks exactly 11 ops ✓ in the Refine column"
     );
     assert_eq!(
         bound.len() - refined.len(),
         30,
-        "30 unmarked ops MUST reproduce the reference (§6.13-0003 last sentence)"
+        "30 unmarked ops MUST reproduce the reference (KISS-OPS-6.13-0003 last sentence)"
     );
     for op in REFINED {
         assert!(
@@ -374,7 +374,7 @@ fn test_decomp_bound_set_matches_the_section_6_13_scalar_table() {
         );
         assert!(
             !op.is_primitive_floor(),
-            "{op:?} is a non-primitive (§6.3-0003)"
+            "{op:?} is a non-primitive (KISS-OPS-6.3-0003)"
         );
     }
     // Every bound decomposition is scalar-evaluable — the total-cover property.
@@ -511,7 +511,7 @@ fn test_decomp_gelu_tanh_is_the_only_unmarked_op_over_a_refined_child() {
 
 #[test]
 fn test_decomp_gelu_tanh_inherits_the_mandatory_tanh_refinement() {
-    // The load-bearing reading of §6.13-0002/-0003 for a composite reference: a
+    // The load-bearing reading of KISS-OPS-6.13-0002/-0003 for a composite reference: a
     // decomposition names OPS, and each named op means its own pinned semantics.
     // `gelu_tanh` is unmarked, but its body contains `tanh`, whose overflow-safe
     // form is a MUST — so the reference for `gelu_tanh` is its body evaluated over
@@ -629,7 +629,7 @@ const UNARY_GRID: &[f64] = &[
 ];
 
 /// Where the literal decomposition of a refine-marked unary op is **well
-/// conditioned**, i.e. where §6.13-0003's "MUST agree within the declared ULP" is
+/// conditioned**, i.e. where KISS-OPS-6.13-0003's "MUST agree within the declared ULP" is
 /// a testable statement at all. Outside it the literal form is not merely a few
 /// ULP off — it is *catastrophically* wrong (see the divergence tests), and no
 /// fixed band would be honest:
@@ -690,7 +690,7 @@ fn test_decomp_refined_agree_with_literal_in_the_well_conditioned_domain() {
 
 #[test]
 fn test_decomp_refined_pow_agrees_with_exp_b_log_a_on_the_positive_base_domain() {
-    // §6.13-0005: "for a>0, pow(a,b) equals the reference exp(mul(b, log(a)))
+    // KISS-OPS-6.13-0005: "for a>0, pow(a,b) equals the reference exp(mul(b, log(a)))
     // (refinement permitted)". Outside a>0 the reference form is undefined (log of
     // a non-positive) — those cells are the divergence test below.
     for &a in &[0.5f64, 1.0, 1.5, 2.0, 3.0, 10.0, 1e5] {
@@ -711,7 +711,7 @@ fn test_decomp_refined_pow_agrees_with_exp_b_log_a_on_the_positive_base_domain()
 #[test]
 fn test_decomp_refined_ldexp_agrees_with_mul_a_exp2_b_and_is_exact_for_integer_b() {
     // §6.13: ldexp's reference is `mul(a, exp2(b))`, refine-permitted to "exact
-    // scaling a·2^b for integer b" (§6.13-0003). Two obligations, both checked:
+    // scaling a·2^b for integer b" (KISS-OPS-6.13-0003). Two obligations, both checked:
     // agreement with the reference within the chain band, AND exactness — the
     // literal form is NOT exact (measured 23 ULP at b = 52) while the refined one
     // must be.
@@ -776,7 +776,7 @@ fn test_decomp_refined_hypot_agrees_with_sqrt_of_sum_of_squares_in_range() {
 
 #[test]
 fn test_decomp_refined_diverge_where_the_literal_form_overflows() {
-    // §6.13-0003 MUST cases: "where the literal reference decomposition would
+    // KISS-OPS-6.13-0003 MUST cases: "where the literal reference decomposition would
     // overflow ... while the true function is finite (the exp-of-large-argument
     // forms tanh, sinh, cosh, silu, softplus, mish)". A refinement that quietly did
     // nothing would sail through the agreement test — these assert that the
@@ -837,7 +837,7 @@ fn test_decomp_refined_diverge_where_the_literal_form_overflows() {
 
 #[test]
 fn test_decomp_refined_diverge_where_the_literal_form_cancels() {
-    // §6.13-0003 MUST cases: "or catastrophically cancel while the true function is
+    // KISS-OPS-6.13-0003 MUST cases: "or catastrophically cancel while the true function is
     // finite". Near zero and on subnormal-adjacent inputs the literal forms collapse
     // to exactly 0 (or to the wrong low bits) while the true function is ≈ x.
     for &op in &[Op::Expm1, Op::Log1p, Op::Tanh, Op::Sinh] {
@@ -901,7 +901,7 @@ fn test_decomp_refined_preserve_signed_zero_where_the_literal_form_loses_it() {
             pinned_f64(op, &[0.0]).to_bits()
         );
     }
-    // §6.13-0005 pins the same for pow's negative-zero base: pow(-0.0, 3) = -0.0,
+    // KISS-OPS-6.13-0005 pins the same for pow's negative-zero base: pow(-0.0, 3) = -0.0,
     // which `exp(3·log(-0.0))` cannot express (log of −0 is −inf → +0).
     assert_eq!(
         literal_f64(Op::Pow, &[-0.0, 3.0]).to_bits(),
@@ -915,7 +915,7 @@ fn test_decomp_refined_preserve_signed_zero_where_the_literal_form_loses_it() {
 
 #[test]
 fn test_decomp_refined_pow_hypot_pin_domain_edges_the_literal_form_cannot_reach() {
-    // §6.13-0005 (pow full domain) and §6.13-0007 (hypot inf/NaN): the pinned edges
+    // KISS-OPS-6.13-0005 (pow full domain) and KISS-OPS-6.13-0007 (hypot inf/NaN): the pinned edges
     // the `exp(b·log a)` / `sqrt(a²+b²)` references get wrong. Each row asserts the
     // literal form's failure AND the pinned value, so the divergence is justified,
     // not merely tolerated.
@@ -935,12 +935,12 @@ fn test_decomp_refined_pow_hypot_pin_domain_edges_the_literal_form_cannot_reach(
     assert_eq!(pinned_f64(Op::Pow, &[1.0, nan]), 1.0);
     assert!(literal_f64(Op::Pow, &[nan, 0.0]).is_nan());
     assert_eq!(pinned_f64(Op::Pow, &[nan, 0.0]), 1.0);
-    // §6.13-0005 rows the reference DOES get right (regression guard on the guard).
+    // KISS-OPS-6.13-0005 rows the reference DOES get right (regression guard on the guard).
     assert_eq!(pinned_f64(Op::Pow, &[0.0, 2.0]), 0.0);
     assert_eq!(literal_f64(Op::Pow, &[0.0, 2.0]), 0.0);
     assert!(pinned_f64(Op::Pow, &[-2.0, 0.5]).is_nan()); // a<0, non-integer b
 
-    // hypot: §6.13-0007 — an infinite operand wins even against NaN.
+    // hypot: KISS-OPS-6.13-0007 — an infinite operand wins even against NaN.
     assert!(literal_f64(Op::Hypot, &[inf, nan]).is_nan());
     assert!(pinned_f64(Op::Hypot, &[inf, nan]).is_infinite());
     assert!(literal_f64(Op::Hypot, &[nan, -inf]).is_nan());
@@ -950,7 +950,7 @@ fn test_decomp_refined_pow_hypot_pin_domain_edges_the_literal_form_cannot_reach(
     assert!(pinned_f64(Op::Hypot, &[1e200, 1e200]).is_finite());
     assert_eq!(literal_f64(Op::Hypot, &[1e-200, 1e-200]), 0.0);
     assert!(pinned_f64(Op::Hypot, &[1e-200, 1e-200]) > 0.0);
-    // finite + NaN still propagates NaN on both paths (§6.13-0007 second half).
+    // finite + NaN still propagates NaN on both paths (KISS-OPS-6.13-0007 second half).
     assert!(pinned_f64(Op::Hypot, &[nan, 2.0]).is_nan());
     assert!(literal_f64(Op::Hypot, &[nan, 2.0]).is_nan());
     // f32 lane: the overflow edge arrives at ~1e19.
@@ -963,7 +963,7 @@ fn test_decomp_ldexp_refined_must_not_overflow_where_the_reference_does_not() {
     // Regression: the refined `ldexp` used to materialize `2^b` and overflow to
     // +inf for b >= 1024 even when `a * 2^b` is finite (found by THIS
     // differential; fixed in resolve.rs by splitting the exponent when `2^b`
-    // overflows). §6.13-0003 lets `ldexp` be refined, but a refinement MUST
+    // overflows). KISS-OPS-6.13-0003 lets `ldexp` be refined, but a refinement MUST
     // "agree with the reference decomposition's pinned mathematical meaning
     // within the op's declared ULP" — and +inf vs 1.797e8 is not within any ULP.
     // Witness:
@@ -987,7 +987,7 @@ fn test_decomp_ldexp_refined_must_not_overflow_where_the_reference_does_not() {
 }
 
 // =============================================================================
-// Group 3 — tensor non-primitives (§6.13-0009 structured bodies)
+// Group 3 — tensor non-primitives (KISS-OPS-6.13-0009 structured bodies)
 // =============================================================================
 
 fn t(data: &[f64], shape: &[usize]) -> Tensor<f64> {
@@ -1031,13 +1031,13 @@ fn test_decomp_tensor_coverage_is_declared_not_assumed() {
         Op::Embedding,
     ];
     // NOT differentially checked here, and why:
-    // * `scatter_add` — §6.13-0009 structured op over `scatter(combine=atomic-add)`;
-    //   float atomic-add is order-invariant/**nondeterministic** (§6.0-0004), so no
+    // * `scatter_add` — KISS-OPS-6.13-0009 structured op over `scatter(combine=atomic-add)`;
+    //   float atomic-add is order-invariant/**nondeterministic** (KISS-OPS-6.0-0004), so no
     //   byte-exact recomposition is legitimate and a tolerance recomposition would
     //   just re-run the same atom. Belongs with a scatter-semantics track.
-    // * `avg_pool` / `max_pool` / `im2col` — §6.13-0009 structured ops whose bodies
+    // * `avg_pool` / `max_pool` / `im2col` — KISS-OPS-6.13-0009 structured ops whose bodies
     //   are `reduce_mean` / `reduce(max)` / a structured `gather` **over the pooled
-    //   window view**, parameterized by the §6.13-0004 window attribute record. The
+    //   window view**, parameterized by the KISS-OPS-6.13-0004 window attribute record. The
     //   window view IS the thing under test (`window.rs`); rebuilding it here would
     //   re-transcribe the same index arithmetic instead of differentially checking
     //   it. Belongs with a window-family track.
@@ -1071,17 +1071,17 @@ fn test_decomp_tensor_coverage_is_declared_not_assumed() {
 fn test_decomp_tensor_matmul_equals_element_map_then_reduce() {
     // §6.13 `matmul`: "reduce(sum, axis=K) of element_map(mul(input(0), input(1)))",
     // input(0) read at [m,k] broadcast over N and input(1) at [k,n] broadcast over M
-    // (§6.11-0001). This is a REAL differential: `tensor_ops::matmul` is a
+    // (KISS-OPS-6.11-0001). This is a REAL differential: `tensor_ops::matmul` is a
     // hand-written accumulation loop, while the right-hand side is built here from
     // the two structural atoms over the explicit (m,n,k) iteration space. Both fold
     // K ascending from the sum identity, so the §6.13 form is reproduced BIT-EXACTLY
-    // (not merely within the §6.0-0004 nondeterminism the op declares).
+    // (not merely within the KISS-OPS-6.0-0004 nondeterminism the op declares).
     let (m, k, n) = (3usize, 4usize, 2usize);
     let a: Vec<f64> = (1..=(m * k)).map(|i| i as f64 * 0.5 - 3.0).collect();
     let b: Vec<f64> = (1..=(k * n)).map(|i| i as f64 * 0.25 - 1.0).collect();
     let direct = tops::matmul(&t(&a, &[m, k]).view(), &t(&b, &[k, n]).view()).unwrap();
 
-    // materialize the (m,n,k) iteration space with the §6.11-0001 broadcast reads
+    // materialize the (m,n,k) iteration space with the KISS-OPS-6.11-0001 broadcast reads
     let mut a3 = Vec::with_capacity(m * n * k);
     let mut b3 = Vec::with_capacity(m * n * k);
     for i in 0..m {
@@ -1119,7 +1119,7 @@ fn test_decomp_tensor_matmul_equals_element_map_then_reduce() {
 #[test]
 fn test_decomp_tensor_reduce_mean_divisor_is_the_product_of_reduced_extents() {
     // §6.13 `reduce_mean`: `div(reduce(sum, x), reduced_count)`, "divisor is the
-    // product of extents over ALL reduced axes (§6.12-0001)". The multi-axis case is
+    // product of extents over ALL reduced axes (KISS-OPS-6.12-0001)". The multi-axis case is
     // where a transcription goes wrong (dividing by one extent, or by the output
     // element count), so the divisor is recomputed independently here.
     let y = Tensor::from_vec((1..=24).map(|i| i as f64).collect::<Vec<_>>(), &[2, 3, 4]).unwrap();
@@ -1151,7 +1151,7 @@ fn test_decomp_tensor_reduce_mean_divisor_is_the_product_of_reduced_extents() {
 #[test]
 fn test_decomp_tensor_reduce_var_equals_the_centered_form_and_where_it_stops() {
     // §6.13 `reduce_var`: `sub(reduce_mean(sqr(x)), sqr(reduce_mean(x)))` — the
-    // textbook E[x²]−E[x]² form, population (§6.13-0004). Differential target: the
+    // textbook E[x²]−E[x]² form, population (KISS-OPS-6.13-0004). Differential target: the
     // mathematically equal but numerically different centered form E[(x−μ)²],
     // computed here independently.
     for row in [
@@ -1188,7 +1188,7 @@ fn test_decomp_tensor_reduce_var_equals_the_centered_form_and_where_it_stops() {
     // decomposition cancels — 2.0 against a true 1.25. That is a property of the
     // SPEC's decomposition (which kiss-ref transcribes faithfully), not a kiss-ref
     // bug; pinned here so consumers see the cell rather than discovering it on
-    // device. §6.13-0004 lets an implementation declare a Bessel correction as an
+    // device. KISS-OPS-6.13-0004 lets an implementation declare a Bessel correction as an
     // attribute, but NOT change the decomposition silently — so this stays.
     let big = vec![1e8, 1e8 + 1.0, 1e8 + 2.0, 1e8 + 3.0];
     let v = tops::reduce_var(&t(&big, &[4]).view(), &[0]).unwrap();
@@ -1236,7 +1236,7 @@ fn test_decomp_tensor_reduce_norm2_equals_sqrt_of_the_sum_of_squares() {
 fn test_decomp_tensor_logsumexp_equals_the_naive_form_and_survives_its_overflow() {
     // §6.13 `logsumexp`: `m=reduce(max,x); out=add(m, log(reduce(sum, exp(sub(x,m)))))`
     // — the max-shifted form. The naive `log(Σ e^x)` is the same function; the shift
-    // is exactly the tensor-lane analogue of a §6.13-0003 refinement, so it gets the
+    // is exactly the tensor-lane analogue of a KISS-OPS-6.13-0003 refinement, so it gets the
     // same two-sided treatment: agree in range, diverge where the naive form dies.
     let naive = |row: &[f64]| -> f64 {
         let x = t(row, &[row.len()]);
@@ -1355,8 +1355,8 @@ fn test_decomp_tensor_softmax_is_shift_invariant_where_the_naive_form_would_over
 fn test_decomp_tensor_scans_agree_with_their_reductions() {
     // §6.13 `cumsum`/`cumprod`/`cummax` = `prefix_scan(monoid, inclusive)`; §6.13
     // reductions fold the same monoid over the same axis. The last element of an
-    // inclusive scan is therefore the reduction — a cross-check of §6.11-0003
-    // against §6.11-0002 through the two §6.13 op families. Both fold ascending from
+    // inclusive scan is therefore the reduction — a cross-check of KISS-OPS-6.11-0003
+    // against KISS-OPS-6.11-0002 through the two §6.13 op families. Both fold ascending from
     // the monoid identity, so this is byte-exact.
     let row = [0.1, 0.2, 0.3, 0.4, 0.5];
     let x = t(&row, &[5]);
@@ -1387,7 +1387,7 @@ fn test_decomp_tensor_scans_agree_with_their_reductions() {
 fn test_decomp_tensor_any_all_are_the_max_min_of_cmp_ne() {
     // §6.13 `any` = `reduce(max, cmp_ne(x, const(0)))`, `all` = `reduce(min, ...)`.
     // Recomposed here from the atoms; the content is the monoid choice and the
-    // {0,1} mapping — including NaN, which is non-zero (§6.6-0003: cmp_ne(NaN,0)=1).
+    // {0,1} mapping — including NaN, which is non-zero (KISS-OPS-6.6-0003: cmp_ne(NaN,0)=1).
     for row in [
         vec![0.0, 0.0, 0.0],
         vec![0.0, 1.0, 0.0],
@@ -1430,10 +1430,10 @@ fn test_decomp_tensor_any_all_are_the_max_min_of_cmp_ne() {
 fn test_decomp_tensor_argmax_matches_an_independent_scan() {
     // §6.13 `argmax`: "original-index at rank 0 of sort_network(desc, keys=x)". The
     // differential target is an ordinary linear scan keeping the FIRST maximum —
-    // which is what the §6.11-0007 stable sort (ties → lower original index) must
+    // which is what the KISS-OPS-6.11-0007 stable sort (ties → lower original index) must
     // produce. Ties are the interesting cell; NaN is excluded on purpose (the
     // sort's NaN-greatest total order versus a max-reduction's NaN propagation is a
-    // §6.11-0007 question this file does not adjudicate).
+    // KISS-OPS-6.11-0007 question this file does not adjudicate).
     for row in [
         vec![1.0, 9.0, 3.0, 2.0],
         vec![1.0, 9.0, 3.0, 9.0], // tie → lowest index

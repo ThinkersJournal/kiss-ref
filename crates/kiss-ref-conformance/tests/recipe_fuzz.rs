@@ -1963,7 +1963,7 @@ fn fuzz_mostly_valid_f64() {
                         // (kernels.rs Resolved::Skip arm) — mere presence is
                         // satisfiable with the base dead on every cell
                         // (adversarial-review find). A NEGATIVE index entry is
-                        // OOB for EVERY extent (§6.11-0004, no from-end wrap),
+                        // OOB for EVERY extent (KISS-OPS-6.11-0004, no from-end wrap),
                         // so Skip + base:Some + a negative Slot entry + Ok eval
                         // ⇒ the base-read path executed.
                         if *oob == OobPolicy::Skip && base.is_some() {

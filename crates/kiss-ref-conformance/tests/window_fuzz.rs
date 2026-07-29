@@ -1,5 +1,13 @@
-//! Never-panic fuzz suite for the §6.13 **window family** — `avg_pool`,
-//! `max_pool`, `im2col` (`kiss-ref-core/src/window.rs`).
+//! Never-panic fuzz suite for the **window family** — `avg_pool`, `max_pool`,
+//! `im2col` (`kiss-ref-core/src/window.rs`).
+//!
+//! CLAUSES: KISS-OPS-6.13-0004 (per-axis window geometry — `window_size`/`stride`/
+//! `dilation`/`padding` + the `count_include_pad` divisor) and KISS-OPS-6.13-0009
+//! (each structured op's semantics + inf/NaN/OOB edges MUST be those of its §6.11
+//! decomposition). The cross-op oracles below ground on that decomposition: the
+//! max-pool empty-window identity = the `reduce(max)` identity (KISS-OPS-6.11-0002;
+//! finite −448 on e4m3fn per -0002a), im2col OOB taps zero-filled = `gather`
+//! zero-fill (KISS-OPS-6.11-0004), avg/max OOB taps skipped per KISS-OPS-6.13-0004.
 //!
 //! WHY THIS FILE EXISTS: the window family is the one op region the adversarial
 //! DAG fuzzer (`recipe_fuzz.rs`) cannot reach — those ops are not recipe `Node`
@@ -17,7 +25,7 @@
 //! ## What is actually checked (falsifiable, not vacuous)
 //! 1. **Never-panic** — the primary contract.
 //! 2. **An independent `u128` model of the window shape formula.** `Stage1` +
-//!    [`expect_avg`]/[`expect_max`]/[`expect_im2col`] recompute §6.13's
+//!    [`expect_avg`]/[`expect_max`]/[`expect_im2col`] recompute the KISS-OPS-6.13-0004
 //!    `floor((in + 2·pad − dilation·(k−1) − 1) / stride) + 1` in `u128` — an
 //!    arithmetic width in which none of the intermediates can overflow — and
 //!    pin the EXACT `Ok` shape or the EXACT `Err` value. HONESTY NOTE: the model

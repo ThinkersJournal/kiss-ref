@@ -4,14 +4,14 @@
 //! This corpus is the recipe-level differential conformance artifact — kiss-ref
 //! is the differential target/proxy, NOT the oracle (conformance role, ratified
 //! 2026-07-21). Golden values are hand-derived from KISS-Ops first principles
-//! (§6.11-0002..0008, §6.12-0001, §6.13); the evaluator is CHECKED against
+//! (KISS-OPS-6.11-0002..0008, KISS-OPS-6.12-0001, §6.13); the evaluator is CHECKED against
 //! them, never the source of them. Comparison mode is chosen by the ROOT node's
-//! [`DetClass`] per §6.0-0001..0005: `ExactByte` → `to_bits` equality; `Ulp(k)`
+//! [`DetClass`] per KISS-OPS-6.0-0001..0005: `ExactByte` → `to_bits` equality; `Ulp(k)`
 //! → within `k` by the sign-magnitude metric ([`ulp_distance_f64`], the
 //! ops_conformance idiom); `OrderInvariantNondeterministic` → tolerance, NEVER
-//! byte-exact. Recipes are the §6.4-0009/§6.19 logical flat-DAG form; ULP
-//! ceilings are §6.8 (via the vocab); shapes §6.20-0007/0008; stable sort ties
-//! §6.11-0007. Test naming mirrors KISS-Conform (`test_recipe_*`).
+//! byte-exact. Recipes are the KISS-CONTRACT-6.4-0009/§6.19 logical flat-DAG form; ULP
+//! ceilings are §6.8 (via the vocab); shapes KISS-OPS-6.20-0007/0008; stable sort ties
+//! KISS-OPS-6.11-0007. Test naming mirrors KISS-Conform (`test_recipe_*`).
 
 use kiss_classify_vocab::Dtype;
 use kiss_ops_vocab::Op;
@@ -52,7 +52,7 @@ impl Bits for f32 {
     }
 }
 
-/// Root class `ExactByte` → per-element raw-bit equality (§6.0-0002).
+/// Root class `ExactByte` → per-element raw-bit equality (KISS-OPS-6.0-0002).
 fn assert_bits<T: Bits>(got: &Tensor<T>, want: &[f64], shape: &[usize]) {
     assert_eq!(got.shape(), shape, "output shape");
     assert_eq!(got.as_slice().len(), want.len(), "element count");
@@ -68,7 +68,7 @@ fn assert_bits<T: Bits>(got: &Tensor<T>, want: &[f64], shape: &[usize]) {
 }
 
 /// Root class `OrderInvariantNondeterministic` → tolerance compare, never
-/// byte-exact (§6.0-0004). NaN is never an expected corpus value.
+/// byte-exact (KISS-OPS-6.0-0004). NaN is never an expected corpus value.
 fn assert_close<T: ScalarFloat>(got: &Tensor<T>, want: &[f64], shape: &[usize], tol: f64) {
     assert_eq!(got.shape(), shape, "output shape");
     assert_eq!(got.as_slice().len(), want.len(), "element count");
@@ -81,7 +81,7 @@ fn assert_close<T: ScalarFloat>(got: &Tensor<T>, want: &[f64], shape: &[usize], 
     }
 }
 
-/// Root class `Ulp(k)` → within `k` ULP by the sign-magnitude metric (§6.0-0003).
+/// Root class `Ulp(k)` → within `k` ULP by the sign-magnitude metric (KISS-OPS-6.0-0003).
 fn assert_ulp(got: &Tensor<f64>, want: &[f64], shape: &[usize], ulps: u64) {
     assert_eq!(got.shape(), shape, "output shape");
     assert_eq!(got.as_slice().len(), want.len(), "element count");
@@ -267,7 +267,7 @@ fn r5_inputs() -> Vec<Tensor<f64>> {
     vec![t64(&[2.0, 0.0, 2.0, -0.0, 3.0], &[5])]
 }
 
-/// R6: scatter_add histogram with one OOB write (skipped, §6.11-0005).
+/// R6: scatter_add histogram with one OOB write (skipped, KISS-OPS-6.11-0005).
 fn r6_dag() -> FlatDag {
     FlatDag::new(
         vec![
@@ -295,7 +295,7 @@ fn r6_indices() -> Vec<IndexTensor> {
 }
 
 /// R7: gather-or-default — `Skip` + rank-0 `Const` base; high AND negative OOB
-/// (§6.11-0004: negative is OOB, no from-end wrap).
+/// (KISS-OPS-6.11-0004: negative is OOB, no from-end wrap).
 fn r7_dag() -> FlatDag {
     FlatDag::new(
         vec![
@@ -319,7 +319,7 @@ fn r7_indices() -> Vec<IndexTensor> {
     vec![ix(&[1, 5, 0, -1], &[4])]
 }
 
-/// R8: iota (§6.12-0001 coord leaf) × data — pins signed zero through the
+/// R8: iota (KISS-OPS-6.12-0001 coord leaf) × data — pins signed zero through the
 /// recipe path.
 fn r8_dag() -> FlatDag {
     FlatDag::new(
@@ -404,7 +404,7 @@ fn r1_case<T: ScalarFloat>(tol: f64) {
 
 #[test]
 fn test_recipe_matmul_bias_relu() {
-    // §6.4-0009 flat-DAG matmul+epilogue; §6.20-0007 bias broadcast; §6.0-0004
+    // KISS-CONTRACT-6.4-0009 flat-DAG matmul+epilogue; KISS-OPS-6.20-0007 bias broadcast; KISS-OPS-6.0-0004
     // nondet root propagation. Identical logical results + dets at both dtypes.
     r1_case::<f64>(1e-12);
     r1_case::<f32>(1e-6);
@@ -413,7 +413,7 @@ fn test_recipe_matmul_bias_relu() {
 #[test]
 fn test_recipe_softmax_rows() {
     // §6.13 softmax shape; §6.8 exp ceiling pinned exactly (Ulp(4.0)); Max-
-    // reduce ExactByte vs Sum-reduce OIN (§6.0-0004). Hand arithmetic:
+    // reduce ExactByte vs Sum-reduce OIN (KISS-OPS-6.0-0004). Hand arithmetic:
     //   row0: max=1, shifted=[−1,0], exp=[e⁻¹,1]=[0.36787944117144233, 1],
     //         sum=1.3678794411714423, softmax=[0.2689414213699951,
     //         0.7310585786300049] (= sigmoid(∓1));
@@ -470,7 +470,7 @@ fn r4_case<T: Bits>() {
 
 #[test]
 fn test_recipe_argsort_gather_reorder() {
-    // §6.11-0007 sort + §6.11-0004 gather via IndexRef::Node — a real
+    // KISS-OPS-6.11-0007 sort + KISS-OPS-6.11-0004 gather via IndexRef::Node — a real
     // scheduling edge, ExactByte end-to-end, identical at both dtypes.
     r4_case::<f64>();
     r4_case::<f32>();
@@ -478,7 +478,7 @@ fn test_recipe_argsort_gather_reorder() {
 
 #[test]
 fn test_recipe_sort_dual_output_stable_ties() {
-    // §6.11-0007: total order has −0.0 == +0.0 (tie) and duplicate keys tie;
+    // KISS-OPS-6.11-0007: total order has −0.0 == +0.0 (tie) and duplicate keys tie;
     // ties → lower original index, values are a RAW-BIT permutation. keys
     // [2.0, 0.0, 2.0, −0.0, 3.0] asc → (orig1,+0.0),(orig3,−0.0),(orig0,2.0),
     // (orig2,2.0),(orig4,3.0).
@@ -487,7 +487,7 @@ fn test_recipe_sort_dual_output_stable_ties() {
     // Pin the raw-bit ±0 permutation explicitly.
     assert_eq!(r.outputs[0].as_slice()[0].to_bits(), 0x0000_0000_0000_0000);
     assert_eq!(r.outputs[0].as_slice()[1].to_bits(), 0x8000_0000_0000_0000);
-    // Index lane: the §6.11-0007 lower-original-index tie order.
+    // Index lane: the KISS-OPS-6.11-0007 lower-original-index tie order.
     assert_eq!(r.index_outputs.len(), 1);
     assert_eq!(r.index_outputs[0].as_slice(), &[1, 3, 0, 2, 4]);
     // ONE class covers both lanes.
@@ -496,7 +496,7 @@ fn test_recipe_sort_dual_output_stable_ties() {
 
 #[test]
 fn test_recipe_scatter_add_histogram() {
-    // §6.11-0005/-0006: OOB write skipped, atomic_add folds colliding sources
+    // KISS-OPS-6.11-0005/-0006: OOB write skipped, atomic_add folds colliding sources
     // in row-major source order, untouched dest cells keep dest values.
     //   bin0 ← src0(1.0), src2(0.5) → 1.5; bin2 ← src1(2.0), src4(4.0) → 6;
     //   bin3 ← src3(0.25); src5 (idx 7 ≥ 4) skipped; bin1 keeps dest 0.0.
@@ -513,7 +513,7 @@ fn test_recipe_scatter_add_histogram() {
 
 #[test]
 fn test_recipe_gather_or_default_skip_base() {
-    // Main: §6.11-0004 (negative index is OOB, NO from-end wrap) + the cosigned
+    // Main: KISS-OPS-6.11-0004 (negative index is OOB, NO from-end wrap) + the cosigned
     // §6.11 gather-skip RFC base operand. idx [1,5,0,−1] over data [8,16,32]:
     // 1 in → 16; 5 OOB → base −0.5; 0 in → 8; −1 OOB → base −0.5.
     let r = eval_recipe(&r7_dag(), &r7_inputs(), &[], &r7_indices()).expect("R7 must evaluate");
@@ -523,7 +523,7 @@ fn test_recipe_gather_or_default_skip_base() {
 
     // Det-pair variant: base = exp(const 0.0) carries Ulp(4.0). The base's
     // class joins ONLY under Skip — a static, policy-conditioned join, never
-    // index-conditioned (§6.0-0005 precision the comparator relies on).
+    // index-conditioned (KISS-OPS-6.0-0005 precision the comparator relies on).
     let mk = |oob| {
         FlatDag::new(
             vec![
@@ -558,7 +558,7 @@ fn test_recipe_gather_or_default_skip_base() {
 
     // Discriminating arm (adversarial-review find): with ALL-IN-RANGE indices
     // the base is never read at runtime, yet under Skip its class MUST STILL
-    // join — the §6.0-0005 join is policy-conditioned (static), never
+    // join — the KISS-OPS-6.0-0005 join is policy-conditioned (static), never
     // index-conditioned. A lazy join-only-if-a-Skip-fired evaluator passes the
     // two arms above (r7_indices has live OOB cells) but fails here.
     let in_range = ix(&[0, 1, 2, 2], &[4]);
@@ -570,8 +570,8 @@ fn test_recipe_gather_or_default_skip_base() {
 
 #[test]
 fn test_recipe_iota_positional() {
-    // §6.12-0001 coord leaf: iota axis 1 over [2,3] = [0,1,2,0,1,2]; product
-    // with x — element [1,0] = (+0.0)·(−1.0) = −0.0 pins §6.2-0004 signed zero
+    // KISS-OPS-6.12-0001 coord leaf: iota axis 1 over [2,3] = [0,1,2,0,1,2]; product
+    // with x — element [1,0] = (+0.0)·(−1.0) = −0.0 pins KISS-OPS-6.2-0004 signed zero
     // through the recipe path (bit compare).
     let r = eval_recipe(&r8_dag(), &r8_inputs(), &[], &[]).expect("R8 must evaluate");
     assert_bits(&r.outputs[0], &[0.0, 1.5, 5.0, -0.0, 2.0, -8.0], &[2, 3]);
@@ -623,7 +623,7 @@ fn test_recipe_bincount_scalar_updates() {
     // R10 — bincount (KISS PR #75 companion, RULED general-broadcast
     // 2026-07-23; the cross-implementation witness golden):
     // scatter[0, atomic-add, skip, i32](const(1), in0) — Baracuda's exact 2c
-    // emit shape. Rank-0 updates broadcast over the index count (§6.11-0001).
+    // emit shape. Rank-0 updates broadcast over the index count (KISS-OPS-6.11-0001).
     // x = [0,2,0,3,2,2] over 4 zeroed bins → hand fold: bin0←{0,0}=2,
     // bin1←{}=0, bin2←{2,2,2}=3, bin3←{3}=1 → [2,0,3,1].
     let dag = FlatDag::new(
@@ -641,11 +641,11 @@ fn test_recipe_bincount_scalar_updates() {
         vec![2],
     );
     let dest = t64(&[0.0, 0.0, 0.0, 0.0], &[4]);
-    // i32 index dtype per the emit; values widened per §6.11-0009.
+    // i32 index dtype per the emit; values widened per KISS-OPS-6.11-0009.
     let idx = IndexTensor::new(vec![0, 2, 0, 3, 2, 2], &[6], Dtype::I32)
         .unwrap_or_else(|e| panic!("bincount index fixture failed: {e:?}"));
     let r = eval_recipe(&dag, &[dest], &[], &[idx]).expect("R10 must evaluate");
-    // Root class OIN (float atomic_add) → tolerance compare per §6.0-0004,
+    // Root class OIN (float atomic_add) → tolerance compare per KISS-OPS-6.0-0004,
     // never byte-exact — even though small-int sums are exact under any order.
     assert_close(&r.outputs[0], &[2.0, 0.0, 3.0, 1.0], &[4], 1e-12);
     assert_eq!(r.dets, vec![EB, EB, OIN]);
@@ -1021,4 +1021,45 @@ fn test_recipe_fuzz_mutations_decline_typed() {
             }
         }
     }
+}
+
+#[test]
+fn test_recipe_const_bits_roundtrip_and_snan_limit() {
+    // KISS-OPS-6.12-0002: a const leaf carries its value as the exact dtype bit
+    // pattern, round-tripping ±0, ±inf, subnormals, and quiet/signaling NaN payloads.
+    // kiss-ref's `Node::Const` holds an f64 REAL value (materialized via `T::from_f64`),
+    // so the guarantee holds FULLY on the f64 lane, but a signaling-NaN PAYLOAD is NOT
+    // representable on the narrow lanes: `from_f64` narrows and the reference platform
+    // quiets the sNaN. This test pins what holds and DOCUMENTS the limitation; fully
+    // meeting 6.12-0002 on the narrow lanes would need a bit-typed const variant (e.g.
+    // `Node::ConstBits(u64)`) — a design decision routed to the spec/impl owners, not
+    // something to paper over in a test.
+    let f64_const = |v: f64| -> u64 {
+        let dag = FlatDag::new(vec![Node::Const(v)], vec![0]);
+        eval_recipe::<f64>(&dag, &[], &[], &[]).unwrap().outputs[0].as_slice()[0].to_bits()
+    };
+    let f32_const = |v: f64| -> u32 {
+        let dag = FlatDag::new(vec![Node::Const(v)], vec![0]);
+        eval_recipe::<f32>(&dag, &[], &[], &[]).unwrap().outputs[0].as_slice()[0].to_bits()
+    };
+
+    // f64 lane: exact bit round-trip, INCLUDING a signaling-NaN payload — `from_f64`
+    // is the identity on f64, so the payload AND the signaling bit survive verbatim.
+    let snan = 0x7FF0_0000_0000_0001u64; // exp all-ones, mantissa-MSB clear, payload 1
+    assert_eq!(f64_const(f64::from_bits(snan)), snan);
+    assert_eq!(f64_const(-0.0), 0x8000_0000_0000_0000);
+    assert_eq!(f64_const(f64::INFINITY), 0x7FF0_0000_0000_0000);
+    assert_eq!(f64_const(f64::from_bits(1)), 1); // smallest positive subnormal
+
+    // f32 lane: finite / ±0 / ±inf / subnormal round-trip exactly...
+    assert_eq!(f32_const(-0.0), 0x8000_0000);
+    assert_eq!(f32_const(f64::INFINITY), 0x7F80_0000);
+    assert_eq!(f32_const(f64::from_bits(1)), 0); // 2^-1074 underflows f32 -> +0.0
+                                                 // ...but the sNaN payload is LOST. We assert only that the result IS a NaN (exp
+                                                 // all-ones, mantissa nonzero) — Rust does not pin f64->f32 NaN bits, and the
+                                                 // signaling f64 payload cannot survive narrowing into f32's f64-valued Const.
+                                                 // (On the f64 lane above it DID survive, exact — that is the 6.12-0002 boundary.)
+    let nan_bits = f32_const(f64::from_bits(snan));
+    assert_eq!(nan_bits & 0x7F80_0000, 0x7F80_0000);
+    assert_ne!(nan_bits & 0x007F_FFFF, 0);
 }

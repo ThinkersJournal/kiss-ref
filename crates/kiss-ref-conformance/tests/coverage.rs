@@ -129,14 +129,14 @@ fn coverage_int_ops_done_on_every_integer_dtype() {
 
 #[test]
 fn coverage_narrow_floats_match_wide_except_nextafter() {
-    // f16/bf16 cover the same float ops as f32/f64, minus nextafter (§6.9-0003).
+    // f16/bf16 cover the same float ops as f32/f64, minus nextafter (KISS-OPS-6.9-0003).
     for &op in Op::ALL {
         for &d in &[Dtype::F16, Dtype::Bf16] {
             if float_supported(op) && op != Op::Nextafter {
                 assert_eq!(support(op, d), Support::Done, "{op:?}/{d:?}");
             }
         }
-        // nextafter is NOT APPLICABLE on the narrow floats (§6.9-0003) — spec-illegal,
+        // nextafter is NOT APPLICABLE on the narrow floats (KISS-OPS-6.9-0003) — spec-illegal,
         // not merely unimplemented.
         assert_eq!(support(Op::Nextafter, Dtype::F16), Support::NotApplicable);
         assert_eq!(support(Op::Nextafter, Dtype::Bf16), Support::NotApplicable);
@@ -167,7 +167,7 @@ fn coverage_support_consistency() {
 
 #[test]
 fn coverage_complex_all_not_applicable() {
-    // §6.16-0007: complex arithmetic is the deferred §6.18 op family, so NONE of
+    // KISS-OPS-6.16-0007: complex arithmetic is the deferred §6.18 op family, so NONE of
     // the 106 vocab ops apply to a complex compute dtype — every cell is
     // NotApplicable, not a pending backlog item.
     for &d in &[Dtype::C32, Dtype::C64] {
@@ -181,12 +181,12 @@ fn coverage_complex_all_not_applicable() {
 fn coverage_illegal_cells_are_not_applicable() {
     // Permanently-illegal (op × dtype) cells report NotApplicable, not Pending —
     // they leave the coverage backlog entirely.
-    assert_eq!(support(Op::BitAnd, Dtype::F32), Support::NotApplicable); // bitwise×float §6.10-0001
+    assert_eq!(support(Op::BitAnd, Dtype::F32), Support::NotApplicable); // bitwise×float KISS-OPS-6.10-0001
     assert_eq!(support(Op::BitOr, Dtype::Bool), Support::NotApplicable); // bitwise×bool
-    assert_eq!(support(Op::Div, Dtype::I32), Support::NotApplicable); // div×int §6.4-0002
+    assert_eq!(support(Op::Div, Dtype::I32), Support::NotApplicable); // div×int KISS-OPS-6.4-0002
     assert_eq!(support(Op::Exp, Dtype::I32), Support::NotApplicable); // transcendental×int §6.8
     assert_eq!(support(Op::Softmax, Dtype::U8), Support::NotApplicable); // normalization×int
-    assert_eq!(support(Op::Nextafter, Dtype::F16), Support::NotApplicable); // §6.9-0003
+    assert_eq!(support(Op::Nextafter, Dtype::F16), Support::NotApplicable); // KISS-OPS-6.9-0003
                                                                             // ...FP8 float ops and the bool truth-valued ops are now Done.
     assert_eq!(support(Op::Add, Dtype::E4m3), Support::Done);
     assert_eq!(support(Op::LogicalAnd, Dtype::Bool), Support::Done);
