@@ -609,7 +609,7 @@ pub fn matmul(a: &View<i128>, b: &View<i128>, dtype: Dtype) -> Result<Tensor<i12
 
 /// **max_pool** (integer lane) — §6.13 `reduce(max)` over the window; OOB taps
 /// skipped. A wholly-out-of-bounds window yields the max monoid identity in
-/// `dtype` (the dtype minimum, via [`int_identity`]), NOT `−inf`. Combines via
+/// `dtype` (the dtype minimum, via `int_identity`), NOT `−inf`. Combines via
 /// [`eval_int_op`]`(Op::MaxProp, …)`, which on integers is `args[0] >= args[1] ?
 /// args[0] : args[1]` (`scalar_int.rs`): there is no NaN to propagate/suppress and
 /// no `−0.0`/`+0.0` ordering, so the IEEE `fmax`/`max` distinction that motivates

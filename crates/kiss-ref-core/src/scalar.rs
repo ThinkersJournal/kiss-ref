@@ -33,7 +33,7 @@ impl sealed::Sealed for crate::fp8::E5m2 {}
 /// A floating-point compute dtype the reference evaluates atoms in. A **sealed**
 /// trait: implemented for exactly `f64`, `f32`, `half::f16`, `half::bf16`, `E4m3`,
 /// and `E5m2` — the six KISS float lanes. Downstream crates cannot implement it
-/// (see [`sealed`]), which is what lets kiss-ref be an authoritative differential
+/// (see the private `sealed` module), which is what lets kiss-ref be an authoritative differential
 /// reference rather than a mirror of a consumer's own arithmetic.
 pub trait ScalarFloat: sealed::Sealed + Copy + PartialEq + PartialOrd {
     const ZERO: Self;

@@ -1,14 +1,18 @@
 name: CI
 
-# Every gate that was previously run by hand. Four of them, ALL HARD:
+# Every gate that was previously run by hand. Six of them, ALL HARD:
 #   1. `cargo test --workspace`                  — the conformance suite + unit tests
 #   2. a *genuine* no_std build of kiss-ref-core against a bare-metal target
 #   3. `cargo fmt --all --check`                 — formatting
 #   4. `cargo clippy --workspace --all-targets`  — warnings denied
+#   5. `cargo doc` with RUSTDOCFLAGS=-D warnings  — no broken/private intra-doc links
+#   6. `cargo package --workspace`               — publish-readiness (now that we ship)
 #
-# All four FAIL the job. (3) and (4) were `continue-on-error` initially because the
+# All six FAIL the job. (3) and (4) were `continue-on-error` initially because the
 # tree predated any fmt/clippy pass; the dedicated `cargo fmt --all` + clippy
-# cleanup landed, so they are now hard gates like the rest.
+# cleanup landed, so they are now hard gates like the rest. (5) and (6) were added
+# once the crates were published to crates.io (v0.1.0/v0.2.0): a dead docs.rs link
+# and a publish-breaking metadata regression are now real, so they gate too.
 #
 # (2) is the load-bearing one. kiss-ref-core is `#![cfg_attr(not(test), no_std)]`
 # and Fuel consumes it relying on that property. A host build cannot prove it:
@@ -102,3 +106,20 @@ jobs:
       - name: Tests
         if: ${{ !cancelled() }}
         run: cargo test --workspace
+
+      - name: Docs (broken intra-doc links denied)
+        if: ${{ !cancelled() }}
+        # A public item's doc that links to a PRIVATE item is a dead link in the
+        # published (docs.rs) docs. `-D warnings` promotes rustdoc's
+        # private-intra-doc-links (and every other doc lint) to a hard error.
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --workspace --no-deps
+
+      - name: Package (publish-readiness)
+        if: ${{ !cancelled() }}
+        # Verifies every crate still packages + builds in isolation from its tarball
+        # — catches a path-dep missing a version, a leaked/absent file, or a metadata
+        # regression BEFORE it breaks the next `cargo publish`, now that we ship
+        # releases. (The workspace build/test gates cover the in-tree compile.)
+        run: cargo package --workspace
