@@ -9,7 +9,7 @@ members = [
 
 [workspace.package]
 edition    = "2021"
-version    = "0.2.0"
+version    = "0.2.1"
 license    = "MIT OR Apache-2.0"
 # The code repository (crates.io links here). The KISS *spec* the code binds
 # lives at github.com/ThinkersJournal/KISS — cited in DESIGN.md's "Spec pin".

@@ -257,19 +257,20 @@ fn scalar_det(op: Op, child_dets: &[DetClass]) -> DetClass {
 
 /// True iff `node` produces an index-lane result (consumable via
 /// [`IndexRef::Node`] / exportable via [`FlatDag::index_outputs`]).
-fn has_index_lane(node: &Node) -> bool {
+pub(crate) fn has_index_lane(node: &Node) -> bool {
     matches!(node, Node::SortNetwork { .. })
 }
 
 /// Resolve an index operand: an external `indices[slot]` input or the index-lane
-/// output of an already-evaluated node.
-fn resolve_index_ref<'a>(
+/// output of an already-evaluated node. Shared with the integer lane
+/// ([`crate::recipe_int`]) — the resolution is value-type-agnostic.
+pub(crate) fn resolve_index_ref<'a>(
     r: IndexRef,
     indices: &'a [IndexTensor],
     imemo: &'a [Option<IndexTensor>],
 ) -> Result<&'a IndexTensor, Error> {
     match r {
-        IndexRef::Slot(s) => indices.get(s).ok_or(Error::MissingInput(s as u8)),
+        IndexRef::Slot(s) => indices.get(s).ok_or(Error::MissingIndexOperand { slot: s }),
         IndexRef::Node(m) => imemo
             .get(m)
             .and_then(|x| x.as_ref())

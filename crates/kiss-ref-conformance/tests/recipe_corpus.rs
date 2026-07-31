@@ -13,6 +13,7 @@
 //! ceilings are §6.8 (via the vocab); shapes KISS-OPS-6.20-0007/0008; stable sort ties
 //! KISS-OPS-6.11-0007. Test naming mirrors KISS-Conform (`test_recipe_*`).
 
+use half::{bf16, f16};
 use kiss_classify_vocab::Dtype;
 use kiss_ops_vocab::Op;
 use kiss_ref_core::{
@@ -1005,7 +1006,13 @@ fn test_recipe_fuzz_mutations_decline_typed() {
                     matches!(err, Some(Error::IndexSourceInvalid { .. })),
                     "{tag}: want IndexSourceInvalid, got {err:?}"
                 ),
-                3 | 5 | 6 => assert!(
+                // M3 mutates a gather/scatter IndexRef::Slot out of range — a
+                // missing INDEX operand, distinct from a missing input/param.
+                3 => assert!(
+                    matches!(err, Some(Error::MissingIndexOperand { .. })),
+                    "{tag}: want MissingIndexOperand, got {err:?}"
+                ),
+                5 | 6 => assert!(
                     matches!(err, Some(Error::MissingInput(_))),
                     "{tag}: want MissingInput, got {err:?}"
                 ),
@@ -1672,4 +1679,77 @@ fn test_recipe_kv_cache_equals_full_recompute_last_row() {
             "kv-cache decode elem {i}: decode {g} != full-recompute last row {w}"
         );
     }
+}
+
+// ---- narrow-lane execution of the transformer composites --------------------
+// The corpus proves these fragments at f64; narrow_tensor_lane proves individual
+// ops + softmax at f16/bf16/FP8. This closes the remaining gap: a MULTI-STEP
+// composite forward (RMSNorm's fold chain, attention's matmul→softmax→matmul) run
+// at f16 and bf16 — the realistic inference precision — had no coverage.
+
+#[test]
+fn test_recipe_rmsnorm_narrow_lanes_are_exact() {
+    // With the dyadic corpus inputs (eps=12 → rms=4 exact), every RMSNorm
+    // intermediate (x², sum, mean, +eps, sqrt, x/rms, ·w) is a small dyadic value
+    // representable in both f16 (10 mantissa bits) and bf16 (7), so the whole fold
+    // composite is EXACT — it lands on the same [0.5,1,0.5,1, 1,0,0,0] as f64.
+    fn rmsnorm_narrow<T: ScalarFloat>() {
+        let inputs = vec![
+            tf::<T>(&[2.0, 2.0, 2.0, 2.0, 4.0, 0.0, 0.0, 0.0], &[2, 4]),
+            tf::<T>(&[1.0, 2.0, 1.0, 2.0], &[4]),
+        ];
+        let r = eval_recipe(&r10_dag(), &inputs, &[T::from_f64(12.0)], &[])
+            .expect("R10 narrow must evaluate");
+        // tol = 0.0: the claim is EXACTNESS, so assert it — every intermediate is
+        // a dyadic value representable in f16/bf16, so the narrow forward lands on
+        // the f64 result bit-for-bit. A loose tol would let an unintended
+        // intermediate widening/rounding regress silently.
+        assert_close(
+            &r.outputs[0],
+            &[0.5, 1.0, 0.5, 1.0, 1.0, 0.0, 0.0, 0.0],
+            &[2, 4],
+            0.0,
+        );
+    }
+    rmsnorm_narrow::<f16>();
+    rmsnorm_narrow::<bf16>();
+}
+
+#[test]
+fn test_recipe_attention_narrow_lanes_land_in_band() {
+    // Attention's softmax exp() forces PER-ATOM narrow rounding, so the narrow
+    // output is a structured approximation of the f64 golden. Pin that it executes,
+    // stays finite, and lands within a precision-appropriate band. Row 0 is exact
+    // (the -inf causal mask → one-hot softmax → V[0]); only row 1 carries the
+    // transcendental rounding. A broken attention (dropped mask, wrong softmax
+    // axis, wrong matmul) deviates by ≥ 0.5, far outside either band.
+    let inv_sqrt2 = 1.0 / 2.0_f64.sqrt();
+    let e = (-inv_sqrt2).exp();
+    let (w0, w1) = (e / (e + 1.0), 1.0 / (e + 1.0));
+    let golden = [1.0, 2.0, w0 * 1.0 + w1 * 3.0, w0 * 2.0 + w1 * 4.0];
+
+    fn attention_narrow<T: ScalarFloat>(inv_sqrt2: f64, golden: &[f64], band: f64) {
+        let ninf = f64::NEG_INFINITY;
+        let inputs = vec![
+            tf::<T>(&[1.0, 0.0, 0.0, 1.0], &[2, 2]),  // Q = I
+            tf::<T>(&[1.0, 0.0, 0.0, 1.0], &[2, 2]),  // Kᵀ = I
+            tf::<T>(&[0.0, ninf, 0.0, 0.0], &[2, 2]), // causal mask
+            tf::<T>(&[1.0, 2.0, 3.0, 4.0], &[2, 2]),  // V
+        ];
+        let r = eval_recipe(&r12_dag(), &inputs, &[T::from_f64(inv_sqrt2)], &[])
+            .expect("R12 narrow must evaluate");
+        let got = r.outputs[0].as_slice();
+        assert_eq!(got.len(), golden.len(), "shape");
+        for (i, (&g, &w)) in got.iter().zip(golden).enumerate() {
+            let gv = g.to_f64();
+            assert!(gv.is_finite(), "R12 narrow elem {i} must be finite");
+            assert!(
+                (gv - w).abs() <= band,
+                "R12 narrow elem {i}: got {gv} want ~{w} (band {band})"
+            );
+        }
+    }
+    // f16: 10 mantissa bits; bf16: 7 — a coarser band.
+    attention_narrow::<f16>(inv_sqrt2, &golden, 2e-2);
+    attention_narrow::<bf16>(inv_sqrt2, &golden, 6e-2);
 }
