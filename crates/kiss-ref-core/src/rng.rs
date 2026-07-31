@@ -1,6 +1,6 @@
-//! Counter-based RNG — the Philox core of the `RandomBits` floor atom (KISS-Classify
-//! §6.8 `rnd` family; the cross-backend bit-identical generator seam co-designed with
-//! Fuel, 2026-07-31).
+//! Counter-based RNG — the `RandomBits` floor atom: the Philox-4x32-10 core plus the
+//! §8 counter-derivation mapping (KISS-Classify §6.8 `rnd` family; the cross-backend
+//! bit-identical generator seam co-designed with Fuel, 2026-07-31).
 //!
 //! A counter-based generator is a **pure deterministic function** of `(key, counter)`
 //! — not "randomness" in the nondeterministic sense — so it is a bit-exact integer
@@ -19,10 +19,22 @@
 //! recalled value for the all-`ffff` case was wrong (`6b562217` vs the real `6d5451fd`),
 //! which is exactly the poisoned-anchor failure the pull-from-upstream rule prevents.
 //!
-//! **Scope (this cut):** the Philox-4x32-10 core `(counter, key) -> 4×u32`. The
-//! `RandomBits` atom — the §8 counter-derivation mapping (logical row-major index →
-//! block/base/stream split → per-element word) and the two-layer conformance corpus —
-//! is the next increment on top of this verified core.
+//! **Scope (this cut):** the Philox-4x32-10 core `(counter, key) -> 4×u32` and the
+//! [`random_bits`] atom — the §8 mapping (logical row-major index `i` → `block_index =
+//! i/4` little-endian in `counter[0..1]`, `base`/`stream` in `counter[2..3]`, word =
+//! `philox(...)[i % 4]`) filling a fresh row-major `u32` tensor (held as non-negative
+//! `i128` for the integer lane). Both layers of the conformance corpus are present: the
+//! algorithm anchor (55 upstream KAT vectors) and the mapping (the block-0-is-KAT-words
+//! join to the anchor, the little-endian split, and the increment-coherence *structural*
+//! check that advancing a block equals one Random123 `incr()`). Remaining: the
+//! recipe-grammar `RandomBits` node into [`crate::recipe_int`], and the `bernoulli` /
+//! `uniform` / `normal` §6.13 decomposition recipes over the atom.
+
+extern crate alloc;
+use alloc::vec::Vec;
+
+use crate::tensor::{alloc_exact, numel, Tensor};
+use crate::Error;
 
 /// Philox-4x32 first multiplier (`M0`, Salmon et al. 2011 / Random123 `philox.h`).
 const PHILOX_M4X32_0: u32 = 0xD251_1F53;
@@ -74,6 +86,47 @@ pub fn philox4x32_10(counter: [u32; 4], key: [u32; 2]) -> [u32; 4] {
         ctr = round(ctr, k);
     }
     ctr
+}
+
+/// The §8 per-element counter derivation: a logical row-major `linear_index` maps to
+/// the Philox counter. `block_index = linear_index / 4` occupies `counter[0..1]`
+/// **little-endian** (`block_lo` in `counter[0]`, the fastest-varying word — so
+/// advancing the block by one is exactly one Random123 `incr()`); the runtime-bound
+/// `base` is `counter[2]` and the build-time `stream` id is `counter[3]`.
+fn derive_counter(linear_index: u64, base: u32, stream: u32) -> [u32; 4] {
+    let block_index = linear_index / 4;
+    [
+        block_index as u32,         // block_lo — low 32 bits, the fastest-varying word
+        (block_index >> 32) as u32, // block_hi
+        base,
+        stream,
+    ]
+}
+
+/// `RandomBits`: fill a fresh contiguous row-major tensor of `shape` with per-element
+/// Philox-4x32-10 draws (KISS §6.8 `rnd`). `seed` is the build-time key
+/// (`key = [seed_lo, seed_hi]`), `base` the per-dispatch step scalar, `stream` the
+/// build-time stream id. Logical element `i` (row-major) draws
+/// `philox(derive_counter(i), key)[i % 4]`, so four consecutive elements share one
+/// Philox evaluation. Values are `u32`, held as non-negative `i128` for the integer
+/// lane. Pure and deterministic — `ExactByte`.
+pub fn random_bits(
+    shape: &[usize],
+    seed: u64,
+    base: u32,
+    stream: u32,
+) -> Result<Tensor<i128>, Error> {
+    let key = [seed as u32, (seed >> 32) as u32];
+    let count = numel(shape)?;
+    let mut data: Vec<i128> = alloc_exact(count)?;
+    // Reference form — one Philox evaluation per element. The crate is deliberately
+    // "obvious, slow"; a backend evaluates once per 4-aligned block and keeps all four
+    // words (§8 non-normative), but that optimization is not the reference's job.
+    for i in 0..count as u64 {
+        let out = philox4x32_10(derive_counter(i, base, stream), key);
+        data.push(out[(i % 4) as usize] as i128);
+    }
+    Tensor::from_vec(data, shape)
 }
 
 #[cfg(test)]
@@ -392,5 +445,99 @@ mod tests {
                 "philox4x32-10(ctr={ctr:08x?}, key={key:08x?})"
             );
         }
+    }
+
+    // ---- mapping layer (§8 counter derivation / RandomBits atom) -------------
+
+    #[test]
+    fn random_bits_block0_is_the_four_philox_words() {
+        // The mapping's join to the algorithm anchor: shape [4], seed=base=stream=0 →
+        // block 0's counter is [0,0,0,0] with key [0,0], so the four elements ARE the
+        // canonical KAT block-0 words in Random123 lane order. Ties the atom directly
+        // to the verified core, not to itself.
+        let t = random_bits(&[4], 0, 0, 0).unwrap();
+        let want: [i128; 4] = [0x6627_e8d5, 0xe169_c58d, 0xbc57_ac4c, 0x9b00_dbd8];
+        assert_eq!(t.as_slice(), &want);
+        assert_eq!(t.shape(), &[4]);
+    }
+
+    #[test]
+    fn derive_counter_little_endian_split() {
+        // block_index = linear_index / 4 splits little-endian: block_lo (low 32) in
+        // counter[0], block_hi in counter[1]; base -> counter[2], stream -> counter[3].
+        // block_index 1:
+        assert_eq!(derive_counter(4, 7, 9), [1, 0, 7, 9]);
+        // block_index 2^32 (block_lo wraps to 0, block_hi becomes 1):
+        assert_eq!(derive_counter((1u64 << 32) * 4, 7, 9), [0, 1, 7, 9]);
+        // all four elements of a block share one counter:
+        for i in 0..4u64 {
+            assert_eq!(derive_counter(i, 7, 9), [0, 0, 7, 9], "elem {i} in block 0");
+        }
+        // base and stream occupy their own slots:
+        assert_eq!(
+            derive_counter(0, 0xdead_beef, 0xfeed_face),
+            [0, 0, 0xdead_beef, 0xfeed_face]
+        );
+    }
+
+    #[test]
+    fn derive_counter_increment_coherence() {
+        // The invariant behind putting block_lo in counter[0]: advancing the block by
+        // one is byte-identical to one Random123 counter incr() — bump counter[0],
+        // carry upward, never reaching base/stream. A *structural* check: value tests
+        // catch a wrong byte, this catches a wrong LAYOUT.
+        fn incr(mut c: [u32; 4]) -> [u32; 4] {
+            c[0] = c[0].wrapping_add(1);
+            if c[0] == 0 {
+                c[1] = c[1].wrapping_add(1);
+                if c[1] == 0 {
+                    c[2] = c[2].wrapping_add(1);
+                    if c[2] == 0 {
+                        c[3] = c[3].wrapping_add(1);
+                    }
+                }
+            }
+            c
+        }
+        let (base, stream) = (0x1111_2222u32, 0x3333_4444u32);
+        // Non-carrying block step.
+        let b = 5u64;
+        assert_eq!(
+            derive_counter((b + 1) * 4, base, stream),
+            incr(derive_counter(b * 4, base, stream))
+        );
+        // Carrying block step: block_lo 0xffffffff -> 0, carry into block_hi; base and
+        // stream MUST stay put (the carry never reaches counter[2..3]).
+        let bc = 0xffff_ffffu64;
+        assert_eq!(
+            derive_counter(bc * 4, base, stream),
+            [0xffff_ffff, 0, base, stream]
+        );
+        assert_eq!(
+            derive_counter((bc + 1) * 4, base, stream),
+            [0, 1, base, stream]
+        );
+        assert_eq!(
+            derive_counter((bc + 1) * 4, base, stream),
+            incr(derive_counter(bc * 4, base, stream))
+        );
+    }
+
+    #[test]
+    fn random_bits_maps_every_element_per_spec() {
+        // Each logical element i draws philox(derive_counter(i), key)[i % 4]; a 3-block
+        // [3,4] shape exercises three distinct blocks (element 4 is block 1, element 8
+        // block 2). Checked against the verified core + derive_counter directly.
+        let seed = 0x0123_4567_89ab_cdefu64;
+        let (base, stream) = (0x2au32, 0x7u32);
+        let key = [seed as u32, (seed >> 32) as u32];
+        let t = random_bits(&[3, 4], seed, base, stream).unwrap();
+        assert_eq!(t.shape(), &[3, 4]);
+        for i in 0..12u64 {
+            let want = philox4x32_10(derive_counter(i, base, stream), key)[(i % 4) as usize];
+            assert_eq!(t.as_slice()[i as usize], want as i128, "element {i}");
+        }
+        // The draws are u32-valued, held non-negative in i128.
+        assert!(t.as_slice().iter().all(|&v| (0..1i128 << 32).contains(&v)));
     }
 }
