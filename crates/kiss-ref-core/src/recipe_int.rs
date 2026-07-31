@@ -145,11 +145,18 @@ fn compute_node_int(
     let dtype = node_dtypes[idx];
     match &dag.nodes[idx] {
         Node::Bind(i) => {
-            let t = inputs
-                .get(*i)
-                .cloned()
-                .ok_or(Error::MissingInput(*i as u8))?;
-            Ok((t, DetClass::ExactByte))
+            let raw = inputs.get(*i).ok_or(Error::MissingInput(*i as u8))?;
+            // A leaf still honors its declared output dtype: wrap each element to
+            // node_dtypes[idx] so the "output lies in this node's dtype range"
+            // invariant holds for EVERY node, not only computed ones. Idempotent
+            // for a valid in-range input (see `bind_passthrough_is_exact`); it
+            // sanitizes an input a caller failed to pre-normalize rather than
+            // leaking an out-of-range value downstream.
+            let mut data = alloc_exact(raw.as_slice().len())?;
+            for &v in raw.as_slice() {
+                data.push(wrap_to_dtype(v, dtype)?);
+            }
+            Ok((Tensor::from_vec(data, raw.shape())?, DetClass::ExactByte))
         }
         Node::Const(v) => {
             // Round-ties-even into the integer lane — the integer analog of the
@@ -167,7 +174,9 @@ fn compute_node_int(
                 .get(*s)
                 .copied()
                 .ok_or(Error::MissingInput(*s as u8))?;
-            Ok((rank0(v)?, DetClass::ExactByte))
+            // Interpret the scalar AS the node's declared dtype (same leaf
+            // contract as Bind): wrap before lifting to a rank-0 tensor.
+            Ok((rank0(wrap_to_dtype(v, dtype)?)?, DetClass::ExactByte))
         }
         Node::ReducedCount(axes) => {
             let x0 = inputs.first().ok_or(Error::MissingInput(0))?;
@@ -297,6 +306,32 @@ mod tests {
         assert_eq!(r.outputs[0].as_slice(), &[1, 2, 3]);
         assert_eq!(r.dets[0], DetClass::ExactByte);
         assert!(r.index_outputs.is_empty());
+    }
+
+    #[test]
+    fn bind_wraps_out_of_range_input_to_dtype() {
+        // Every node's output must lie in node_dtypes[idx]'s range — a leaf is no
+        // exception. An input a caller failed to pre-normalize is wrapped to the
+        // declared dtype (idempotent for an in-range value, as bind_passthrough
+        // shows). At s8: 200 -> -56, -129 -> 127.
+        let r = ev(
+            vec![Node::Bind(0)],
+            vec![0],
+            &[Dtype::S8],
+            &[t(&[200, -129], &[2])],
+        )
+        .unwrap();
+        assert_eq!(r.outputs[0].as_slice(), &[-56, 127]);
+        assert_eq!(r.dets[0], DetClass::ExactByte);
+    }
+
+    #[test]
+    fn runtime_scalar_wraps_to_dtype() {
+        // Same contract for a runtime scalar: params[slot] is interpreted AS the
+        // node's declared dtype, so 200 -> -56 at s8.
+        let dag = FlatDag::new(vec![Node::RuntimeScalar(0)], vec![0]);
+        let r = eval_recipe_int(&dag, &[Dtype::S8], &[], &[200], &[]).unwrap();
+        assert_eq!(r.outputs[0].as_slice(), &[-56]);
     }
 
     #[test]
