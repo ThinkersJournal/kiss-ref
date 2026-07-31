@@ -86,6 +86,16 @@ fn wrap(v: i128, bits: u32, signed: bool) -> i128 {
     }
 }
 
+/// Wrap a true integer value `v` into `dtype`'s two's-complement range
+/// (sign-extended for a signed dtype). This is also the bit-reinterpretation of a
+/// `const_bits` payload: the low `width` bits of `v` are kept and, if the dtype is
+/// signed and that top bit is set, sign-extended. [`Error::UnsupportedDtype`] for a
+/// non-integer dtype.
+pub fn wrap_to_dtype(v: i128, dtype: Dtype) -> Result<i128, Error> {
+    let (bits, signed) = int_spec(dtype).ok_or(Error::UnsupportedDtype(dtype))?;
+    Ok(wrap(v, bits, signed))
+}
+
 /// The width-masked bit pattern (unsigned low `bits` bits).
 fn pattern(v: i128, bits: u32) -> i128 {
     v & mask(bits)

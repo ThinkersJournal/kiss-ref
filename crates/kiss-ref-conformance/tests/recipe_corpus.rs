@@ -1411,3 +1411,265 @@ fn test_recipe_prenorm_residual_block() {
         1e-12,
     );
 }
+
+/// R15: MULTI-HEAD causal attention — R12 lifted to a batched head dimension. The
+/// ONE new thing over R12: the head axis is a batched-matmul leading dim
+/// (`[H,S,D]·[H,D,S]→[H,S,S]`, KISS-OPS-6.20-0007 batch broadcast), the softmax
+/// runs over the LAST axis (2, the key dimension, NOT the head axis), and the
+/// causal mask `[S,S]` broadcasts across ALL heads. There is no reshape/split atom
+/// in the grammar, so heads arrive pre-shaped — layout is the consumer's job,
+/// exactly as R12 gets a pre-transposed Kᵀ. Per-head independence is the bug site a
+/// fused MHA kernel must preserve: head 1 must not leak into head 0.
+fn r15_dag() -> FlatDag {
+    FlatDag::new(
+        vec![
+            Node::Bind(0),                   // 0 Q  [2,2,2] (H,S,D)
+            Node::Bind(1),                   // 1 Kᵀ [2,2,2] (H,D,S)
+            Node::Matmul { lhs: 0, rhs: 1 }, // 2 scores [2,2,2] batched over H
+            Node::RuntimeScalar(0),          // 3 scale = 1/sqrt(d)
+            Node::Apply {
+                op: Op::Mul,
+                children: vec![2, 3],
+            }, // 4 scaled [2,2,2]
+            Node::Bind(2),                   // 5 causal mask [2,2] (0 / -inf), broadcast over H
+            Node::Apply {
+                op: Op::Add,
+                children: vec![4, 5],
+            }, // 6 masked [2,2,2]
+            Node::Reduce {
+                monoid: Monoid::Max,
+                axes: vec![2],
+                keepdim: true,
+                child: 6,
+            }, // 7 rowmax [2,2,1] (over keys)
+            Node::Apply {
+                op: Op::Sub,
+                children: vec![6, 7],
+            }, // 8 shifted [2,2,2]
+            Node::Apply {
+                op: Op::Exp,
+                children: vec![8],
+            }, // 9 exp [2,2,2]
+            Node::Reduce {
+                monoid: Monoid::Sum,
+                axes: vec![2],
+                keepdim: true,
+                child: 9,
+            }, // 10 denom [2,2,1]
+            Node::Apply {
+                op: Op::Div,
+                children: vec![9, 10],
+            }, // 11 weights [2,2,2]
+            Node::Bind(3),                   // 12 V [2,2,2] (H,S,D)
+            Node::Matmul { lhs: 11, rhs: 12 }, // 13 out [2,2,2]
+        ],
+        vec![13],
+    )
+}
+fn r15_inputs() -> Vec<Tensor<f64>> {
+    let ninf = f64::NEG_INFINITY;
+    vec![
+        // Q: both heads = I2, so scores[h] = Kᵀ[h] (isolates the head-batching).
+        t64(&[1.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 1.0], &[2, 2, 2]),
+        // Kᵀ: head0 = 2·I2 → scores0 = [[2,0],[0,2]]; head1 = 2·swap →
+        // scores1 = [[0,2],[2,0]]. Distinct heads.
+        t64(&[2.0, 0.0, 0.0, 2.0, 0.0, 2.0, 2.0, 0.0], &[2, 2, 2]),
+        // causal mask [S,S]: position 0 cannot see position 1.
+        t64(&[0.0, ninf, 0.0, 0.0], &[2, 2]),
+        // V: head0 rows [1,2],[3,4]; head1 rows [10,20],[30,40].
+        t64(&[1.0, 2.0, 3.0, 4.0, 10.0, 20.0, 30.0, 40.0], &[2, 2, 2]),
+    ]
+}
+
+#[test]
+fn test_recipe_attention_multi_head() {
+    // scale s = 1/sqrt(d), d=2. Let a = exp(-2s) = exp(-sqrt2).
+    // Head 0 (scores [[2,0],[0,2]]·s, +mask):
+    //   row0 = [2s, -inf] -> softmax [1,0] -> out = V0[0] = [1,2].
+    //   row1 = [0, 2s]    -> softmax [a/(1+a), 1/(1+a)]
+    //                        -> [(a+3)/(1+a), (2a+4)/(1+a)].
+    // Head 1 (scores [[0,2],[2,0]]·s, +mask):
+    //   row0 = [0, -inf]  -> softmax [1,0] -> out = V1[0] = [10,20].
+    //   row1 = [2s, 0]    -> softmax [1/(1+a), a/(1+a)]
+    //                        -> [(10+30a)/(1+a), (20+40a)/(1+a)].
+    // Root chains through a Sum-reduce + Matmul (OIN) -> tolerance compare.
+    let s = 1.0 / 2.0_f64.sqrt();
+    let a = (-2.0 * s).exp();
+    let d = 1.0 + a;
+    let r = eval_recipe(&r15_dag(), &r15_inputs(), &[s], &[]).expect("R15 must evaluate");
+    assert_close(
+        &r.outputs[0],
+        &[
+            1.0,
+            2.0,
+            (a + 3.0) / d,
+            (2.0 * a + 4.0) / d,
+            10.0,
+            20.0,
+            (10.0 + 30.0 * a) / d,
+            (20.0 + 40.0 * a) / d,
+        ],
+        &[2, 2, 2],
+        1e-12,
+    );
+    // Head independence has teeth: the two heads' outputs must differ (a fused
+    // kernel that shares state across heads would collapse them).
+    let o = r.outputs[0].as_slice();
+    assert!(o[0..4] != o[4..8], "heads must be independent");
+}
+
+/// R16: KV-CACHE DECODE STEP — the autoregressive one-token attention. A single
+/// query row `[1,D]` attends over the FULL cached keys/values `[S_kv,D]`; there is
+/// no mask (a decode token sees every cached position). The physical cache append
+/// is the consumer's memory job — there is no concat atom in §6.11/§6.12, so
+/// kiss-ref receives the logical post-append cache, exactly as R12 receives a
+/// logical Kᵀ. The bug site is the SINGLE-ROW softmax: a `[1,S_kv]` rowmax/denom
+/// that a multi-row path gets right can still be mis-broadcast at S_q=1.
+fn r16_dag() -> FlatDag {
+    FlatDag::new(
+        vec![
+            Node::Bind(0),                   // 0 q  [1,2]
+            Node::Bind(1),                   // 1 Kᵀ [2,3] (D, S_kv)
+            Node::Matmul { lhs: 0, rhs: 1 }, // 2 scores [1,3]
+            Node::RuntimeScalar(0),          // 3 scale
+            Node::Apply {
+                op: Op::Mul,
+                children: vec![2, 3],
+            }, // 4 scaled [1,3]
+            Node::Reduce {
+                monoid: Monoid::Max,
+                axes: vec![1],
+                keepdim: true,
+                child: 4,
+            }, // 5 rowmax [1,1]
+            Node::Apply {
+                op: Op::Sub,
+                children: vec![4, 5],
+            }, // 6 shifted [1,3]
+            Node::Apply {
+                op: Op::Exp,
+                children: vec![6],
+            }, // 7 exp [1,3]
+            Node::Reduce {
+                monoid: Monoid::Sum,
+                axes: vec![1],
+                keepdim: true,
+                child: 7,
+            }, // 8 denom [1,1]
+            Node::Apply {
+                op: Op::Div,
+                children: vec![7, 8],
+            }, // 9 weights [1,3]
+            Node::Bind(2),                   // 10 V_full [3,2]
+            Node::Matmul { lhs: 9, rhs: 10 }, // 11 out [1,2]
+        ],
+        vec![11],
+    )
+}
+fn r16_inputs() -> Vec<Tensor<f64>> {
+    vec![
+        t64(&[1.0, 0.0], &[1, 2]),                     // q -> scores = Kᵀ row 0
+        t64(&[0.0, 2.0, 4.0, 9.0, 9.0, 9.0], &[2, 3]), // Kᵀ: scores = [0,2,4]
+        t64(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], &[3, 2]), // V_full rows [1,2],[3,4],[5,6]
+    ]
+}
+
+#[test]
+fn test_recipe_kv_cache_decode() {
+    // scores = [0,2,4]; scaled by s=1/sqrt2. max=4s, shifted=[-4s,-2s,0].
+    // a = exp(-2s); exp = [a², a, 1]; D = a²+a+1.
+    //   out = ([a²,a,1]/D)·V_full
+    //       = [(a²+3a+5)/D, (2a²+4a+6)/D].
+    let s = 1.0 / 2.0_f64.sqrt();
+    let a = (-2.0 * s).exp();
+    let dsum = a * a + a + 1.0;
+    let r = eval_recipe(&r16_dag(), &r16_inputs(), &[s], &[]).expect("R16 must evaluate");
+    assert_close(
+        &r.outputs[0],
+        &[
+            (a * a + 3.0 * a + 5.0) / dsum,
+            (2.0 * a * a + 4.0 * a + 6.0) / dsum,
+        ],
+        &[1, 2],
+        1e-12,
+    );
+}
+
+/// The KV-cache correctness contract, as a metamorphic invariant: incremental
+/// decode of the LAST position MUST equal the last row of a full-sequence causal
+/// recompute over the same K/V. This is the property that makes caching sound — if
+/// it fails, cached generation silently diverges from a full forward pass.
+#[test]
+fn test_recipe_kv_cache_equals_full_recompute_last_row() {
+    let s = 1.0 / 2.0_f64.sqrt();
+    let ninf = f64::NEG_INFINITY;
+
+    // Decode: the R16 single-row step (q is the last query, no mask).
+    let decode = eval_recipe(&r16_dag(), &r16_inputs(), &[s], &[]).expect("decode must evaluate");
+
+    // Full: S=3 causal attention. Q_full's LAST row equals the decode query
+    // [1,0]; the causal mask's last row is all-visible [0,0,0], so the last
+    // position sees the whole cache — exactly the decode step's condition.
+    let full_dag = FlatDag::new(
+        vec![
+            Node::Bind(0),                   // 0 Q_full [3,2]
+            Node::Bind(1),                   // 1 Kᵀ [2,3]
+            Node::Matmul { lhs: 0, rhs: 1 }, // 2 scores [3,3]
+            Node::RuntimeScalar(0),          // 3 scale
+            Node::Apply {
+                op: Op::Mul,
+                children: vec![2, 3],
+            }, // 4
+            Node::Bind(2),                   // 5 causal mask [3,3]
+            Node::Apply {
+                op: Op::Add,
+                children: vec![4, 5],
+            }, // 6
+            Node::Reduce {
+                monoid: Monoid::Max,
+                axes: vec![1],
+                keepdim: true,
+                child: 6,
+            }, // 7
+            Node::Apply {
+                op: Op::Sub,
+                children: vec![6, 7],
+            }, // 8
+            Node::Apply {
+                op: Op::Exp,
+                children: vec![8],
+            }, // 9
+            Node::Reduce {
+                monoid: Monoid::Sum,
+                axes: vec![1],
+                keepdim: true,
+                child: 9,
+            }, // 10
+            Node::Apply {
+                op: Op::Div,
+                children: vec![9, 10],
+            }, // 11 weights [3,3]
+            Node::Bind(3),                   // 12 V_full [3,2]
+            Node::Matmul { lhs: 11, rhs: 12 }, // 13 out [3,2]
+        ],
+        vec![13],
+    );
+    let full_inputs = vec![
+        t64(&[1.0, 0.0, 0.0, 1.0, 1.0, 0.0], &[3, 2]), // Q_full: last row = [1,0] = decode q
+        t64(&[0.0, 2.0, 4.0, 9.0, 9.0, 9.0], &[2, 3]), // same Kᵀ as R16
+        t64(&[0.0, ninf, ninf, 0.0, 0.0, ninf, 0.0, 0.0, 0.0], &[3, 3]), // causal
+        t64(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], &[3, 2]), // same V_full as R16
+    ];
+    let full = eval_recipe(&full_dag, &full_inputs, &[s], &[]).expect("full must evaluate");
+
+    // Last row (position 2) of the [3,2] full output vs the [1,2] decode output.
+    let dec = decode.outputs[0].as_slice();
+    let last = &full.outputs[0].as_slice()[4..6];
+    assert_eq!(dec.len(), 2);
+    for (i, (&g, &w)) in dec.iter().zip(last).enumerate() {
+        assert!(
+            (g - w).abs() <= 1e-12,
+            "kv-cache decode elem {i}: decode {g} != full-recompute last row {w}"
+        );
+    }
+}

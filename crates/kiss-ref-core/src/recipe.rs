@@ -198,7 +198,7 @@ pub struct RecipeEval<T> {
 // The `vec!` macro is not imported on this no_std non-test path, so the
 // one-element buffer is built by hand.
 #[allow(clippy::vec_init_then_push)]
-fn rank0<T: Copy>(v: T) -> Result<Tensor<T>, Error> {
+pub(crate) fn rank0<T: Copy>(v: T) -> Result<Tensor<T>, Error> {
     Tensor::from_vec(
         {
             let mut d = Vec::new();
@@ -226,7 +226,7 @@ fn apply_elementwise<T: ScalarFloat>(op: Op, children: &[Tensor<T>]) -> Result<T
 }
 
 /// Drop the (extent-1, keepdim) reduced axes from a reduce result (`nokd`).
-fn squeeze<T: Copy>(t: Tensor<T>, axes: &[usize]) -> Result<Tensor<T>, Error> {
+pub(crate) fn squeeze<T: Copy>(t: Tensor<T>, axes: &[usize]) -> Result<Tensor<T>, Error> {
     let rank = t.rank();
     let mut reduced = [false; MAX_RANK];
     for &a in axes {
@@ -409,7 +409,7 @@ pub fn eval_recipe<T: ScalarFloat>(
 
 /// Read the memoized results of `children` (each already evaluated), cloning the
 /// tensors and collecting their determinism classes.
-fn read_children<T: Clone>(
+pub(crate) fn read_children<T: Clone>(
     children: &[usize],
     memo: &[Option<(Tensor<T>, DetClass)>],
 ) -> Result<(Vec<Tensor<T>>, Vec<DetClass>), Error> {
@@ -427,7 +427,7 @@ fn read_children<T: Clone>(
 }
 
 /// The child node indices of `node` (the edges the worklist must evaluate first).
-fn children_of(node: &Node) -> Vec<usize> {
+pub(crate) fn children_of(node: &Node) -> Vec<usize> {
     let mut v = Vec::new();
     match node {
         Node::Bind(_)
