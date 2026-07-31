@@ -439,7 +439,11 @@ pub fn scatter_add<T: ScalarFloat>(
 /// determinism class is exact-byte. Structural-family placement per the KISS #76
 /// flip routing (two-consumer status: the recipe grammar's reverse-scan need);
 /// the grammar row lives with the #67 consolidation.
-pub fn flip<T: ScalarFloat>(data: &View<T>, axis: usize) -> Result<Tensor<T>, Error> {
+// `T: Copy` (not `ScalarFloat`): `flip` is pure data movement — it reads and
+// rewrites raw elements, never doing arithmetic — so the integer recipe lane
+// ([`crate::recipe_int`]) shares this one kernel. Every `ScalarFloat` is `Copy`,
+// so the float callers are unaffected.
+pub fn flip<T: Copy>(data: &View<T>, axis: usize) -> Result<Tensor<T>, Error> {
     let shape = data.shape();
     let rank = shape.len();
     if axis >= rank {
