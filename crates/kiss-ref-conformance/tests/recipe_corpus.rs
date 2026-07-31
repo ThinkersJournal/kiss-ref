@@ -1006,7 +1006,13 @@ fn test_recipe_fuzz_mutations_decline_typed() {
                     matches!(err, Some(Error::IndexSourceInvalid { .. })),
                     "{tag}: want IndexSourceInvalid, got {err:?}"
                 ),
-                3 | 5 | 6 => assert!(
+                // M3 mutates a gather/scatter IndexRef::Slot out of range — a
+                // missing INDEX operand, distinct from a missing input/param.
+                3 => assert!(
+                    matches!(err, Some(Error::MissingIndexOperand { .. })),
+                    "{tag}: want MissingIndexOperand, got {err:?}"
+                ),
+                5 | 6 => assert!(
                     matches!(err, Some(Error::MissingInput(_))),
                     "{tag}: want MissingInput, got {err:?}"
                 ),
@@ -1694,11 +1700,15 @@ fn test_recipe_rmsnorm_narrow_lanes_are_exact() {
         ];
         let r = eval_recipe(&r10_dag(), &inputs, &[T::from_f64(12.0)], &[])
             .expect("R10 narrow must evaluate");
+        // tol = 0.0: the claim is EXACTNESS, so assert it — every intermediate is
+        // a dyadic value representable in f16/bf16, so the narrow forward lands on
+        // the f64 result bit-for-bit. A loose tol would let an unintended
+        // intermediate widening/rounding regress silently.
         assert_close(
             &r.outputs[0],
             &[0.5, 1.0, 0.5, 1.0, 1.0, 0.0, 0.0, 0.0],
             &[2, 4],
-            1e-3,
+            0.0,
         );
     }
     rmsnorm_narrow::<f16>();

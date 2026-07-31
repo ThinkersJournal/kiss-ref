@@ -770,4 +770,32 @@ mod tests {
         assert_eq!(r.outputs[0].as_slice(), &[10, 20, 30, 40]);
         assert_eq!(r.dets[3], DetClass::ExactByte);
     }
+
+    #[test]
+    fn gather_missing_index_slot_reports_full_usize_slot() {
+        // A missing external index operand reports the FULL slot as usize, not a
+        // u8-truncated MissingInput — slot 300 must not read back as 44 (300-256).
+        let dag = FlatDag::new(
+            vec![
+                Node::Bind(0),
+                Node::Gather {
+                    data: 0,
+                    index: IndexRef::Slot(300),
+                    axis: 0,
+                    oob: crate::attrs::OobPolicy::ZeroFill,
+                    base: None,
+                },
+            ],
+            vec![1],
+        );
+        let err = eval_recipe_int(
+            &dag,
+            &[Dtype::S8, Dtype::S8],
+            &[t(&[1, 2, 3], &[3])],
+            &[],
+            &[],
+        )
+        .unwrap_err();
+        assert_eq!(err, Error::MissingIndexOperand { slot: 300 });
+    }
 }

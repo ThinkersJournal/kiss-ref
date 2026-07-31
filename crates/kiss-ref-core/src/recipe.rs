@@ -270,7 +270,7 @@ pub(crate) fn resolve_index_ref<'a>(
     imemo: &'a [Option<IndexTensor>],
 ) -> Result<&'a IndexTensor, Error> {
     match r {
-        IndexRef::Slot(s) => indices.get(s).ok_or(Error::MissingInput(s as u8)),
+        IndexRef::Slot(s) => indices.get(s).ok_or(Error::MissingIndexOperand { slot: s }),
         IndexRef::Node(m) => imemo
             .get(m)
             .and_then(|x| x.as_ref())
