@@ -26,9 +26,14 @@
 //! `i128` for the integer lane). Both layers of the conformance corpus are present: the
 //! algorithm anchor (55 upstream KAT vectors) and the mapping (the block-0-is-KAT-words
 //! join to the anchor, the little-endian split, and the increment-coherence *structural*
-//! check that advancing a block equals one Random123 `incr()`). Remaining: the
-//! recipe-grammar `RandomBits` node into [`crate::recipe_int`], and the `bernoulli` /
-//! `uniform` / `normal` §6.13 decomposition recipes over the atom.
+//! check that advancing a block equals one Random123 `incr()`). The three §6.13
+//! distribution decompositions are here too: `bernoulli_mask` (integer compare,
+//! `ExactByte`), `uniform_f32` (the §8.1 mantissa splice, `ExactByte`), and
+//! `normal_f32` (§8.2 basic Box-Muller — NOT `ExactByte`, its transcendentals carry a
+//! tolerance; tested for structure — no NaN, the Pythagorean pairing identity — never a
+//! guessed bound). Deferred: a recipe-grammar `RandomBits` node (a breaking 0.3.0 no
+//! consumer needs — the diff surface is these value functions) and `normal_f32`'s
+//! numeric conformance tolerance (open, sabotage-calibrated pending a second backend).
 
 extern crate alloc;
 use alloc::vec::Vec;
@@ -150,6 +155,75 @@ pub fn bernoulli_mask(
     for &d in draws.as_slice() {
         // `d` is a u32 draw held in i128 (0..2^32); an exact-integer compare.
         data.push(i128::from((d as u64) < threshold));
+    }
+    Tensor::from_vec(data, shape)
+}
+
+/// The §8.1 `uniform_f32` splice: a u32 draw's top 23 bits (`w >> 9`) become the
+/// mantissa of an f32 in `[1, 2)`, minus `1.0` → `[0, 1)` half-open (`0.0` attainable,
+/// `1.0` not; spacing `2^-23`). `ExactByte` — integer ops plus a subtraction that is
+/// exact by Sterbenz for operands in `[1, 2)`.
+fn uniform_word(w: u32) -> f32 {
+    f32::from_bits(0x3F80_0000 | (w >> 9)) - 1.0
+}
+
+/// `uniform_f32` — §8.1: `uniform_word` applied to each draw of [`random_bits`],
+/// yielding a `[0, 1)` f32 tensor. `ExactByte`.
+pub fn uniform_f32(
+    shape: &[usize],
+    seed: u64,
+    base: u32,
+    stream: u32,
+) -> Result<Tensor<f32>, Error> {
+    let draws = random_bits(shape, seed, base, stream)?;
+    let mut data: Vec<f32> = alloc_exact(draws.as_slice().len())?;
+    for &d in draws.as_slice() {
+        data.push(uniform_word(d as u32));
+    }
+    Tensor::from_vec(data, shape)
+}
+
+/// Basic Box-Muller for one output word (§8.2): `r = sqrt(-2·ln(1 - u1))`,
+/// `theta = 2·pi·u2`, then `r·cos(theta)` for the even element of a pair and
+/// `r·sin(theta)` for the odd. The `1 - u1` reflection maps `u1 ∈ [0,1)` to `(0,1]`,
+/// removing the `ln(0)` singularity a naive `ln(u1)` hits when a draw yields `u1 = 0`
+/// (a `2^-23` event, routine at tensor scale) — `u1 = 0` then gives `r = 0`, finite.
+/// **NOT `ExactByte`**: `ln`/`sqrt`/`cos`/`sin` are not bit-identical across backends.
+fn box_muller(u1: f32, u2: f32, even: bool) -> f32 {
+    let r = libm::sqrtf(-2.0 * libm::logf(1.0 - u1));
+    let theta = 2.0 * core::f32::consts::PI * u2;
+    if even {
+        r * libm::cosf(theta)
+    } else {
+        r * libm::sinf(theta)
+    }
+}
+
+/// `normal_f32` — §8.2: basic Box-Muller over pairs of [`uniform_f32`] draws. Element
+/// `i` belongs to pair `p = i/2` and consumes draws at logical indices `2p` (`u1`) and
+/// `2p+1` (`u2`); even elements take `r·cos(theta)`, odd `r·sin(theta)`, so consecutive
+/// elements share one `(r, theta)`. Position-pure (element `i` depends only on `i`); an
+/// odd element count simply leaves the final pair's `z1` uncomputed. **NOT `ExactByte`**
+/// (see `box_muller`); its numeric conformance tolerance is an open, to-be-
+/// sabotage-calibrated item, so the reference pins structure — never a guessed bound.
+pub fn normal_f32(
+    shape: &[usize],
+    seed: u64,
+    base: u32,
+    stream: u32,
+) -> Result<Tensor<f32>, Error> {
+    let key = [seed as u32, (seed >> 32) as u32];
+    let count = numel(shape)?;
+    // word(k) = the §8 RandomBits draw at logical index k, computed on demand so the
+    // last even element of an odd count can reach its pair partner at index `count`.
+    let word =
+        |k: u64| -> u32 { philox4x32_10(derive_counter(k, base, stream), key)[(k % 4) as usize] };
+    let mut data: Vec<f32> = alloc_exact(count)?;
+    for i in 0..count as u64 {
+        let p = i / 2;
+        let u1 = uniform_word(word(2 * p));
+        let u2 = uniform_word(word(2 * p + 1));
+        data.push(box_muller(u1, u2, i % 2 == 0));
     }
     Tensor::from_vec(data, shape)
 }
@@ -599,5 +673,106 @@ mod tests {
             let want = i128::from((draws.as_slice()[i] as u64) < thr);
             assert_eq!(mask.as_slice()[i], want, "elem {i}");
         }
+    }
+
+    // ---- uniform_f32 decomposition (§8.1) -----------------------------------
+
+    #[test]
+    fn uniform_word_known_points() {
+        // The §8.1 splice on pinned inputs (exact, hand-derivable):
+        assert_eq!(uniform_word(0), 0.0); // from_bits(0x3F80_0000) - 1.0 = 1.0 - 1.0
+        assert_eq!(uniform_word(1 << 9), 2f32.powi(-23)); // smallest positive draw
+                                                          // largest value, just below 1.0 — 1.0 is NOT attainable:
+        assert_eq!(uniform_word(u32::MAX), 1.0 - 2f32.powi(-23));
+        assert!(uniform_word(u32::MAX) < 1.0);
+    }
+
+    #[test]
+    fn uniform_f32_maps_draws_and_stays_half_open() {
+        let (seed, base, stream) = (0x0123_4567_89ab_cdefu64, 3u32, 5u32);
+        let draws = random_bits(&[64], seed, base, stream).unwrap();
+        let u = uniform_f32(&[64], seed, base, stream).unwrap();
+        for i in 0..64 {
+            assert_eq!(
+                u.as_slice()[i],
+                uniform_word(draws.as_slice()[i] as u32),
+                "elem {i}"
+            );
+            assert!((0.0..1.0).contains(&u.as_slice()[i]), "elem {i} in [0,1)");
+        }
+    }
+
+    // ---- normal_f32 decomposition (§8.2, basic Box-Muller) ------------------
+    // Structural assertions only — normal_f32 is deliberately tolerance-free until
+    // sabotage-calibration with a second backend, so these test the properties the
+    // design rests on (needing no oracle), never an absolute normal value.
+
+    #[test]
+    fn box_muller_reflection_removes_ln_zero_singularity() {
+        // u1 = 0 is attainable (a draw < 512); the 1 - u1 reflection makes
+        // r = sqrt(-2·ln 1) = 0 — finite — instead of ln(0) = -inf -> NaN. A missing
+        // reflection turns this exact case into NaN.
+        for &u2 in &[0.0f32, 0.25, 0.5, 0.999] {
+            assert_eq!(box_muller(0.0, u2, true), 0.0, "even, u2={u2}");
+            assert_eq!(box_muller(0.0, u2, false), 0.0, "odd, u2={u2}");
+        }
+        // Every output over a sweep of (u1, u2) is finite.
+        for iu in 0..64u32 {
+            let u1 = uniform_word(iu << 9);
+            for iu2 in 0..8u32 {
+                let u2 = uniform_word(iu2 << 26);
+                assert!(box_muller(u1, u2, true).is_finite());
+                assert!(box_muller(u1, u2, false).is_finite());
+            }
+        }
+    }
+
+    #[test]
+    fn normal_f32_pairing_is_structurally_correct() {
+        // The Pythagorean structural identity: element 2p (even, r·cosθ) and 2p+1
+        // (odd, r·sinθ) share one (r, θ), so z_even² + z_odd² == r² == -2·ln(1 - u1)
+        // regardless of the angle. Catches a cos/sin swap, a wrong-pair mapping, and a
+        // mis-derived radius while asserting NO absolute value — a relation among
+        // outputs, so it needs no ULP budget.
+        let (seed, base, stream) = (0xfeed_face_dead_beefu64, 11u32, 2u32);
+        let n = normal_f32(&[16], seed, base, stream).unwrap();
+        let key = [seed as u32, (seed >> 32) as u32];
+        let word = |k: u64| philox4x32_10(derive_counter(k, base, stream), key)[(k % 4) as usize];
+        for p in 0..8u64 {
+            let u1 = uniform_word(word(2 * p));
+            let r2 = -2.0 * libm::logf(1.0 - u1);
+            let z0 = n.as_slice()[(2 * p) as usize];
+            let z1 = n.as_slice()[(2 * p + 1) as usize];
+            // f32 square-sum rounding only (cos²+sin² ≈ 1 within a few ULP) — a
+            // reference self-consistency check, NOT a cross-backend tolerance.
+            assert!(
+                (z0 * z0 + z1 * z1 - r2).abs() <= 1e-4 * (1.0 + r2),
+                "pair {p}: z0²+z1²={} vs r²={r2}",
+                z0 * z0 + z1 * z1
+            );
+        }
+        assert!(n.as_slice().iter().all(|v| v.is_finite()));
+    }
+
+    #[test]
+    fn normal_f32_is_position_pure_and_odd_safe() {
+        // Element i is a pure function of i: the same (seed, base, stream) over a
+        // LARGER shape reproduces the smaller shape's elements exactly (a prefix). An
+        // odd count stays finite — the last even element reaches its pair partner at
+        // logical index `count`, computed on demand.
+        let (seed, base, stream) = (0x0102_0304_0506_0708u64, 1u32, 9u32);
+        let small = normal_f32(&[5], seed, base, stream).unwrap(); // odd count
+        let big = normal_f32(&[9], seed, base, stream).unwrap();
+        for i in 0..5 {
+            assert_eq!(
+                small.as_slice()[i],
+                big.as_slice()[i],
+                "elem {i} not position-pure"
+            );
+        }
+        assert!(
+            small.as_slice().iter().all(|v| v.is_finite()),
+            "odd count all finite"
+        );
     }
 }
