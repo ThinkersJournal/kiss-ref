@@ -129,6 +129,31 @@ pub fn random_bits(
     Tensor::from_vec(data, shape)
 }
 
+/// `bernoulli_mask` — the §6.13 dropout-mask decomposition over [`random_bits`]: a
+/// `b1` mask where element `i` is `1` iff `draw[i] < threshold`, else `0`. This is a
+/// pure **integer compare** on the u32 draw (KISS §6.13: `bernoulli_mask(p) =
+/// RandomBits < floor(p·2^32)`), so it stays entirely on the exact lane — no float
+/// touches the highest-traffic stochastic op. `threshold` is the caller-supplied
+/// `floor(p·2^32)` in `[0, 2^32]` (`u64` so `p = 1 → 2^32` is representable, giving an
+/// all-ones mask); the reference owns only the exact-integer compare, not the
+/// `p → threshold` conversion (whose float rounding is a separate spec point).
+/// `ExactByte`.
+pub fn bernoulli_mask(
+    shape: &[usize],
+    seed: u64,
+    base: u32,
+    stream: u32,
+    threshold: u64,
+) -> Result<Tensor<i128>, Error> {
+    let draws = random_bits(shape, seed, base, stream)?;
+    let mut data: Vec<i128> = alloc_exact(draws.as_slice().len())?;
+    for &d in draws.as_slice() {
+        // `d` is a u32 draw held in i128 (0..2^32); an exact-integer compare.
+        data.push(i128::from((d as u64) < threshold));
+    }
+    Tensor::from_vec(data, shape)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -539,5 +564,40 @@ mod tests {
         }
         // The draws are u32-valued, held non-negative in i128.
         assert!(t.as_slice().iter().all(|&v| (0..1i128 << 32).contains(&v)));
+    }
+
+    // ---- bernoulli decomposition (§6.13 dropout mask) -----------------------
+
+    #[test]
+    fn bernoulli_mask_is_kat_anchored_integer_compare() {
+        // Block-0 draws (seed=base=stream=0) are the canonical KAT words
+        // [0x6627e8d5, 0xe169c58d, 0xbc57ac4c, 0x9b00dbd8]. threshold 2^31 (p=0.5):
+        // mask[i] = (draw[i] < 0x8000_0000) — only the first is below → [1,0,0,0].
+        let m = bernoulli_mask(&[4], 0, 0, 0, 0x8000_0000).unwrap();
+        assert_eq!(m.as_slice(), &[1, 0, 0, 0]);
+        assert_eq!(m.shape(), &[4]);
+    }
+
+    #[test]
+    fn bernoulli_mask_threshold_extremes() {
+        // threshold 0 (p=0) → nothing is < 0 → all-zero mask.
+        let z = bernoulli_mask(&[4], 0, 0, 0, 0).unwrap();
+        assert_eq!(z.as_slice(), &[0, 0, 0, 0]);
+        // threshold 2^32 (p=1) → every u32 draw is < 2^32 → all-ones mask.
+        let o = bernoulli_mask(&[4], 0, 0, 0, 1 << 32).unwrap();
+        assert_eq!(o.as_slice(), &[1, 1, 1, 1]);
+    }
+
+    #[test]
+    fn bernoulli_mask_matches_draws_and_threshold() {
+        // Consistency with the atom: mask[i] == (random_bits[i] < threshold) over a
+        // multi-block shape with a non-trivial threshold.
+        let (seed, base, stream, thr) = (0xdead_beef_0000_0001u64, 3u32, 5u32, 0x4000_0000u64);
+        let draws = random_bits(&[10], seed, base, stream).unwrap();
+        let mask = bernoulli_mask(&[10], seed, base, stream, thr).unwrap();
+        for i in 0..10 {
+            let want = i128::from((draws.as_slice()[i] as u64) < thr);
+            assert_eq!(mask.as_slice()[i], want, "elem {i}");
+        }
     }
 }
