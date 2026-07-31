@@ -183,20 +183,18 @@ pub fn uniform_f32(
     Tensor::from_vec(data, shape)
 }
 
-/// Basic Box-Muller for one output word (§8.2): `r = sqrt(-2·ln(1 - u1))`,
-/// `theta = 2·pi·u2`, then `r·cos(theta)` for the even element of a pair and
-/// `r·sin(theta)` for the odd. The `1 - u1` reflection maps `u1 ∈ [0,1)` to `(0,1]`,
-/// removing the `ln(0)` singularity a naive `ln(u1)` hits when a draw yields `u1 = 0`
-/// (a `2^-23` event, routine at tensor scale) — `u1 = 0` then gives `r = 0`, finite.
-/// **NOT `ExactByte`**: `ln`/`sqrt`/`cos`/`sin` are not bit-identical across backends.
-fn box_muller(u1: f32, u2: f32, even: bool) -> f32 {
+/// Basic Box-Muller for one PAIR of outputs (§8.2): `r = sqrt(-2·ln(1 - u1))`,
+/// `theta = 2·pi·u2`, returning `(r·cos(theta), r·sin(theta))` — the even and odd
+/// elements of the pair, which share this single `(r, theta)` computation (one `ln` +
+/// `sqrt` per pair, not per element). The `1 - u1` reflection maps `u1 ∈ [0,1)` to
+/// `(0,1]`, removing the `ln(0)` singularity a naive `ln(u1)` hits when a draw yields
+/// `u1 = 0` (a `2^-23` event, routine at tensor scale) — `u1 = 0` then gives `r = 0`, so
+/// both outputs are `0`, finite. **NOT `ExactByte`**: `ln`/`sqrt`/`cos`/`sin` are not
+/// bit-identical across backends.
+fn box_muller_pair(u1: f32, u2: f32) -> (f32, f32) {
     let r = libm::sqrtf(-2.0 * libm::logf(1.0 - u1));
     let theta = 2.0 * core::f32::consts::PI * u2;
-    if even {
-        r * libm::cosf(theta)
-    } else {
-        r * libm::sinf(theta)
-    }
+    (r * libm::cosf(theta), r * libm::sinf(theta))
 }
 
 /// `normal_f32` — §8.2: basic Box-Muller over pairs of [`uniform_f32`] draws. Element
@@ -204,7 +202,7 @@ fn box_muller(u1: f32, u2: f32, even: bool) -> f32 {
 /// `2p+1` (`u2`); even elements take `r·cos(theta)`, odd `r·sin(theta)`, so consecutive
 /// elements share one `(r, theta)`. Position-pure (element `i` depends only on `i`); an
 /// odd element count simply leaves the final pair's `z1` uncomputed. **NOT `ExactByte`**
-/// (see `box_muller`); its numeric conformance tolerance is an open, to-be-
+/// (see `box_muller_pair`); its numeric conformance tolerance is an open, to-be-
 /// sabotage-calibrated item, so the reference pins structure — never a guessed bound.
 pub fn normal_f32(
     shape: &[usize],
@@ -219,11 +217,17 @@ pub fn normal_f32(
     let word =
         |k: u64| -> u32 { philox4x32_10(derive_counter(k, base, stream), key)[(k % 4) as usize] };
     let mut data: Vec<f32> = alloc_exact(count)?;
-    for i in 0..count as u64 {
-        let p = i / 2;
-        let u1 = uniform_word(word(2 * p));
-        let u2 = uniform_word(word(2 * p + 1));
-        data.push(box_muller(u1, u2, i % 2 == 0));
+    // Iterate by PAIR: one (r, theta) per pair, emitting z0 = r·cos and z1 = r·sin. A
+    // trailing odd element takes only z0 (its pair's z1 is left uncomputed). Element i
+    // still depends only on i, so the op stays position-pure.
+    let mut i = 0u64;
+    while (i as usize) < count {
+        let (z0, z1) = box_muller_pair(uniform_word(word(i)), uniform_word(word(i + 1)));
+        data.push(z0);
+        if (i as usize) + 1 < count {
+            data.push(z1);
+        }
+        i += 2;
     }
     Tensor::from_vec(data, shape)
 }
@@ -713,16 +717,15 @@ mod tests {
         // r = sqrt(-2·ln 1) = 0 — finite — instead of ln(0) = -inf -> NaN. A missing
         // reflection turns this exact case into NaN.
         for &u2 in &[0.0f32, 0.25, 0.5, 0.999] {
-            assert_eq!(box_muller(0.0, u2, true), 0.0, "even, u2={u2}");
-            assert_eq!(box_muller(0.0, u2, false), 0.0, "odd, u2={u2}");
+            assert_eq!(box_muller_pair(0.0, u2), (0.0, 0.0), "u2={u2}");
         }
         // Every output over a sweep of (u1, u2) is finite.
         for iu in 0..64u32 {
             let u1 = uniform_word(iu << 9);
             for iu2 in 0..8u32 {
                 let u2 = uniform_word(iu2 << 26);
-                assert!(box_muller(u1, u2, true).is_finite());
-                assert!(box_muller(u1, u2, false).is_finite());
+                let (z0, z1) = box_muller_pair(u1, u2);
+                assert!(z0.is_finite() && z1.is_finite());
             }
         }
     }
