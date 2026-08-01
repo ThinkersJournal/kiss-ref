@@ -74,7 +74,7 @@ pub use attrs::{Combine, Direction, Monoid, OobPolicy};
 pub use boolean::{bool_supported, eval_bool_op};
 pub use bridge::{DetClass, Evaluated};
 pub use fp8::{E4m3, E5m2};
-pub use recipe::{eval_recipe, FlatDag, IndexRef, Node, RecipeEval};
+pub use recipe::{eval_recipe, selection_det, FlatDag, IndexRef, Node, RecipeEval};
 pub use recipe_int::eval_recipe_int;
 pub use tensor::{IndexTensor, Tensor, View, MAX_OPERANDS, MAX_RANK};
 
