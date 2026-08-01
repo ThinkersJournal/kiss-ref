@@ -47,6 +47,7 @@ pub mod kernels;
 pub mod recipe;
 pub mod recipe_int;
 pub mod resolve;
+pub mod rng;
 pub mod scalar;
 pub mod scalar_int;
 pub mod tensor;
