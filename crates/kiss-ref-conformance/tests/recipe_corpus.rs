@@ -723,6 +723,45 @@ fn test_recipe_cmp_mask_selection_escalation() {
     let a_val = [(0.0f64).exp() - 2.0, (1.0f64).exp() - 2.0];
     assert_close(&rr.outputs[0], &[a_val[0].max(0.0), a_val[1].max(0.0)], &[2], 1e-9);
     assert_close(&rr.outputs[1], &[0.0, 1.0], &[2], 1e-12);
+
+    // Arm 4 — the escalation is PER-NODE, so it propagates through an
+    // INTERMEDIATE mask feeding a VALUE combinator: band = (exp>1.5)·(exp<5.0)
+    // via Mul (an Arithmetic value op, NOT a comparison). Each cmp node's class
+    // is escalated to OIN AT THE NODE, so Mul joins OIN⊔OIN = OIN — it does NOT
+    // see the cmps' local exact-byte + exp's Ulp and under-report Ulp (which a
+    // per-ROOT model that escalated only at the queried output would). This pins
+    // kiss-ref as per-node (a real KISS↔kiss-ref distinction the steward
+    // surfaced 2026-08-05; beyond 6.0-0008's comparison-op-OUTPUT scope).
+    let band = FlatDag::new(
+        vec![
+            Node::Bind(0), // 0 x
+            Node::Apply {
+                op: Op::Exp,
+                children: vec![0],
+            }, // 1 exp — U4
+            Node::Const(1.5), // 2 — EB
+            Node::Const(5.0), // 3 — EB
+            Node::Apply {
+                op: Op::CmpGt,
+                children: vec![1, 2],
+            }, // 4 exp>1.5 — MASK, OIN
+            Node::Apply {
+                op: Op::CmpLt,
+                children: vec![1, 3],
+            }, // 5 exp<5.0 — MASK, OIN
+            Node::Apply {
+                op: Op::Mul,
+                children: vec![4, 5],
+            }, // 6 band — VALUE combinator over two OIN masks → OIN
+        ],
+        vec![6],
+    );
+    let rb = eval_recipe(&band, std::slice::from_ref(&x), &[], &[])
+        .expect("intermediate-mask band must evaluate");
+    // exp = [1, e, e²] → (>1.5)=[0,1,1], (<5)=[1,1,0], band=[0,1,0].
+    assert_eq!(rb.dets, vec![EB, U4, EB, EB, OIN, OIN, OIN]);
+    assert_eq!(rb.dets[6], DetClass::OrderInvariantNondeterministic);
+    assert_close(&rb.outputs[0], &[0.0, 1.0, 0.0], &[3], 1e-12);
 }
 
 #[test]
