@@ -185,17 +185,20 @@ pub struct RecipeEval<T> {
     /// The index-lane outputs, in `dag.index_outputs` order (`i64`-widened,
     /// dtype-tagged). Empty when the DAG declares none.
     pub index_outputs: Vec<IndexTensor>,
-    /// Per-node [`DetClass`] — the class of the node's **value-lane** output, in node
-    /// order, most-permissive over its producing sub-DAG (§6.0-0005 join). Two selection
-    /// cases (KISS-OPS-6.0-0007 — a selection reports WHICH value won, never more
-    /// deterministic than the values it compares, `ExactByte`-or-nondeterministic, never
-    /// `Ulp(k)`) sit differently here:
-    /// * A **comparison mask** (`Family::Comparison`) is the node's *only* output, so
-    ///   `dets[cmp]` already carries the escalated selection class — read it directly.
-    /// * A **sort/permutation** node has TWO outputs: `dets[sort]` is the sorted VALUES'
-    ///   class (e.g. `Ulp(k)`), while the exported PERMUTATION's class is a separate
-    ///   [`selection_det`] escalation — for that, read [`RecipeEval::index_output_dets`],
-    ///   NOT `dets` (a permutation over non-exact keys is not ULP-boundable).
+    /// Per-node [`DetClass`] — the class of what the node produces on the main
+    /// (non-index) lane, in node order: the most-permissive join over its producing
+    /// sub-DAG (§6.0-0005), EXCEPT a selection output escalates instead of carrying the
+    /// join (KISS-OPS-6.0-0007 — a selection reports WHICH value won, never more
+    /// deterministic than the values it compares: `ExactByte`-or-nondeterministic, never
+    /// `Ulp(k)`). The two selection cases sit differently here:
+    /// * A **comparison mask** (`Family::Comparison`) is the node's *only* output and is
+    ///   itself a selection, so `dets[cmp]` is the escalated selection class (NOT a
+    ///   value-lane join) — read it directly.
+    /// * A **sort/permutation** node produces TWO things: `dets[sort]` is the sorted
+    ///   VALUES' class (e.g. `Ulp(k)`), while the exported PERMUTATION's class is a
+    ///   separate [`selection_det`] escalation — for that read
+    ///   [`RecipeEval::index_output_dets`], NOT `dets` (a permutation over non-exact keys
+    ///   is not ULP-boundable).
     pub dets: Vec<DetClass>,
 }
 
