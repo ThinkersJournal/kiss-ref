@@ -33,7 +33,7 @@
 extern crate alloc;
 use alloc::vec::Vec;
 
-use kiss_ops_vocab::Op;
+use kiss_ops_vocab::{Family, Op};
 
 use crate::attrs::{Combine, Direction, Monoid, OobPolicy};
 use crate::bridge::{monoid_det, DetClass};
@@ -185,13 +185,17 @@ pub struct RecipeEval<T> {
     /// The index-lane outputs, in `dag.index_outputs` order (`i64`-widened,
     /// dtype-tagged). Empty when the DAG declares none.
     pub index_outputs: Vec<IndexTensor>,
-    /// Per-node [`DetClass`] — the **value-lane** class, in node order, most-permissive
-    /// over each node's producing sub-DAG (§6.0-0005 join). For a **selection** output
-    /// (an index/permutation) do NOT read this directly: `dets[sort]` is the sorted
-    /// VALUES' class (e.g. `Ulp(k)` for `Ulp`-classed keys), but the exported
-    /// permutation's class is the [`selection_det`] escalation of it — use
-    /// [`RecipeEval::index_output_dets`] (KISS-OPS-6.0-0007), because a permutation over
-    /// non-exact keys is not ULP-boundable.
+    /// Per-node [`DetClass`] — the class of the node's **value-lane** output, in node
+    /// order, most-permissive over its producing sub-DAG (§6.0-0005 join). Two selection
+    /// cases (KISS-OPS-6.0-0007 — a selection reports WHICH value won, never more
+    /// deterministic than the values it compares, `ExactByte`-or-nondeterministic, never
+    /// `Ulp(k)`) sit differently here:
+    /// * A **comparison mask** (`Family::Comparison`) is the node's *only* output, so
+    ///   `dets[cmp]` already carries the escalated selection class — read it directly.
+    /// * A **sort/permutation** node has TWO outputs: `dets[sort]` is the sorted VALUES'
+    ///   class (e.g. `Ulp(k)`), while the exported PERMUTATION's class is a separate
+    ///   [`selection_det`] escalation — for that, read [`RecipeEval::index_output_dets`],
+    ///   NOT `dets` (a permutation over non-exact keys is not ULP-boundable).
     pub dets: Vec<DetClass>,
 }
 
@@ -264,12 +268,26 @@ pub(crate) fn squeeze<T: Copy>(t: Tensor<T>, axes: &[usize]) -> Result<Tensor<T>
 
 /// The determinism class of an elementwise scalar `op` joined with its inputs'
 /// classes (§6.0-0005 most-permissive): transcendentals carry their §6.8 ULP.
+///
+/// A **comparison** op's output is a SELECTION, not a value (it reports WHICH
+/// value won, in the discrete `{0,1}` mask space), so it escalates via
+/// [`selection_det`] exactly as the index lane does — never carrying a `Ulp(k)`
+/// on a bit (a category error: a ≤k-ULP perturbation of a near-tie operand flips
+/// the mask a full unit, unbounded in ULP). The classification is keyed on op
+/// SEMANTICS (the [`Family::Comparison`] tag), not on which lane the mask is
+/// computed in (KISS-OPS-6.0-0007; the same escalation `index_output_dets` /
+/// [`index_ref_det`] apply to indices — one rule, both lanes).
 fn scalar_det(op: Op, child_dets: &[DetClass]) -> DetClass {
     let own = match op.ulp_ceiling() {
         Some(u) => DetClass::Ulp(u),
         None => DetClass::ExactByte,
     };
-    child_dets.iter().fold(own, |acc, &d| acc.join(d))
+    let joined = child_dets.iter().fold(own, |acc, &d| acc.join(d));
+    if op.family() == Family::Comparison {
+        selection_det(joined)
+    } else {
+        joined
+    }
 }
 
 /// True iff `node` produces an index-lane result (consumable via
