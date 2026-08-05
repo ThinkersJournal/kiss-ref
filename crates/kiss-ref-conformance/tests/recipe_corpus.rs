@@ -620,6 +620,156 @@ fn test_recipe_nonexact_index_escalation() {
 }
 
 #[test]
+fn test_recipe_cmp_mask_selection_escalation() {
+    // THE PIN (KISS-OPS-6.0-0007, the cmp-MASK analogue of the index escalation
+    // above; steward ruling 2026-08-05, KISS main @ 325800a). A COMPARISON output
+    // is a SELECTION — it reports WHICH value won, not a value — so over a
+    // non-exact producer it escalates to OrderInvariantNondeterministic and NEVER
+    // carries the value-lane Ulp(k) join. A mask lives in {0,1}: a ≤k-ULP
+    // perturbation of a near-tie operand flips the bit a FULL UNIT, unbounded in
+    // ULP — Ulp(k) on a bit is a category error. The class is fixed by op
+    // SEMANTICS (Family::Comparison), not by which lane the impl computes it in
+    // (the representation-independence 6.0-0008 will anchor). Mirrors the
+    // §6.8-0011 test_ops_per_output_determinism_class node-5 witness.
+
+    // Arm 1 — the node-5 mirror AND the two-output crystallization in ONE graph:
+    // exp keys carry Ulp(4.0); the SAME exp VALUE output stays Ulp(4.0) while the
+    // cmp_lt MASK over it escalates to OIN. Threshold 2.0 sits ≥0.7 from every exp
+    // value (exp(0)=1, exp(1)=e, exp(2)=e²) — far beyond 4 ULP — so the mask is
+    // order-robust (as R9's keys were).
+    let dag = FlatDag::new(
+        vec![
+            Node::Bind(0), // 0 x
+            Node::Apply {
+                op: Op::Exp,
+                children: vec![0],
+            }, // 1 exp — Ulp(4.0)
+            Node::Const(2.0), // 2 threshold — EB
+            Node::Apply {
+                op: Op::CmpLt,
+                children: vec![1, 2],
+            }, // 3 mask — SELECTION
+        ],
+        vec![1, 3], // export BOTH the value (exp) and the mask
+    );
+    let x = t64(&[0.0, 1.0, 2.0], &[3]);
+    let r = eval_recipe(&dag, std::slice::from_ref(&x), &[], &[]).expect("cmp-mask must evaluate");
+    // The value output stays Ulp — the max-permissive value-lane join…
+    assert_eq!(r.dets[1], DetClass::Ulp(4.0));
+    // …but the mask output escalates: a SELECTION over a non-exact producer.
+    assert_eq!(r.dets[3], DetClass::OrderInvariantNondeterministic);
+    assert_eq!(r.dets, vec![EB, U4, EB, OIN]);
+    // exp VALUE (loose abs tol: DetClass is the assertion, exp precision is
+    // pinned by test_recipe_softmax_rows) and mask (OIN → tolerance, never bits).
+    let exp = [(0.0f64).exp(), (1.0f64).exp(), (2.0f64).exp()];
+    assert_close(&r.outputs[0], &exp, &[3], 1e-9);
+    assert_close(&r.outputs[1], &[1.0, 0.0, 0.0], &[3], 1e-12);
+
+    // Arm 2 — escalation is a NO-OP when both operands are exact: a cmp over two
+    // ExactByte producers is ExactByte (a mask is only nondeterministic when the
+    // values it compares are). Root ExactByte → raw-bit compare.
+    let exact = FlatDag::new(
+        vec![
+            Node::Bind(0),    // 0 a — EB
+            Node::Const(2.0), // 1 threshold — EB
+            Node::Apply {
+                op: Op::CmpLt,
+                children: vec![0, 1],
+            }, // 2 mask — EB
+        ],
+        vec![2],
+    );
+    let a = t64(&[1.0, 3.0], &[2]);
+    let re =
+        eval_recipe(&exact, std::slice::from_ref(&a), &[], &[]).expect("exact cmp must evaluate");
+    assert_eq!(re.dets, vec![EB, EB, EB]);
+    assert_bits(&re.outputs[0], &[1.0, 0.0], &[2]);
+
+    // Arm 3 — the steward's relu crystallization, faithfully: y = relu(a) and
+    // mask = (a>0) over the SAME Ulp-classed a = exp(x)−2. relu is an activation
+    // (a VALUE) so y stays Ulp(4.0); cmp_gt is a Comparison (a SELECTION) so the
+    // a>0 mask escalates to OIN — same op-graph, two outputs, two classes. a =
+    // [−1.0, e−2≈0.718], both far from 0, so the mask is robust.
+    let relu = FlatDag::new(
+        vec![
+            Node::Bind(0), // 0 x
+            Node::Apply {
+                op: Op::Exp,
+                children: vec![0],
+            }, // 1 exp — U4
+            Node::Const(2.0), // 2 — EB
+            Node::Apply {
+                op: Op::Sub,
+                children: vec![1, 2],
+            }, // 3 a = exp(x)−2 — U4
+            Node::Apply {
+                op: Op::Relu,
+                children: vec![3],
+            }, // 4 max(a,0) — VALUE, U4
+            Node::Const(0.0), // 5 — EB
+            Node::Apply {
+                op: Op::CmpGt,
+                children: vec![3, 5],
+            }, // 6 a>0 — MASK, OIN
+        ],
+        vec![4, 6],
+    );
+    let xr = t64(&[0.0, 1.0], &[2]);
+    let rr = eval_recipe(&relu, std::slice::from_ref(&xr), &[], &[])
+        .expect("relu crystallization must evaluate");
+    assert_eq!(rr.dets, vec![EB, U4, EB, U4, U4, EB, OIN]);
+    assert_eq!(rr.dets[4], DetClass::Ulp(4.0)); // value output stays Ulp
+    assert_eq!(rr.dets[6], DetClass::OrderInvariantNondeterministic); // mask escalates
+    let a_val = [(0.0f64).exp() - 2.0, (1.0f64).exp() - 2.0];
+    assert_close(
+        &rr.outputs[0],
+        &[a_val[0].max(0.0), a_val[1].max(0.0)],
+        &[2],
+        1e-9,
+    );
+    assert_close(&rr.outputs[1], &[0.0, 1.0], &[2], 1e-12);
+
+    // Arm 4 — the escalation is PER-NODE, so it propagates through an
+    // INTERMEDIATE mask feeding a VALUE combinator: band = (exp>1.5)·(exp<5.0)
+    // via Mul (an Arithmetic value op, NOT a comparison). Each cmp node's class
+    // is escalated to OIN AT THE NODE, so Mul joins OIN⊔OIN = OIN — it does NOT
+    // see the cmps' local exact-byte + exp's Ulp and under-report Ulp (which a
+    // per-ROOT model that escalated only at the queried output would). This pins
+    // kiss-ref as per-node (a real KISS↔kiss-ref distinction the steward
+    // surfaced 2026-08-05; beyond 6.0-0008's comparison-op-OUTPUT scope).
+    let band = FlatDag::new(
+        vec![
+            Node::Bind(0), // 0 x
+            Node::Apply {
+                op: Op::Exp,
+                children: vec![0],
+            }, // 1 exp — U4
+            Node::Const(1.5), // 2 — EB
+            Node::Const(5.0), // 3 — EB
+            Node::Apply {
+                op: Op::CmpGt,
+                children: vec![1, 2],
+            }, // 4 exp>1.5 — MASK, OIN
+            Node::Apply {
+                op: Op::CmpLt,
+                children: vec![1, 3],
+            }, // 5 exp<5.0 — MASK, OIN
+            Node::Apply {
+                op: Op::Mul,
+                children: vec![4, 5],
+            }, // 6 band — VALUE combinator over two OIN masks → OIN
+        ],
+        vec![6],
+    );
+    let rb = eval_recipe(&band, std::slice::from_ref(&x), &[], &[])
+        .expect("intermediate-mask band must evaluate");
+    // exp = [1, e, e²] → (>1.5)=[0,1,1], (<5)=[1,1,0], band=[0,1,0].
+    assert_eq!(rb.dets, vec![EB, U4, EB, EB, OIN, OIN, OIN]);
+    assert_eq!(rb.dets[6], DetClass::OrderInvariantNondeterministic);
+    assert_close(&rb.outputs[0], &[0.0, 1.0, 0.0], &[3], 1e-12);
+}
+
+#[test]
 fn test_recipe_bincount_scalar_updates() {
     // R10 — bincount (KISS PR #75 companion, RULED general-broadcast
     // 2026-07-23; the cross-implementation witness golden):
