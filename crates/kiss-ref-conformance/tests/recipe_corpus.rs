@@ -1753,3 +1753,83 @@ fn test_recipe_attention_narrow_lanes_land_in_band() {
     attention_narrow::<f16>(inv_sqrt2, &golden, 2e-2);
     attention_narrow::<bf16>(inv_sqrt2, &golden, 6e-2);
 }
+
+#[test]
+fn test_recipe_per_output_determinism_class() {
+    // KISS-OPS-6.0-0007: per-output determinism class. A VALUE output's class = the
+    // most-permissive join over its producing sub-DAG (`dets[node]`); a SELECTION output
+    // (an exported index/permutation) escalates via `selection_det` — ExactByte iff the
+    // producer is all-exact, ELSE OIN, NEVER Ulp (a permutation over non-exact keys is
+    // not ULP-boundable). Two roots over a non-exact producer, checked both ways.
+
+    // Case A — OIN keys: root A = float sum-reduction VALUE (OIN); root B = a sort
+    // PERMUTATION over it, exported as an index output. B's sub-DAG contains the OIN
+    // reduction, so B is OIN. The realization propagates via the node-det join.
+    let dag_oin = FlatDag {
+        nodes: vec![
+            Node::Bind(0),
+            Node::Reduce {
+                monoid: Monoid::Sum,
+                axes: vec![1],
+                keepdim: false,
+                child: 0,
+            },
+            Node::SortNetwork {
+                keys: 1,
+                axis: 0,
+                dir: Direction::Asc,
+            },
+        ],
+        outputs: vec![1],
+        index_outputs: vec![2],
+    };
+    let r = eval_recipe(
+        &dag_oin,
+        &[t64(&[3.0, 1.0, 2.0, 6.0, 5.0, 4.0], &[2, 3])],
+        &[],
+        &[],
+    )
+    .unwrap();
+    assert_eq!(
+        r.dets,
+        vec![EB, OIN, OIN],
+        "value-lane classes: the reduction and the sort's sorted values are OIN"
+    );
+    assert_eq!(
+        r.index_output_dets(&dag_oin),
+        vec![OIN],
+        "OIN keys: the exported permutation is OIN"
+    );
+
+    // Case B — Ulp keys: root A = exp() VALUE (Ulp(4)); root B = a sort PERMUTATION over
+    // it. THE case the plain join gets wrong: the sort node's value-lane det is
+    // EB ⊔ Ulp = Ulp, but a permutation over Ulp keys is not ULP-boundable, so the
+    // SELECTION output must escalate to OIN — never Ulp.
+    let dag_ulp = FlatDag {
+        nodes: vec![
+            Node::Bind(0),
+            Node::Apply {
+                op: Op::Exp,
+                children: vec![0],
+            },
+            Node::SortNetwork {
+                keys: 1,
+                axis: 0,
+                dir: Direction::Asc,
+            },
+        ],
+        outputs: vec![1],
+        index_outputs: vec![2],
+    };
+    let r2 = eval_recipe(&dag_ulp, &[t64(&[1.0, 0.0, 2.0], &[3])], &[], &[]).unwrap();
+    assert_eq!(
+        r2.dets,
+        vec![EB, U4, U4],
+        "value-lane classes: exp and the sort's sorted VALUES are Ulp(4)"
+    );
+    assert_eq!(
+        r2.index_output_dets(&dag_ulp),
+        vec![OIN],
+        "Ulp keys: the exported permutation MUST escalate to OIN, not the join's Ulp"
+    );
+}

@@ -185,12 +185,29 @@ pub struct RecipeEval<T> {
     /// The index-lane outputs, in `dag.index_outputs` order (`i64`-widened,
     /// dtype-tagged). Empty when the DAG declares none.
     pub index_outputs: Vec<IndexTensor>,
-    /// Per-node [`DetClass`], in node order. One class per node covers **both**
-    /// lane products of that node — for `sort_network`, `ExactByte ⊔ det(keys)`
-    /// applies to the index permutation too (ULP-different keys may permute
-    /// differently), so a comparator consuming index outputs must not
-    /// under-classify.
+    /// Per-node [`DetClass`] — the **value-lane** class, in node order, most-permissive
+    /// over each node's producing sub-DAG (§6.0-0005 join). For a **selection** output
+    /// (an index/permutation) do NOT read this directly: `dets[sort]` is the sorted
+    /// VALUES' class (e.g. `Ulp(k)` for `Ulp`-classed keys), but the exported
+    /// permutation's class is the [`selection_det`] escalation of it — use
+    /// [`RecipeEval::index_output_dets`] (KISS-OPS-6.0-0007), because a permutation over
+    /// non-exact keys is not ULP-boundable.
     pub dets: Vec<DetClass>,
+}
+
+impl<T> RecipeEval<T> {
+    /// The per-**index-output** determinism classes, in `dag.index_outputs` order: the
+    /// [`selection_det`] escalation of each index output's producing node's class. An
+    /// index/permutation is a SELECTION, not a value, so its class is NOT `self.dets[m]`
+    /// (the value-lane join, e.g. `Ulp(k)`) but `ExactByte`-or-nondeterministic
+    /// (KISS-OPS-6.0-0007). Use THIS — not `dets` — to classify an index output for a
+    /// differential comparator.
+    pub fn index_output_dets(&self, dag: &FlatDag) -> Vec<DetClass> {
+        dag.index_outputs
+            .iter()
+            .map(|&m| selection_det(self.dets.get(m).copied().unwrap_or(DetClass::ExactByte)))
+            .collect()
+    }
 }
 
 /// A rank-0 (scalar) tensor holding `v` — broadcasts to any shape in an
@@ -278,27 +295,37 @@ pub(crate) fn resolve_index_ref<'a>(
     }
 }
 
-/// The [`DetClass`] contribution of an index operand to its CONSUMER's
-/// value-lane class. An external slot is a given (exact, shared byte-identically
-/// by reference and candidate). A node-produced index is exact only if its
-/// producer is: a non-exact producer (ULP-classed sort keys) can permute
-/// **differently** within its own tolerance, and a changed permutation relocates
-/// whole data elements — a deviation that is NOT ULP-boundable. So anything
-/// short of `ExactByte` escalates to the most-permissive class rather than
-/// forwarding a `Ulp(k)` the consumer's output cannot honor (which would
-/// falsely fail conforming candidates in the differential comparator).
+/// The determinism class of a **selection** output — an index / permutation / mask /
+/// one-hot / bucket that reports WHICH value won, not a value — given its producing
+/// sub-DAG's class (KISS-OPS-6.0-0007). A selection is never more deterministic than the
+/// values it selects among, and a selection over non-exact values is NOT ULP-boundable:
+/// a ≤k-ULP perturbation of the compared values can flip the selection and relocate it
+/// without bound. So it is `ExactByte` iff the producer is entirely exact-byte, else
+/// `OrderInvariantNondeterministic` — **never `Ulp(k)`**. This is the escalation the
+/// value-lane most-permissive join must NOT apply to a selection output.
+pub fn selection_det(producer: DetClass) -> DetClass {
+    match producer {
+        DetClass::ExactByte => DetClass::ExactByte,
+        _ => DetClass::OrderInvariantNondeterministic,
+    }
+}
+
+/// The [`DetClass`] contribution of an index operand to its CONSUMER's value-lane
+/// class. An external slot is a given (exact, shared byte-identically by reference and
+/// candidate). A node-produced index escalates via [`selection_det`]: a non-exact
+/// producer (ULP-classed sort keys) can permute **differently** within its own
+/// tolerance, relocating whole data elements — a deviation NOT ULP-boundable — so
+/// anything short of `ExactByte` becomes `OrderInvariantNondeterministic`, never a
+/// forwarded `Ulp(k)` the consumer's output cannot honor.
 fn index_ref_det<T: Clone>(r: IndexRef, memo: &[Option<(Tensor<T>, DetClass)>]) -> DetClass {
     match r {
         IndexRef::Slot(_) => DetClass::ExactByte,
-        IndexRef::Node(m) => match memo
-            .get(m)
-            .and_then(|x| x.as_ref())
-            .map(|(_, d)| *d)
-            .unwrap_or(DetClass::ExactByte)
-        {
-            DetClass::ExactByte => DetClass::ExactByte,
-            _ => DetClass::OrderInvariantNondeterministic,
-        },
+        IndexRef::Node(m) => selection_det(
+            memo.get(m)
+                .and_then(|x| x.as_ref())
+                .map(|(_, d)| *d)
+                .unwrap_or(DetClass::ExactByte),
+        ),
     }
 }
 
