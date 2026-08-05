@@ -721,7 +721,12 @@ fn test_recipe_cmp_mask_selection_escalation() {
     assert_eq!(rr.dets[4], DetClass::Ulp(4.0)); // value output stays Ulp
     assert_eq!(rr.dets[6], DetClass::OrderInvariantNondeterministic); // mask escalates
     let a_val = [(0.0f64).exp() - 2.0, (1.0f64).exp() - 2.0];
-    assert_close(&rr.outputs[0], &[a_val[0].max(0.0), a_val[1].max(0.0)], &[2], 1e-9);
+    assert_close(
+        &rr.outputs[0],
+        &[a_val[0].max(0.0), a_val[1].max(0.0)],
+        &[2],
+        1e-9,
+    );
     assert_close(&rr.outputs[1], &[0.0, 1.0], &[2], 1e-12);
 
     // Arm 4 — the escalation is PER-NODE, so it propagates through an
