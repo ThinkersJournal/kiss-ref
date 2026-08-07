@@ -10,8 +10,9 @@
 //! Float `sum`/`prod` reductions/scans and float `scatter_add` are
 //! order-invariant/nondeterministic (§6.0-0004): compare their results under
 //! tolerance, never byte-exact. Use [`crate::bridge::DetClass`] /
-//! [`op_det`] to classify. `avg_pool`/`max_pool`/`im2col` (the window family) are a
-//! documented follow-up — they need a windowed-view machinery not built here.
+//! [`op_det`] to classify. The window family (`avg_pool`/`max_pool`/`im2col`) is NOT
+//! in this module — it's built in the `window` module (float lane) and `tensor_int`
+//! (integer `max_pool`/`im2col`). `op_det` below still classifies its DetClass.
 
 extern crate alloc;
 use alloc::vec::Vec;
@@ -471,9 +472,9 @@ pub fn flip<T: Copy>(data: &View<T>, axis: usize) -> Result<Tensor<T>, Error> {
 /// a ULP bound; pure max/min/data-movement are exact-byte.
 pub fn op_det(op: Op) -> DetClass {
     match op {
-        // float sum/prod contraction → nondeterministic. `avg_pool` (a deferred
-        // window op) is `reduce_mean` over the window, so it carries a float sum
-        // and is named in §6.0-0004 — classify it here, not via the exact default.
+        // float sum/prod contraction → nondeterministic. `avg_pool` (implemented in
+        // the `window` module) is `reduce_mean` over the window, so it carries a float
+        // sum and is named in §6.0-0004 — classify it here, not via the exact default.
         Op::ReduceMean
         | Op::ReduceVar
         | Op::ReduceStd
@@ -488,8 +489,9 @@ pub fn op_det(op: Op) -> DetClass {
         Op::Softmax | Op::LogSoftmax | Op::Logsumexp | Op::RmsNorm | Op::LayerNorm => {
             DetClass::OrderInvariantNondeterministic
         }
-        // max/min reductions, scans, gathers, sorts, argmax → exact-byte; also the
-        // deferred `max_pool` (max reduction) and `im2col` (pure data movement).
+        // max/min reductions, scans, gathers, sorts, argmax → exact-byte; also
+        // `max_pool` (max reduction) and `im2col` (pure data movement), whose kernels
+        // live in `window`/`tensor_int` — this arm only classifies their DetClass.
         _ => DetClass::ExactByte,
     }
 }
