@@ -74,9 +74,12 @@ pub enum Dtype {
     /// 1-byte truth value; storage width equals `u8`; ops normalize to 0/1.
     Bool,
     /// FP8 E4M3 (1s+4e+3m, bias 7); max finite ±448, no infinities, single NaN — i.e.
-    /// the OCP *finite* (`fn`) variant. NOTE: `token()` returns bare `"e4m3"`, which
-    /// DRIFTS from §6.1's normative `e4m3fn`; corrected to `f8e4m3fn` in the sk4/0.3.0
-    /// coordinated regen (must ride sk4 — not a standalone token change).
+    /// the OCP *finite* (`fn`) variant. Three distinct token spellings are in play; do
+    /// not conflate them: (1) this crate's `token()` currently returns the bare legacy
+    /// `"e4m3"`; (2) the current §6.1 normative token is `e4m3fn` (sk3 already removed
+    /// the ambiguous bare `e4m3`), so this crate's bare form is a latent non-conformance
+    /// today; (3) the sk4 coordinated regen width-prefixes the FP8 family, landing this
+    /// token at `f8e4m3fn`. The crate's fix must ride sk4 — not a standalone token change.
     E4m3,
     /// FP8 E5M2 (1s+5e+2m, bias 15); max finite ±57344, IEEE-style inf/NaN.
     E5m2,

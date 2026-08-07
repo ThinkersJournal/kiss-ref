@@ -472,9 +472,9 @@ pub fn flip<T: Copy>(data: &View<T>, axis: usize) -> Result<Tensor<T>, Error> {
 /// a ULP bound; pure max/min/data-movement are exact-byte.
 pub fn op_det(op: Op) -> DetClass {
     match op {
-        // float sum/prod contraction → nondeterministic. `avg_pool` (a deferred
-        // window op) is `reduce_mean` over the window, so it carries a float sum
-        // and is named in §6.0-0004 — classify it here, not via the exact default.
+        // float sum/prod contraction → nondeterministic. `avg_pool` (implemented in
+        // the `window` module) is `reduce_mean` over the window, so it carries a float
+        // sum and is named in §6.0-0004 — classify it here, not via the exact default.
         Op::ReduceMean
         | Op::ReduceVar
         | Op::ReduceStd
