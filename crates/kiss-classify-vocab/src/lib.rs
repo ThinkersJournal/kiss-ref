@@ -73,7 +73,10 @@ pub enum Dtype {
     U64,
     /// 1-byte truth value; storage width equals `u8`; ops normalize to 0/1.
     Bool,
-    /// FP8 E4M3 (1s+4e+3m, bias 7); max finite ±448, no infinities, single NaN.
+    /// FP8 E4M3 (1s+4e+3m, bias 7); max finite ±448, no infinities, single NaN — i.e.
+    /// the OCP *finite* (`fn`) variant. NOTE: `token()` returns bare `"e4m3"`, which
+    /// DRIFTS from §6.1's normative `e4m3fn`; corrected to `f8e4m3fn` in the sk4/0.3.0
+    /// coordinated regen (must ride sk4 — not a standalone token change).
     E4m3,
     /// FP8 E5M2 (1s+5e+2m, bias 15); max finite ±57344, IEEE-style inf/NaN.
     E5m2,

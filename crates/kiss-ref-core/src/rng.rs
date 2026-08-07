@@ -32,8 +32,10 @@
 //! `normal_f32` (§8.2 basic Box-Muller — NOT `ExactByte`, its transcendentals carry a
 //! tolerance; tested for structure — no NaN, the Pythagorean pairing identity — never a
 //! guessed bound). Deferred: a recipe-grammar `RandomBits` node (a breaking 0.3.0 no
-//! consumer needs — the diff surface is these value functions) and `normal_f32`'s
-//! numeric conformance tolerance (open, sabotage-calibrated pending a second backend).
+//! consumer needs — the diff surface is these value functions; the sk4 coordinated
+//! 0.3.0 is the natural window to add it IF a consumer materializes, currently none)
+//! and `normal_f32`'s numeric conformance tolerance (open, sabotage-calibrated pending
+//! a second backend).
 
 extern crate alloc;
 use alloc::vec::Vec;

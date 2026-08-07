@@ -378,8 +378,13 @@ impl_scalar_float!(
 // format (the exact result of two narrow operands fits in f32); for the
 // transcendentals it lands well inside the coarse narrow-dtype ULP ceiling; `bf16`
 // has no native arithmetic and is *defined* to compute in f32 (§6.16). Caveat:
-// narrow `div` is a double-rounding (f32-correct then narrowed) — occasionally 1
-// ULP off a true correctly-rounded narrow divide; documented, revisited later.
+// narrow `div` double-rounds (f32-correct then narrowed), so it can sit ≤1 ULP from a
+// single-rounded (correctly-rounded-to-narrow) divide — and it is classed
+// `ExactByte`, so a candidate that divides directly in narrow precision would deviate
+// by that ≤1 ULP. This is the compute-in-f32 reference model applied uniformly.
+// OPEN (routed to KISS — not a silent "revisited later"): does §6.16's compute-in-f32
+// rule bind narrow `div` (⇒ the double-round is conformant) or must narrow `div` be
+// correctly-rounded (⇒ fix via a round-to-odd f32 intermediate)?
 // `nextafter` is declined for these types by the resolver (§6.9-0003), so its
 // f32-promoted body here is never reached through `eval_op`.
 macro_rules! impl_scalar_float_via_f32 {

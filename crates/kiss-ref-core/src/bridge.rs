@@ -8,10 +8,12 @@
 //! determinism class ([`DetClass`]) a result declares (§6.0), and the monoid
 //! identity / combine-op / determinism helpers.
 //!
-//! This first cut is the **float lane** (`T: ScalarFloat` — `f16`/`bf16`/`f32`/
-//! `f64`). The integer lane (`reduce`/`gather`/… over integer dtypes via
-//! `eval_int_op`) is a documented follow-up; those `(op × int-dtype)` cells stay
-//! `Pending` in the coverage ledger.
+//! Two lanes exist, both built: the **float lane** (`T: ScalarFloat` —
+//! `f16`/`bf16`/`f32`/`f64`) and the **integer lane** (`reduce`/`gather`/… over
+//! integer dtypes via `eval_int_op` / `eval_recipe_int`). The `(op × int-dtype)`
+//! cells are `Done`, not `Pending`. What remains `Pending` in the coverage ledger is
+//! the per-`(op × dtype)` gaps the resolver declines — FP8/`bool` for some ops, and
+//! `nextafter` on the narrow floats (§6.9-0003) — not a whole lane.
 
 use kiss_ops_vocab::Op;
 
