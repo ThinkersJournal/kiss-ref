@@ -621,6 +621,87 @@ pub fn reference_matmul_acc<T: ScalarFloat>(
     Ok(Evaluated::new(t, DetClass::OrderInvariantNondeterministic))
 }
 
+// ---- §6.18 complex differential seam + split comparator (§6.18-0017) ----------
+//
+// The reference for a complex op over a batch of complex-operand rows (a row is
+// `&[z]` for a unary op, `&[z, w]` for a binary op), and the §6.18-0017 SPLIT
+// comparator the ULP complex ops (`carg`/`clog`/`csqrt`/`cexp`) must be judged
+// under: a ULP/tolerance comparison on component MAGNITUDES, combined with an
+// EXACT sign-bit check on the two places a magnitude-tolerance comparator is blind
+// — (a) every zero-valued component (`+0.0` vs `−0.0`) and (b) the ±π branch
+// endpoint of an imaginary/angle component (the sign of a value equal to π in
+// magnitude). Returning the wrong sign of a zero or the wrong ±π endpoint is
+// non-conforming even when the magnitude is within tolerance.
+
+use crate::complex::{eval_complex_op, Cplx, CplxOut};
+
+/// Reference `c64` outputs of a complex `op` over a batch of complex-operand rows.
+pub fn reference_c64(op: Op, rows: &[&[Cplx<f64>]]) -> Result<Vec<CplxOut<f64>>, Error> {
+    rows.iter().map(|r| eval_complex_op::<f64>(op, r)).collect()
+}
+
+/// Reference `c32` outputs of a complex `op` over a batch of complex-operand rows.
+pub fn reference_c32(op: Op, rows: &[&[Cplx<f32>]]) -> Result<Vec<CplxOut<f32>>, Error> {
+    rows.iter().map(|r| eval_complex_op::<f32>(op, r)).collect()
+}
+
+/// One component of a §6.18-0017 split comparison: ULP tolerance on the magnitude
+/// always; when `sign_exact` (a zero component, or a ±π-endpoint angle), the sign
+/// bit must additionally match exactly.
+fn split_component_f64(reference: f64, candidate: f64, ulp: u64, sign_exact: bool) -> bool {
+    if ulp_distance_f64(reference.abs(), candidate.abs()) > ulp {
+        return false;
+    }
+    !sign_exact || (reference.is_sign_negative() == candidate.is_sign_negative())
+}
+
+fn split_component_f32(reference: f32, candidate: f32, ulp: u64, sign_exact: bool) -> bool {
+    if u64::from(ulp_distance_f32(reference.abs(), candidate.abs())) > ulp {
+        return false;
+    }
+    !sign_exact || (reference.is_sign_negative() == candidate.is_sign_negative())
+}
+
+#[inline]
+fn is_pi_endpoint_f64(x: f64) -> bool {
+    x.abs() == core::f64::consts::PI
+}
+#[inline]
+fn is_pi_endpoint_f32(x: f32) -> bool {
+    x.abs() == core::f32::consts::PI
+}
+
+/// §6.18-0017 split comparator for a complex→complex ULP op (`cexp`/`clog`/
+/// `csqrt`): ULP on both component magnitudes, exact sign on any zero component
+/// and on an imaginary component at the ±π branch endpoint.
+pub fn complex_conforms_c64(reference: Cplx<f64>, candidate: Cplx<f64>, ulp: u64) -> bool {
+    let re_ok = split_component_f64(reference.re, candidate.re, ulp, reference.re == 0.0);
+    let im_sign_exact = reference.im == 0.0 || is_pi_endpoint_f64(reference.im);
+    let im_ok = split_component_f64(reference.im, candidate.im, ulp, im_sign_exact);
+    re_ok && im_ok
+}
+
+/// `c32` form of [`complex_conforms_c64`].
+pub fn complex_conforms_c32(reference: Cplx<f32>, candidate: Cplx<f32>, ulp: u64) -> bool {
+    let re_ok = split_component_f32(reference.re, candidate.re, ulp, reference.re == 0.0);
+    let im_sign_exact = reference.im == 0.0 || is_pi_endpoint_f32(reference.im);
+    let im_ok = split_component_f32(reference.im, candidate.im, ulp, im_sign_exact);
+    re_ok && im_ok
+}
+
+/// §6.18-0017 split comparator for `carg` (complex→real angle): ULP on magnitude,
+/// exact sign on a zero angle and on the ±π endpoint.
+pub fn arg_conforms_f64(reference: f64, candidate: f64, ulp: u64) -> bool {
+    let sign_exact = reference == 0.0 || is_pi_endpoint_f64(reference);
+    split_component_f64(reference, candidate, ulp, sign_exact)
+}
+
+/// `f32` form of [`arg_conforms_f64`].
+pub fn arg_conforms_f32(reference: f32, candidate: f32, ulp: u64) -> bool {
+    let sign_exact = reference == 0.0 || is_pi_endpoint_f32(reference);
+    split_component_f32(reference, candidate, ulp, sign_exact)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

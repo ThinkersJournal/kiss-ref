@@ -33,9 +33,9 @@ impl Ledger {
              + the §6.11 structural atoms, §6.13 tensor non-primitives & window family on \
              the float lane, plus the integer tensor lane (reduce/scan/gather/scatter/sort/ \
              argmax/any/all). Dtype breadth: + FP8 (e4m3/e5m2, promote-to-f32) + the bool \
-             truth-valued lane; complex (c32/c64) is NotApplicable (§6.16-0007 — the deferred \
-             §6.18 op family). Cell coverage is three-state (Done/Pending/NotApplicable); \
-             only spec-legal cells form the denominator.",
+             truth-valued lane + the §6.18 complex family (c32/c64, Annex-G-governed). Cell \
+             coverage is three-state (Done/Pending/NotApplicable); only spec-legal cells \
+             form the denominator.",
             self.done.len(),
             total,
             self.pending.len()

@@ -466,12 +466,21 @@ pub fn flip<T: Copy>(data: &View<T>, axis: usize) -> Result<Tensor<T>, Error> {
 
 // ---- determinism classification ----------------------------------------------
 
-/// The determinism class of a tensor non-primitive on the **float** lane (§6.0):
-/// the float-summation ops (reductions/means/norms/softmaxes/matmul/scatter_add)
-/// are order-invariant/nondeterministic; the transcendental-bearing ones inherit
-/// a ULP bound; pure max/min/data-movement are exact-byte.
+/// The determinism class of a non-primitive (§6.0): the float-summation ops
+/// (reductions/means/norms/softmaxes/matmul/scatter_add) are order-invariant/
+/// nondeterministic; the transcendental-bearing ones inherit a ULP bound; pure
+/// max/min/data-movement are exact-byte. Also classifies the §6.18 complex family
+/// per §6.18-0014 (algebraic complex ops exact-byte; the transcendental-bearing
+/// `cabs`/`carg`/`cexp`/`clog`/`csqrt`/`cpow` are ULP/tolerance).
 pub fn op_det(op: Op) -> DetClass {
     match op {
+        // §6.18-0014: the transcendental-bearing complex ops are ULP/tolerance,
+        // bounded by their dominant real atom's §6.8 ceiling (sqrt/hypot → 2 ULP;
+        // atan2/exp/log/sin/cos → 4 ULP). The purely-algebraic complex ops
+        // (cmake/cre/cim/cadd/csub/cneg/cconj/cmul/cdiv) are exact-byte via the
+        // default arm below.
+        Op::Cabs | Op::Csqrt => DetClass::Ulp(2.0),
+        Op::Carg | Op::Cexp | Op::Clog | Op::Cpow => DetClass::Ulp(4.0),
         // float sum/prod contraction → nondeterministic. `avg_pool` (implemented in
         // the `window` module) is `reduce_mean` over the window, so it carries a float
         // sum and is named in §6.0-0004 — classify it here, not via the exact default.
