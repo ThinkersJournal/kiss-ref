@@ -268,12 +268,12 @@ pub fn cexp<T: ScalarFloat>(z: Cplx<T>) -> Cplx<T> {
     let (a, b) = (z.re, z.im);
 
     if a.is_nan() {
-        // NaN + i·0 = NaN + i·0 ; NaN + i·(nonzero|NaN) = NaN + i·NaN.
+        // NaN + i·0 = NaN + i·0 ; NaN + i·(nonzero|NaN) = NaN + i·NaN. The zero
+        // imaginary lane is returned VERBATIM (`b`), preserving its sign —
+        // Annex-G conjugate symmetry `cexp(z̄) = conj(cexp(z))` and the §6.18-0017
+        // exact-sign requirement on zero result components (not forced to `+0`).
         return if is_zero(b) {
-            Cplx {
-                re: nan(),
-                im: T::ZERO,
-            }
+            Cplx { re: nan(), im: b }
         } else {
             Cplx {
                 re: nan(),
@@ -303,11 +303,10 @@ pub fn cexp<T: ScalarFloat>(z: Cplx<T>) -> Cplx<T> {
     if is_finite(b) {
         return if pos {
             if is_zero(b) {
-                // +∞ + i·0 = +∞ + i·0.
-                Cplx {
-                    re: inf(),
-                    im: T::ZERO,
-                }
+                // +∞ + i·0 = +∞ + i·0 — the zero imaginary lane is returned
+                // verbatim (`b`) to preserve its sign (Annex-G conjugate symmetry /
+                // §6.18-0017), matching the finite path where `sin(±0) = ±0`.
+                Cplx { re: inf(), im: b }
             } else {
                 // +∞ + i·y (finite nonzero y) = +∞·(cos y + i·sin y).
                 Cplx {

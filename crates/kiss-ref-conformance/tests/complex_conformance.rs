@@ -159,6 +159,12 @@ fn test_ops_cexp_annexg() {
     let r = cexp(c(INF, 0.0));
     assert_eq!(r.re, INF);
     assert!(bit_eq(r.im, 0.0));
+    // The sign of the zero imaginary lane is PRESERVED (Annex-G conjugate
+    // symmetry cexp(z̄)=conj(cexp(z)); §6.18-0017 exact sign on zero components):
+    // +∞ − i·0 = +∞ − i·0, NaN − i·0 = NaN − i·0 (not forced to +0).
+    assert!(bit_eq(cexp(c(INF, -0.0)).im, -0.0));
+    assert!(bit_eq(cexp(c(NAN, -0.0)).im, -0.0));
+    assert!(bit_eq(cexp(c(NAN, 0.0)).im, 0.0));
     // −∞ + i·y = +0·(cos y + i sin y) → (+0, +0) for y in (0, π/2).
     let l = cexp(c(-INF, 1.0));
     assert_eq!(l.re, 0.0);
