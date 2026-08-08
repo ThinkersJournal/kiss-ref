@@ -205,6 +205,19 @@ impl Dtype {
     pub const fn is_complex(self) -> bool {
         matches!(self.numeric_kind(), NumericKind::Complex)
     }
+
+    /// The real component-lane dtype of a complex dtype — `c32 → f32`, `c64 → f64`
+    /// — i.e. the `f32`/`f64` element of the interleaved (re,im) storage that a
+    /// §6.18 complex op evaluates its real-atom decomposition in (§6.18-0015, and
+    /// MUST NOT be promoted/demoted across the family's atoms). `None` for a
+    /// non-complex dtype.
+    pub const fn component_dtype(self) -> Option<Dtype> {
+        match self {
+            Dtype::C32 => Some(Dtype::F32),
+            Dtype::C64 => Some(Dtype::F64),
+            _ => None,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -255,6 +268,21 @@ mod tests {
     fn classify_unknown_token_is_not_a_dtype() {
         for bad in ["s32", "s64", "f8", "int32", "F32", "", "u128"] {
             assert_eq!(Dtype::from_token(bad), None, "{bad:?} must not parse");
+        }
+    }
+
+    #[test]
+    fn classify_complex_component_dtype() {
+        // §6.18-0015: the complex compute dtypes' component lane is f32/f64;
+        // every non-complex dtype has no component lane.
+        assert_eq!(Dtype::C32.component_dtype(), Some(Dtype::F32));
+        assert_eq!(Dtype::C64.component_dtype(), Some(Dtype::F64));
+        for d in Dtype::ALL {
+            assert_eq!(
+                d.component_dtype().is_some(),
+                d.is_complex(),
+                "{d:?}: component_dtype is Some iff complex"
+            );
         }
     }
 

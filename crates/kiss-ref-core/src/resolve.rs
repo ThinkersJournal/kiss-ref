@@ -292,14 +292,20 @@ pub fn tensor_supported(op: Op) -> bool {
 /// Whether any reference path evaluates `op` (float scalar, integer scalar, or the
 /// tensor path). Used by the coverage ledger.
 pub fn implemented(op: Op) -> bool {
-    float_supported(op) || crate::int_supported(op) || tensor_supported(op)
+    // Every §6.18 complex op has a reference kernel (`crate::complex`), evaluable on
+    // `c32`/`c64` — so a complex op counts as implemented for the per-op ledger.
+    float_supported(op) || crate::int_supported(op) || tensor_supported(op) || op.is_complex()
 }
 
 /// Coverage of `(op, dtype)` in this seed: `Done` iff a reference path evaluates
-/// `op` on `dtype` — the float scalar path on `f32`/`f64`/`f16`/`bf16`, or the
-/// integer scalar path on an integer dtype. `Pending` otherwise (FP8, `bool`,
-/// complex). `nextafter` is `Pending` on the narrow floats (§6.9-0003 decline).
-/// Drives the conformance coverage ledger.
+/// `op` on `dtype` — the float scalar/tensor path on the six float lanes
+/// (`f16`/`bf16`/`f32`/`f64`/`e4m3`/`e5m2`, the narrow lanes via promote-to-f32),
+/// the integer path on the integer dtypes, the `bool` truth-valued lane, or the
+/// §6.18 complex path on `c32`/`c64`. `Pending` is the residue of genuinely
+/// legal-but-unimplemented edges (e.g. a `bool`-legal op with no backing integer
+/// kernel). Illegal cells are `NotApplicable`, never `Pending` — `nextafter` on
+/// the narrow floats is a §6.9-0003 legality decline, not a backlog item. Drives
+/// the conformance coverage ledger.
 pub fn support(op: Op, dtype: Dtype) -> Support {
     if !legality(op, dtype) {
         Support::NotApplicable
@@ -317,10 +323,11 @@ pub fn support(op: Op, dtype: Dtype) -> Support {
 /// operand-role axis and is NOT folded in here.
 pub fn legality(op: Op, dtype: Dtype) -> bool {
     let kind = dtype.numeric_kind();
-    // §6.16-0007: complex arithmetic is the deferred §6.18 family; NONE of the 106
-    // vocab ops apply to a complex compute dtype.
-    if kind == NumericKind::Complex {
-        return false;
+    // §6.18: the complex-arithmetic family is defined EXACTLY on the complex
+    // compute dtypes (`c32`/`c64`), and no real op is defined on a complex dtype —
+    // so a complex op and a complex dtype are legal together or not at all.
+    if op.is_complex() || kind == NumericKind::Complex {
+        return op.is_complex() && kind == NumericKind::Complex;
     }
     // §6.9-0003: nextafter is defined only on the wide floats (stepping in a
     // promoted f32 gives the wrong neighbor in the narrow/FP8 lattice).
@@ -406,7 +413,10 @@ fn implemented_on(op: Op, dtype: Dtype) -> bool {
     // the bool truth-valued lane (scalar via eval_bool_op; tensor via the integer
     // kernels over {0,1}).
     let bool_ok = dtype == Dtype::Bool && crate::boolean::bool_supported(op);
-    float_ok || int_ok || bool_ok
+    // §6.18: every complex op has a reference kernel (crate::complex) on both
+    // complex dtypes, computing in the f32/f64 component lane (§6.18-0015).
+    let complex_ok = dtype.is_complex() && op.is_complex();
+    float_ok || int_ok || bool_ok || complex_ok
 }
 
 #[cfg(test)]

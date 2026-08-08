@@ -38,9 +38,9 @@ fn coverage_ledger_reports_done_and_pending() {
     );
 
     assert_eq!(l.done.len() + l.pending.len(), Op::ALL.len());
-    // Every op is now evaluable on at least the float (or integer scalar) lane —
-    // the full 106, including the window family. Remaining gaps are per-(op×dtype)
-    // cells (FP8/bool/complex, and the integer/FP8/complex tensor lanes), not whole
+    // Every op is now evaluable on at least one lane — the full 121, including the
+    // window family and the §6.18 complex family (on c32/c64). Remaining gaps are
+    // per-(op×dtype) cells (bool edges, the integer/FP8 tensor lanes), not whole
     // ops, so the per-op ledger is complete.
     assert_eq!(
         l.done.len(),
@@ -157,6 +157,7 @@ fn coverage_support_consistency() {
                     (float_supported(op) && op != Op::Nextafter) || tensor_supported(op)
                 }
                 Dtype::Bool => bool_supported(op),
+                Dtype::C32 | Dtype::C64 => op.is_complex(),
                 _ if int_spec(d).is_some() => int_supported(op) || int_tensor_supported(op),
                 _ => false,
             };
@@ -166,14 +167,32 @@ fn coverage_support_consistency() {
 }
 
 #[test]
-fn coverage_complex_all_not_applicable() {
-    // KISS-OPS-6.16-0007: complex arithmetic is the deferred §6.18 op family, so NONE of
-    // the 106 vocab ops apply to a complex compute dtype — every cell is
-    // NotApplicable, not a pending backlog item.
+fn coverage_complex_cells_done_real_ops_not_applicable() {
+    // §6.18: the complex-arithmetic family is Done on the complex compute dtypes;
+    // every REAL op is NotApplicable on a complex dtype (and vice versa). The
+    // (op × c32/c64) matrix is exactly the 15 complex ops × 2 dtypes.
     for &d in &[Dtype::C32, Dtype::C64] {
         for &op in Op::ALL {
-            assert_eq!(support(op, d), Support::NotApplicable, "{op:?}/{d:?}");
+            let expect = if op.is_complex() {
+                Support::Done
+            } else {
+                Support::NotApplicable
+            };
+            assert_eq!(support(op, d), expect, "{op:?}/{d:?}");
         }
+    }
+    // A complex op is NotApplicable on a real dtype (float and integer).
+    for &op in &[Op::Cadd, Op::Cmul, Op::Cexp, Op::Cabs, Op::Cmake] {
+        assert_eq!(
+            support(op, Dtype::F32),
+            Support::NotApplicable,
+            "{op:?}/f32"
+        );
+        assert_eq!(
+            support(op, Dtype::I32),
+            Support::NotApplicable,
+            "{op:?}/i32"
+        );
     }
 }
 

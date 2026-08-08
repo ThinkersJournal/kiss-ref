@@ -44,6 +44,10 @@ pub enum Family {
     Window,
     GatherScatter,
     Shape,
+    /// The §6.18 complex-arithmetic family (`c32`/`c64`). Every member is
+    /// non-primitive over the real floor; the family introduces no new primitive
+    /// (§6.18-0002).
+    Complex,
 }
 
 /// Generate the `Op` enum + its metadata from one spec-mirroring table, so the
@@ -202,6 +206,27 @@ kiss_ops! {
     Embedding => "embedding", GatherScatter, false;
     ScatterAdd => "scatter_add", GatherScatter, false;
     Im2col => "im2col", Shape, false;
+
+    // ---- §6.18 complex-arithmetic op family (c32 / c64) ----
+    // Every member is non-primitive over the real floor (§6.18-0002), Annex-G-
+    // governed (§6.18-0013). Order matches the §6.18-0001 set: the cmake/cre/cim
+    // component bridge (decomposition plumbing, NOT advertised high-level per
+    // §6.18-0016), then the advertised complex ops.
+    Cmake => "cmake", Complex, false;
+    Cre => "cre", Complex, false;
+    Cim => "cim", Complex, false;
+    Cadd => "cadd", Complex, false;
+    Csub => "csub", Complex, false;
+    Cneg => "cneg", Complex, false;
+    Cconj => "cconj", Complex, false;
+    Cmul => "cmul", Complex, false;
+    Cdiv => "cdiv", Complex, false;
+    Cabs => "cabs", Complex, false;
+    Carg => "carg", Complex, false;
+    Cexp => "cexp", Complex, false;
+    Clog => "clog", Complex, false;
+    Csqrt => "csqrt", Complex, false;
+    Cpow => "cpow", Complex, false;
 }
 
 impl Op {
@@ -232,6 +257,19 @@ impl Op {
             Op::Lgamma => Some(8.0),
             _ => None,
         }
+    }
+
+    /// True for the §6.18 complex-arithmetic family (`Family::Complex`) — the ops
+    /// defined on the complex compute dtypes `c32`/`c64`.
+    pub const fn is_complex(self) -> bool {
+        matches!(self.family(), Family::Complex)
+    }
+
+    /// True for the `cmake`/`cre`/`cim` component bridge — decomposition plumbing
+    /// that MUST NOT be advertised high-level (§6.18-0016). The remaining complex
+    /// ops are the advertised (native-matchable) family.
+    pub const fn is_complex_component_bridge(self) -> bool {
+        matches!(self, Op::Cmake | Op::Cre | Op::Cim)
     }
 }
 
@@ -319,12 +357,69 @@ mod tests {
 
     #[test]
     fn ops_full_set_size() {
-        // 43 floor + 63 non-primitive = 106 (complex §6.18 deferred).
-        assert_eq!(Op::ALL.len(), 106);
+        // 43 floor + 78 non-primitive = 121 (incl. the 15-op §6.18 complex family).
+        assert_eq!(Op::ALL.len(), 121);
         assert_eq!(
             Op::ALL.iter().filter(|o| !o.is_primitive_floor()).count(),
-            63
+            78
         );
+    }
+
+    /// The exact §6.18-0001 complex-arithmetic op set.
+    const COMPLEX_SPEC: &[&str] = &[
+        "cmake", "cre", "cim", "cadd", "csub", "cneg", "cconj", "cmul", "cdiv", "cabs", "carg",
+        "cexp", "clog", "csqrt", "cpow",
+    ];
+
+    #[test]
+    fn ops_complex_op_set_matches_spec_exactly() {
+        // KISS-OPS-6.18-0001: the complex family MUST be exactly this set.
+        let mut got: Vec<&str> = Op::ALL
+            .iter()
+            .filter(|o| o.is_complex())
+            .map(|o| o.token())
+            .collect();
+        got.sort_unstable();
+        let mut spec: Vec<&str> = COMPLEX_SPEC.to_vec();
+        spec.sort_unstable();
+        assert_eq!(got, spec);
+        assert_eq!(COMPLEX_SPEC.len(), 15, "the complex family is 15 ops");
+    }
+
+    #[test]
+    fn ops_complex_no_new_primitive() {
+        // KISS-OPS-6.18-0002: every complex op is non-primitive; the §6.3 floor
+        // (43 atoms) is unchanged by the family.
+        assert!(Op::ALL
+            .iter()
+            .filter(|o| o.is_complex())
+            .all(|o| !o.is_primitive_floor()));
+        assert_eq!(
+            Op::ALL.iter().filter(|o| o.is_primitive_floor()).count(),
+            43,
+            "the primitive floor stays at 43 atoms"
+        );
+    }
+
+    #[test]
+    fn ops_complex_advertised_high_level() {
+        // KISS-OPS-6.18-0016: exactly these 12 are advertised high-level; the
+        // cmake/cre/cim bridge is plumbing and MUST NOT be advertised.
+        let advertised: Vec<&str> = Op::ALL
+            .iter()
+            .filter(|o| o.is_complex() && !o.is_complex_component_bridge())
+            .map(|o| o.token())
+            .collect();
+        for t in ["cmake", "cre", "cim"] {
+            assert!(!advertised.contains(&t), "{t} is plumbing, not advertised");
+        }
+        for t in [
+            "cadd", "csub", "cneg", "cconj", "cmul", "cdiv", "cabs", "carg", "cexp", "clog",
+            "csqrt", "cpow",
+        ] {
+            assert!(advertised.contains(&t), "{t} must be advertised high-level");
+        }
+        assert_eq!(advertised.len(), 12);
     }
 
     #[test]

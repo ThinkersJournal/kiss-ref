@@ -26,9 +26,13 @@
 //!   (RNE + saturation), computed via the narrow-float promote-to-f32 lane.
 //! - **bool** ([`boolean`]): the truth-valued lane (§6.2-0006) over the integer
 //!   engine, `{0,1}`-normalized.
-//! - **complex** (`c32`/`c64`): **not applicable** — complex arithmetic is the
-//!   deferred §6.18 op family (absent from the vocab), so [`support`] reports every
-//!   `(op, c32/c64)` cell [`Support::NotApplicable`] (§6.16-0007), not `Pending`.
+//! - **complex** ([`complex`]): the §6.18 complex-arithmetic family
+//!   (`cmake`/`cre`/`cim` bridge + `cadd`…`cpow`) on `c32`/`c64`, evaluating the
+//!   real-atom decompositions in the `f32`/`f64` component lane (§6.18-0015) with
+//!   the Annex-G special-value/recovery rules governing the inf/NaN edges
+//!   (§6.18-0013). Every `(complex op, c32/c64)` cell is [`Support::Done`]; a real
+//!   op on a complex dtype (and any complex op on a real dtype) is
+//!   [`Support::NotApplicable`].
 //!
 //! Coverage is a three-state model — [`Support::Done`] / [`Support::Pending`] /
 //! [`Support::NotApplicable`] — driven by the spec-derived [`legality`] function;
@@ -41,6 +45,7 @@
 pub mod attrs;
 pub mod boolean;
 pub mod bridge;
+pub mod complex;
 pub mod diff;
 pub mod fp8;
 pub mod kernels;
@@ -56,12 +61,13 @@ pub mod tensor_ops;
 pub mod window;
 
 pub use diff::{
-    diff_bf16, diff_e4m3, diff_e5m2, diff_expr, diff_expr_bf16, diff_expr_f16, diff_expr_f32,
-    diff_f16, diff_f32, diff_f64, reference_bf16, reference_e4m3, reference_e5m2, reference_expr,
-    reference_expr_bf16, reference_expr_f16, reference_expr_f32, reference_f16, reference_f32,
-    reference_f64, reference_matmul_acc, reference_prefix_scan_acc, reference_reduce_acc,
-    ulp_distance_bf16, ulp_distance_e4m3, ulp_distance_e5m2, ulp_distance_f16, ulp_distance_f32,
-    ulp_distance_f64, DiffReport, Tolerance,
+    arg_conforms_f32, arg_conforms_f64, complex_conforms_c32, complex_conforms_c64, diff_bf16,
+    diff_e4m3, diff_e5m2, diff_expr, diff_expr_bf16, diff_expr_f16, diff_expr_f32, diff_f16,
+    diff_f32, diff_f64, reference_bf16, reference_c32, reference_c64, reference_e4m3,
+    reference_e5m2, reference_expr, reference_expr_bf16, reference_expr_f16, reference_expr_f32,
+    reference_f16, reference_f32, reference_f64, reference_matmul_acc, reference_prefix_scan_acc,
+    reference_reduce_acc, ulp_distance_bf16, ulp_distance_e4m3, ulp_distance_e5m2,
+    ulp_distance_f16, ulp_distance_f32, ulp_distance_f64, DiffReport, Tolerance,
 };
 pub use resolve::{
     eval_expr, eval_op, float_supported, implemented, legality, support, tensor_supported,
@@ -73,6 +79,7 @@ pub use tensor_int::int_tensor_supported;
 pub use attrs::{Combine, Direction, Monoid, OobPolicy};
 pub use boolean::{bool_supported, eval_bool_op};
 pub use bridge::{DetClass, Evaluated};
+pub use complex::{eval_complex_op, Cplx, CplxOut};
 pub use fp8::{E4m3, E5m2};
 pub use recipe::{eval_recipe, selection_det, FlatDag, IndexRef, Node, RecipeEval};
 pub use recipe_int::eval_recipe_int;
