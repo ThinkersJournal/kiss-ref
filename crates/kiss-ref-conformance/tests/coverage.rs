@@ -265,3 +265,24 @@ fn coverage_reserved_and_mx_dtypes_not_applicable() {
         "unknown token declines as None"
     );
 }
+
+#[test]
+fn coverage_ledger_surfaces_provisional_pins() {
+    let l = ledger();
+    // Condition 1 (Architect ruling, 2026-08-12): the provisional-pin COUNT is in
+    // the machine-readable summary, beside the Done/Pending counts — not in prose.
+    let s = l.summary();
+    assert!(
+        s.contains(&format!("{} PROVISIONAL PIN(S)", l.provisional.len())),
+        "summary must surface the provisional-pin count beside Done/Pending: {s}"
+    );
+    // Condition 2: the #133 sort_network index-output dtype pin is recorded WITH its
+    // value (i64), so a #133-driven change is forced to reconcile the registry.
+    let pin = l
+        .provisional
+        .iter()
+        .find(|p| p.site == "sort_network index-output dtype")
+        .expect("the #133 sort index-output dtype pin must be recorded");
+    assert_eq!(pin.value, "i64");
+    assert_eq!(pin.issue, "KISS#133");
+}

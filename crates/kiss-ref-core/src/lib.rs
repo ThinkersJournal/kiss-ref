@@ -176,6 +176,44 @@ pub enum Support {
     NotApplicable,
 }
 
+/// A **provisional local pin**: a value the reference fixes to keep evaluating while
+/// the KISS spec leaves it open, recorded so the reference never presents an
+/// unratified choice as settled conformance.
+///
+/// The pin is a fact about a **site**, not an `(op × dtype)` coverage cell — so it
+/// does not muddy the `Support` verdict of any cell (a cell whose *value* semantics
+/// are verified stays [`Support::Done`]; only the named sub-decision is provisional).
+/// It carries its **value** (not merely its existence): a test asserts the code still
+/// produces `value`, so when `issue` rules differently the assertion **fails** and
+/// forces reconciliation — the pin's resolution is driven, not remembered.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProvisionalPin {
+    /// The site whose value is fixed (where the pin lives).
+    pub site: &'static str,
+    /// The pinned value, as its normative token (asserted against the code by a test).
+    pub value: &'static str,
+    /// The KISS tracking issue whose ruling resolves the pin.
+    pub issue: &'static str,
+}
+
+/// The reference's **provisional local pins** — choices kiss-ref fixes to keep
+/// evaluating while the spec leaves them open. Each is countable and surfaced in the
+/// coverage ledger **beside the Done/Pending counts** (not in prose); when its `issue`
+/// rules and the pin is ratified or re-pinned, the entry is removed and the count
+/// drops. **Zero is the resolved state.**
+///
+/// Current pins:
+/// - `sort_network` **index-output dtype** = `i64` (KISS #133): §6.19 has not pinned
+///   the sort index-output wire dtype (`i64` vs `i32`/`u32`). kiss-ref widens to `i64`
+///   locally; when #133 rules, the ruling wins even at a break (per the KISS Architect,
+///   2026-08-12). The sorted **values** are fully verified — only the index dtype is
+///   provisional.
+pub const PROVISIONAL_PINS: &[ProvisionalPin] = &[ProvisionalPin {
+    site: "sort_network index-output dtype",
+    value: "i64",
+    issue: "KISS#133",
+}];
+
 /// Where a reference kernel came from — the provenance rule of `DESIGN.md`
 /// ("reuse Fuel iff spec-exact").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

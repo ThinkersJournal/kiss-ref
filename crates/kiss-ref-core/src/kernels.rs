@@ -600,7 +600,12 @@ fn cmp_key<T: ScalarFloat>(a: T, b: T) -> Ordering {
 /// **sort_network** (§6.11-0007): stable per-line permutation along `axis` under
 /// the total order (NaN greatest, ties → lower original index). Two outputs: the
 /// values as a raw-bit permutation (NaN payload / −0 preserved) and the
-/// original-index vector (`i64`).
+/// original-index vector.
+///
+/// The index-output dtype is **`i64`, a provisional local pin** ([`crate::PROVISIONAL_PINS`]):
+/// §6.19 has not pinned the sort index-output wire dtype (`i64` vs `i32`/`u32`, KISS
+/// #133). When #133 rules, the ruling wins even at a break; the value-match test in
+/// this module keeps this `Dtype::I64` in lockstep with the recorded pin value.
 pub fn sort_network<T: ScalarFloat>(
     keys: &View<T>,
     axis: usize,
@@ -746,5 +751,25 @@ mod tests {
         assert_eq!(&vals.as_slice()[..3], &[1.0, 2.0, 3.0]);
         assert!(vals.as_slice()[3].is_nan()); // NaN last (ascending)
         assert_eq!(idx.as_slice(), &[1, 3, 0, 2]);
+    }
+
+    #[test]
+    fn sort_network_index_dtype_matches_provisional_pin() {
+        // #133 is unresolved: the sort index-output wire dtype is a provisional local
+        // pin (i64). This keeps the kernel's actual index dtype in lockstep with the
+        // recorded PROVISIONAL_PINS value — so a #133-driven change to the kernel FAILS
+        // here until the registry is reconciled (resolution forced, not remembered).
+        let x = t(&[3.0, 1.0, 2.0], &[3]);
+        let (_, idx) = sort_network(&x.view(), 0, Direction::Asc).unwrap();
+        let pin = crate::PROVISIONAL_PINS
+            .iter()
+            .find(|p| p.site == "sort_network index-output dtype")
+            .expect("sort_network index-output dtype must be a recorded provisional pin");
+        assert_eq!(
+            idx.dtype().token(),
+            pin.value,
+            "sort_network index dtype must equal its recorded provisional pin value (#133)"
+        );
+        assert_eq!(pin.issue, "KISS#133");
     }
 }
