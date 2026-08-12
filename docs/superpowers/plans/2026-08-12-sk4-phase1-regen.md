@@ -126,3 +126,13 @@ Only if the Architect says kiss-ref grows a structure_key emitter this phase. Cu
 
 ## Execution order under the current block
 Architect (peer `92l1v72u`) is unreachable (peers MCP down) → **Tasks 1–3 execute now** (answer-independent). **Task 4** holds on the modeling confirm; **Task 5** holds on the scope answer; **Task 6** runs last. Send the two pending questions the moment the link recovers.
+
+---
+
+## OUTCOME (2026-08-12, both Architect answers received)
+
+- **Q1 → CONFIRMED: Task 5 is OUT OF SCOPE / deleted.** kiss-ref has no wire codec and does not grow one; the §6.7-0013 acc+mp codec, §6.19 OpAttr wire blob, and `SCHEMA_VERSION` live in KISS's `structure_key.rs`. A 4th codec from a shared comprehension lineage adds ceremony, not freeze-gate evidence (evidence convention 6). **The byte-match is two tiers:** token-level (KISS reference / Fuel / Unpopped = the 3 separate codec derivers) and **vocabulary-level (kiss-ref)**. kiss-ref reports its leg as *vocabulary-level, no wire codec by design* — never "3-of-4" (which would imply 4 codec derivers).
+- **Q2 → option (b), DONE (Task 4).** Typed `PROVISIONAL_PINS` registry `{site, value, issue}` in kiss-ref-core, count surfaced beside Done/Pending in the ledger summary; the SortNetwork #133 pin records value `i64` and a kernel test asserts the actual index dtype == the recorded value (forces reconciliation on a #133 ruling). Value cells stay `Done` — no false uncertainty. No `Support::Provisional` variant.
+- **Tasks 1, 2, 3, 4, 6 COMPLETE**; 370 tests, fmt, clippy `-D`, `cargo package --workspace` (exit 0), no_std thumbv7em all green; workspace at breaking **0.3.0**.
+- **Byte-match leg (vocabulary tier) VERIFIED:** kiss-ref's 24 dtype tokens `diff`-identical to the merged §6.1 table at `19c3ad7`; 121 op tokens unchanged. Command: `cargo test -p kiss-classify-vocab` (round-trips all 24) + `cargo test -p kiss-ops-vocab` (121 op tokens); dtype set diffed against `spec/classify.md@19c3ad7` §6.1 table.
+- **Remaining (out of this plan's execution):** PR review/merge; then request the Architect spec-currency statement (by commit); then Eric authorizes the 0.3.0 publish. **Verification precedes publication.**
