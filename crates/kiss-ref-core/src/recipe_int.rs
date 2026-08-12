@@ -392,7 +392,7 @@ mod tests {
         let r = ev(
             vec![Node::Bind(0)],
             vec![0],
-            &[Dtype::S8],
+            &[Dtype::I8],
             &[t(&[1, 2, 3], &[3])],
         )
         .unwrap();
@@ -410,7 +410,7 @@ mod tests {
         let r = ev(
             vec![Node::Bind(0)],
             vec![0],
-            &[Dtype::S8],
+            &[Dtype::I8],
             &[t(&[200, -129], &[2])],
         )
         .unwrap();
@@ -423,7 +423,7 @@ mod tests {
         // Same contract for a runtime scalar: params[slot] is interpreted AS the
         // node's declared dtype, so 200 -> -56 at s8.
         let dag = FlatDag::new(vec![Node::RuntimeScalar(0)], vec![0]);
-        let r = eval_recipe_int(&dag, &[Dtype::S8], &[], &[200], &[]).unwrap();
+        let r = eval_recipe_int(&dag, &[Dtype::I8], &[], &[200], &[]).unwrap();
         assert_eq!(r.outputs[0].as_slice(), &[-56]);
     }
 
@@ -440,7 +440,7 @@ mod tests {
                 },
             ],
             vec![2],
-            &[Dtype::S8, Dtype::S8, Dtype::S8],
+            &[Dtype::I8, Dtype::I8, Dtype::I8],
             &[t(&[100], &[1]), t(&[100], &[1])],
         )
         .unwrap();
@@ -470,7 +470,7 @@ mod tests {
                 },
             ],
             vec![3],
-            &[Dtype::S8, Dtype::S8, Dtype::B1, Dtype::I64],
+            &[Dtype::I8, Dtype::I8, Dtype::B1, Dtype::I64],
             &[t(&[1, 5, 2, 8], &[4]), t(&[3], &[1])],
         )
         .unwrap();
@@ -493,7 +493,7 @@ mod tests {
                 },
             ],
             vec![1],
-            &[Dtype::S16, Dtype::S16],
+            &[Dtype::I16, Dtype::I16],
             &[t(&[3, -7, 9, 2], &[4])],
         )
         .unwrap();
@@ -547,7 +547,7 @@ mod tests {
     #[test]
     fn const_bits_reinterprets_at_dtype() {
         // 0xFF as s8 = -1 (sign bit set); as u8 = 255.
-        let rs = ev(vec![Node::ConstBits(0xFF)], vec![0], &[Dtype::S8], &[]).unwrap();
+        let rs = ev(vec![Node::ConstBits(0xFF)], vec![0], &[Dtype::I8], &[]).unwrap();
         assert_eq!(rs.outputs[0].as_slice(), &[-1]);
         let ru = ev(vec![Node::ConstBits(0xFF)], vec![0], &[Dtype::U8], &[]).unwrap();
         assert_eq!(ru.outputs[0].as_slice(), &[255]);
@@ -579,7 +579,7 @@ mod tests {
         let r = ev(
             vec![Node::Bind(0), Node::Flip { child: 0, axis: 0 }],
             vec![1],
-            &[Dtype::S8, Dtype::S8],
+            &[Dtype::I8, Dtype::I8],
             &[t(&[1, 2, 3, 4], &[4])],
         )
         .unwrap();
@@ -591,7 +591,7 @@ mod tests {
     fn rejects_node_dtype_length_mismatch() {
         // node_dtypes shorter than nodes → typed decline, never a panic.
         let dag = FlatDag::new(vec![Node::Bind(0), Node::Bind(0)], vec![0]);
-        let err = eval_recipe_int(&dag, &[Dtype::S8], &[t(&[1], &[1])], &[], &[]).unwrap_err();
+        let err = eval_recipe_int(&dag, &[Dtype::I8], &[t(&[1], &[1])], &[], &[]).unwrap_err();
         assert!(matches!(err, Error::LengthMismatch { .. }));
     }
 
@@ -601,7 +601,7 @@ mod tests {
         // index lane → IndexSourceInvalid, never a silently-dropped request.
         let mut dag = FlatDag::new(vec![Node::Bind(0)], vec![0]);
         dag.index_outputs = vec![0];
-        let err = eval_recipe_int(&dag, &[Dtype::S8], &[t(&[1], &[1])], &[], &[]).unwrap_err();
+        let err = eval_recipe_int(&dag, &[Dtype::I8], &[t(&[1], &[1])], &[], &[]).unwrap_err();
         assert!(matches!(err, Error::IndexSourceInvalid { .. }));
     }
 
@@ -625,7 +625,7 @@ mod tests {
         );
         let err = eval_recipe_int(
             &dag,
-            &[Dtype::S8, Dtype::S8],
+            &[Dtype::I8, Dtype::I8],
             &[t(&[3, 1, 2], &[3])],
             &[],
             &[],
@@ -659,7 +659,7 @@ mod tests {
         );
         let r = eval_recipe_int(
             &dag,
-            &[Dtype::S8, Dtype::S8],
+            &[Dtype::I8, Dtype::I8],
             &[t(&[10, 20, 30, 40], &[4])],
             &[],
             &[ix(&[3, 1, 0], &[3])],
@@ -693,7 +693,7 @@ mod tests {
         );
         let r = eval_recipe_int(
             &dag,
-            &[Dtype::S8, Dtype::S8, Dtype::S8],
+            &[Dtype::I8, Dtype::I8, Dtype::I8],
             &[t(&[0, 0, 0, 0], &[4]), t(&[1, 2, 3, 4, 5], &[5])],
             &[],
             &[ix(&[0, 2, 0, 3, 2], &[5])],
@@ -722,7 +722,7 @@ mod tests {
         };
         let r = eval_recipe_int(
             &dag,
-            &[Dtype::S8, Dtype::S8],
+            &[Dtype::I8, Dtype::I8],
             &[t(&[3, 1, 2], &[3])],
             &[],
             &[],
@@ -761,7 +761,7 @@ mod tests {
         );
         let r = eval_recipe_int(
             &dag,
-            &[Dtype::S8, Dtype::S8, Dtype::S8, Dtype::S8],
+            &[Dtype::I8, Dtype::I8, Dtype::I8, Dtype::I8],
             &[t(&[4, 1, 3, 2], &[4]), t(&[40, 10, 30, 20], &[4])],
             &[],
             &[],
@@ -790,7 +790,7 @@ mod tests {
         );
         let err = eval_recipe_int(
             &dag,
-            &[Dtype::S8, Dtype::S8],
+            &[Dtype::I8, Dtype::I8],
             &[t(&[1, 2, 3], &[3])],
             &[],
             &[],

@@ -543,8 +543,8 @@ impl_scalar_float_via_f32!(half::bf16, Dtype::Bf16, u16);
 
 // FP8 (e4m3 / e5m2) — same promote-to-f32 lane as the narrow floats (§6.16), with
 // the hand-rolled u8 codec in `crate::fp8` (the `half` crate has no FP8).
-impl_scalar_float_via_f32!(crate::fp8::E4m3, Dtype::E4m3, u8);
-impl_scalar_float_via_f32!(crate::fp8::E5m2, Dtype::E5m2, u8);
+impl_scalar_float_via_f32!(crate::fp8::E4m3, Dtype::F8e4m3fn, u8);
+impl_scalar_float_via_f32!(crate::fp8::E5m2, Dtype::F8e5m2, u8);
 
 /// **Exact** promotion of a storage value `S` into a wider accumulator dtype `A`
 /// (RFC #92 direction b). `to_f64` is lossless for every float (all ⊆ `f64`), and

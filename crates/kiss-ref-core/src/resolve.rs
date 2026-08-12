@@ -322,6 +322,15 @@ pub fn support(op: Op, dtype: Dtype) -> Support {
 /// The index-operand `{u32, i32, i64}` restriction (§6.11-0009) is a **separate**
 /// operand-role axis and is NOT folded in here.
 pub fn legality(op: Op, dtype: Dtype) -> bool {
+    // sk4 §6.1-0001: the reserved FP8 variants (`f8e4m3fnuz`/`f8e5m2fnuz`) and the
+    // MX scale dtypes (`f8e8m0`/`f8e6m2`) are recognized members of the closed
+    // vocabulary but have no element-value compute semantics at this schema
+    // version — every op declines on them. This is a typed compute-decline
+    // (NotApplicable, never Pending backlog); the recognized-vs-unknown distinction
+    // lives in `Dtype::from_token` (`Some` here, `None` for an unknown token).
+    if dtype.declines_compute() {
+        return false;
+    }
     let kind = dtype.numeric_kind();
     // §6.18: the complex-arithmetic family is defined EXACTLY on the complex
     // compute dtypes (`c32`/`c64`), and no real op is defined on a complex dtype —
@@ -403,7 +412,7 @@ fn implemented_on(op: Op, dtype: Dtype) -> bool {
         Dtype::F32 | Dtype::F64 => float_supported(op) || tensor_supported(op),
         // narrow floats + FP8: same coverage as the wide floats, minus nextafter
         // (all compute via promotion to f32).
-        Dtype::F16 | Dtype::Bf16 | Dtype::E4m3 | Dtype::E5m2 => {
+        Dtype::F16 | Dtype::Bf16 | Dtype::F8e4m3fn | Dtype::F8e5m2 => {
             (float_supported(op) && op != Op::Nextafter) || tensor_supported(op)
         }
         _ => false,

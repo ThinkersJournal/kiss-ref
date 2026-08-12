@@ -399,8 +399,8 @@ pub fn matmul_ref<T: ScalarFloat>(
         Dtype::Bf16 => matmul_acc::<T, half::bf16>(a, b),
         Dtype::F32 => matmul_acc::<T, f32>(a, b),
         Dtype::F64 => matmul_acc::<T, f64>(a, b),
-        Dtype::E4m3 => matmul_acc::<T, crate::fp8::E4m3>(a, b),
-        Dtype::E5m2 => matmul_acc::<T, crate::fp8::E5m2>(a, b),
+        Dtype::F8e4m3fn => matmul_acc::<T, crate::fp8::E4m3>(a, b),
+        Dtype::F8e5m2 => matmul_acc::<T, crate::fp8::E5m2>(a, b),
         _ => Err(Error::NonFloatAccumulator(acc)),
     }
 }

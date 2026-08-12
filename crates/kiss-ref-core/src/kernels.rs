@@ -159,8 +159,8 @@ fn float_format(d: Dtype) -> Option<(u8, u8)> {
         Dtype::Bf16 => (8, 7),
         Dtype::F32 => (8, 23),
         Dtype::F64 => (11, 52),
-        Dtype::E4m3 => (4, 3),
-        Dtype::E5m2 => (5, 2),
+        Dtype::F8e4m3fn => (4, 3),
+        Dtype::F8e5m2 => (5, 2),
         _ => return None,
     })
 }
@@ -319,8 +319,8 @@ pub fn reduce_ref<T: ScalarFloat>(
         Dtype::Bf16 => reduce_acc::<T, half::bf16>(x, monoid, axes),
         Dtype::F32 => reduce_acc::<T, f32>(x, monoid, axes),
         Dtype::F64 => reduce_acc::<T, f64>(x, monoid, axes),
-        Dtype::E4m3 => reduce_acc::<T, crate::fp8::E4m3>(x, monoid, axes),
-        Dtype::E5m2 => reduce_acc::<T, crate::fp8::E5m2>(x, monoid, axes),
+        Dtype::F8e4m3fn => reduce_acc::<T, crate::fp8::E4m3>(x, monoid, axes),
+        Dtype::F8e5m2 => reduce_acc::<T, crate::fp8::E5m2>(x, monoid, axes),
         _ => Err(Error::NonFloatAccumulator(acc)),
     }
 }
@@ -343,8 +343,8 @@ pub fn prefix_scan_ref<T: ScalarFloat>(
         Dtype::Bf16 => prefix_scan_acc::<T, half::bf16>(x, monoid, axis, exclusive),
         Dtype::F32 => prefix_scan_acc::<T, f32>(x, monoid, axis, exclusive),
         Dtype::F64 => prefix_scan_acc::<T, f64>(x, monoid, axis, exclusive),
-        Dtype::E4m3 => prefix_scan_acc::<T, crate::fp8::E4m3>(x, monoid, axis, exclusive),
-        Dtype::E5m2 => prefix_scan_acc::<T, crate::fp8::E5m2>(x, monoid, axis, exclusive),
+        Dtype::F8e4m3fn => prefix_scan_acc::<T, crate::fp8::E4m3>(x, monoid, axis, exclusive),
+        Dtype::F8e5m2 => prefix_scan_acc::<T, crate::fp8::E5m2>(x, monoid, axis, exclusive),
         _ => Err(Error::NonFloatAccumulator(acc)),
     }
 }

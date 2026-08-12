@@ -29,11 +29,13 @@ impl Ledger {
         format!(
             "kiss-ref coverage — {} of {} ops evaluable, {} PENDING. \
              Paths: f16/bf16/f32/f64 float scalar (nextafter on f32/f64 only, §6.9-0003) \
-             + integer scalar (s8..u64, s4/u4/b1) \
+             + integer scalar (i8..u64, i4/u4/b1) \
              + the §6.11 structural atoms, §6.13 tensor non-primitives & window family on \
              the float lane, plus the integer tensor lane (reduce/scan/gather/scatter/sort/ \
-             argmax/any/all). Dtype breadth: + FP8 (e4m3/e5m2, promote-to-f32) + the bool \
-             truth-valued lane + the §6.18 complex family (c32/c64, Annex-G-governed). Cell \
+             argmax/any/all). Dtype breadth: + FP8 (f8e4m3fn/f8e5m2, promote-to-f32) + the bool \
+             truth-valued lane + the §6.18 complex family (c64/c128, Annex-G-governed). sk4 \
+             recognizes the reserved FP8 variants (f8e4m3fnuz/f8e5m2fnuz) and the MX scales \
+             (f8e8m0/f8e6m2) but declines them for compute (NotApplicable, not Pending). Cell \
              coverage is three-state (Done/Pending/NotApplicable); only spec-legal cells \
              form the denominator.",
             self.done.len(),

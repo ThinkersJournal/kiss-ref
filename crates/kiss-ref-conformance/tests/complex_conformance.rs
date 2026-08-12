@@ -266,8 +266,8 @@ fn test_ops_complex_determinism_class() {
 #[test]
 fn test_ops_complex_component_dtype() {
     // KISS-OPS-6.18-0015: c32 evaluates in f32 lanes, c64 in f64 lanes.
-    assert_eq!(Dtype::C32.component_dtype(), Some(Dtype::F32));
-    assert_eq!(Dtype::C64.component_dtype(), Some(Dtype::F64));
+    assert_eq!(Dtype::C64.component_dtype(), Some(Dtype::F32));
+    assert_eq!(Dtype::C128.component_dtype(), Some(Dtype::F64));
     // The f32 lane rounds to f32; the f64 lane keeps full precision — a value that
     // differs between the two component dtypes.
     let v = 0.1_f64;
