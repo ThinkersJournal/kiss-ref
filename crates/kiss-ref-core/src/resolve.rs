@@ -293,19 +293,21 @@ pub fn tensor_supported(op: Op) -> bool {
 /// tensor path). Used by the coverage ledger.
 pub fn implemented(op: Op) -> bool {
     // Every §6.18 complex op has a reference kernel (`crate::complex`), evaluable on
-    // `c32`/`c64` — so a complex op counts as implemented for the per-op ledger.
+    // `c64`/`c128` — so a complex op counts as implemented for the per-op ledger.
     float_supported(op) || crate::int_supported(op) || tensor_supported(op) || op.is_complex()
 }
 
 /// Coverage of `(op, dtype)` in this seed: `Done` iff a reference path evaluates
-/// `op` on `dtype` — the float scalar/tensor path on the six float lanes
-/// (`f16`/`bf16`/`f32`/`f64`/`e4m3`/`e5m2`, the narrow lanes via promote-to-f32),
-/// the integer path on the integer dtypes, the `bool` truth-valued lane, or the
-/// §6.18 complex path on `c32`/`c64`. `Pending` is the residue of genuinely
-/// legal-but-unimplemented edges (e.g. a `bool`-legal op with no backing integer
-/// kernel). Illegal cells are `NotApplicable`, never `Pending` — `nextafter` on
-/// the narrow floats is a §6.9-0003 legality decline, not a backlog item. Drives
-/// the conformance coverage ledger.
+/// `op` on `dtype` — the float scalar/tensor path on the six compute float lanes
+/// (`f16`/`bf16`/`f32`/`f64`/`f8e4m3fn`/`f8e5m2`, the narrow lanes via
+/// promote-to-f32), the integer path on the integer dtypes, the `bool`
+/// truth-valued lane, or the §6.18 complex path on `c64`/`c128`. `Pending` is the
+/// residue of genuinely legal-but-unimplemented edges (currently empty — every
+/// legal cell is `Done`). Illegal cells are `NotApplicable`, never `Pending` —
+/// `nextafter` on the narrow floats is a §6.9-0003 legality decline, and the sk4
+/// reserved FP8 variants (`f8e4m3fnuz`/`f8e5m2fnuz`) and MX scales
+/// (`f8e8m0`/`f8e6m2`) are recognized-but-decline-compute (§6.1-0001), not backlog.
+/// Drives the conformance coverage ledger.
 pub fn support(op: Op, dtype: Dtype) -> Support {
     if !legality(op, dtype) {
         Support::NotApplicable
@@ -333,7 +335,7 @@ pub fn legality(op: Op, dtype: Dtype) -> bool {
     }
     let kind = dtype.numeric_kind();
     // §6.18: the complex-arithmetic family is defined EXACTLY on the complex
-    // compute dtypes (`c32`/`c64`), and no real op is defined on a complex dtype —
+    // compute dtypes (`c64`/`c128`), and no real op is defined on a complex dtype —
     // so a complex op and a complex dtype are legal together or not at all.
     if op.is_complex() || kind == NumericKind::Complex {
         return op.is_complex() && kind == NumericKind::Complex;

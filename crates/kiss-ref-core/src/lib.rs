@@ -17,20 +17,20 @@
 //!
 //! ## Scope
 //! - **Scalar floor + non-primitives** over `f16`/`bf16`/`f32`/`f64` (float, via
-//!   `libm`) and every integer dtype (incl. packed `s4`/`u4`/`b1`, computed in
+//!   `libm`) and every integer dtype (incl. packed `i4`/`u4`/`b1`, computed in
 //!   `i128` and wrapped).
 //! - **Tensor layer** ([`tensor`]/[`kernels`]/[`tensor_ops`]/[`window`]): the six
 //!   §6.11 structural atoms + all §6.13 tensor non-primitives on the float lane,
 //!   plus an [`tensor_int`] integer tensor lane.
-//! - **FP8** ([`fp8`]): `e4m3`/`e5m2` as `u8` newtypes with a hand-rolled f32 codec
-//!   (RNE + saturation), computed via the narrow-float promote-to-f32 lane.
+//! - **FP8** ([`fp8`]): `f8e4m3fn`/`f8e5m2` as `u8` newtypes with a hand-rolled f32
+//!   codec (RNE + saturation), computed via the narrow-float promote-to-f32 lane.
 //! - **bool** ([`boolean`]): the truth-valued lane (§6.2-0006) over the integer
 //!   engine, `{0,1}`-normalized.
 //! - **complex** ([`complex`]): the §6.18 complex-arithmetic family
-//!   (`cmake`/`cre`/`cim` bridge + `cadd`…`cpow`) on `c32`/`c64`, evaluating the
+//!   (`cmake`/`cre`/`cim` bridge + `cadd`…`cpow`) on `c64`/`c128`, evaluating the
 //!   real-atom decompositions in the `f32`/`f64` component lane (§6.18-0015) with
 //!   the Annex-G special-value/recovery rules governing the inf/NaN edges
-//!   (§6.18-0013). Every `(complex op, c32/c64)` cell is [`Support::Done`]; a real
+//!   (§6.18-0013). Every `(complex op, c64/c128)` cell is [`Support::Done`]; a real
 //!   op on a complex dtype (and any complex op on a real dtype) is
 //!   [`Support::NotApplicable`].
 //!

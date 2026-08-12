@@ -406,7 +406,7 @@ mod tests {
         // Every node's output must lie in node_dtypes[idx]'s range — a leaf is no
         // exception. An input a caller failed to pre-normalize is wrapped to the
         // declared dtype (idempotent for an in-range value, as bind_passthrough
-        // shows). At s8: 200 -> -56, -129 -> 127.
+        // shows). At i8: 200 -> -56, -129 -> 127.
         let r = ev(
             vec![Node::Bind(0)],
             vec![0],
@@ -421,7 +421,7 @@ mod tests {
     #[test]
     fn runtime_scalar_wraps_to_dtype() {
         // Same contract for a runtime scalar: params[slot] is interpreted AS the
-        // node's declared dtype, so 200 -> -56 at s8.
+        // node's declared dtype, so 200 -> -56 at i8.
         let dag = FlatDag::new(vec![Node::RuntimeScalar(0)], vec![0]);
         let r = eval_recipe_int(&dag, &[Dtype::I8], &[], &[200], &[]).unwrap();
         assert_eq!(r.outputs[0].as_slice(), &[-56]);
@@ -429,7 +429,7 @@ mod tests {
 
     #[test]
     fn apply_add_wraps_at_s8() {
-        // 100 + 100 = 200, which wraps to -56 in s8 (two's complement).
+        // 100 + 100 = 200, which wraps to -56 in i8 (two's complement).
         let r = ev(
             vec![
                 Node::Bind(0),
@@ -454,8 +454,8 @@ mod tests {
         // reduced by `sum` counts into `i64`. data > 3 → [0,1,0,1]; sum = 2.
         let r = ev(
             vec![
-                Node::Bind(0), // data  (s8)
-                Node::Bind(1), // thresh (s8), broadcast
+                Node::Bind(0), // data  (i8)
+                Node::Bind(1), // thresh (i8), broadcast
                 Node::Apply {
                     // mask (b1)
                     op: Op::CmpGt,
@@ -546,7 +546,7 @@ mod tests {
 
     #[test]
     fn const_bits_reinterprets_at_dtype() {
-        // 0xFF as s8 = -1 (sign bit set); as u8 = 255.
+        // 0xFF as i8 = -1 (sign bit set); as u8 = 255.
         let rs = ev(vec![Node::ConstBits(0xFF)], vec![0], &[Dtype::I8], &[]).unwrap();
         assert_eq!(rs.outputs[0].as_slice(), &[-1]);
         let ru = ev(vec![Node::ConstBits(0xFF)], vec![0], &[Dtype::U8], &[]).unwrap();

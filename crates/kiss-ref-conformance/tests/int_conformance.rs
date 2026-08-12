@@ -24,11 +24,11 @@ fn test_ops_int_wrapping() {
 #[test]
 fn test_ops_int_packed_subbyte_wrap() {
     // KISS-OPS-6.2-0002 wrapping two's-complement at the PACKED sub-byte widths, and
-    // KISS-OPS-6.4-0005 (neg/abs of INT_MIN stay INT_MIN). s4/u4/b1 were Done by
+    // KISS-OPS-6.4-0005 (neg/abs of INT_MIN stay INT_MIN). i4/u4/b1 were Done by
     // genericity (eval_int_op wraps via int_spec width) but never value-tested — these
     // pin the 4-bit and 1-bit boundaries.
 
-    // s4: signed 4-bit, range -8..=7
+    // i4: signed 4-bit, range -8..=7
     assert_eq!(ev(Op::Add, Dtype::I4, &[7, 1]), -8); // 8 & 0xF = 8, bit3 set -> 8-16
     assert_eq!(ev(Op::Add, Dtype::I4, &[-8, -1]), 7); // -9 & 0xF = 7
     assert_eq!(ev(Op::Sub, Dtype::I4, &[-8, 1]), 7);
@@ -171,7 +171,7 @@ fn test_ops_int_matmul_wraps_per_atom() {
     assert_eq!(r.shape(), &[2, 2]);
     assert_eq!(r.as_slice(), &[19, 22, 43, 50]);
 
-    // s8 1×1 · 1×1: the single product 100*100 = 10000 wraps IN s8 to 16
+    // i8 1×1 · 1×1: the single product 100*100 = 10000 wraps IN i8 to 16
     // (10000 mod 256 = 16) — proof the *multiply* itself is at dtype width, not a
     // wide i128 accumulator (which would keep 10000).
     let rp = tensor_int::matmul(
@@ -227,7 +227,7 @@ fn test_ops_int_packed_subbyte_tensor_lane() {
     // The PACKED sub-byte dtypes evaluated through the TENSOR fold (tensor_int::reduce),
     // not just scalar eval_int_op — confirms the width-wrap propagates through the
     // reduction. KISS-OPS-6.11-0002 Sum monoid + KISS-OPS-6.2-0002 two's-complement wrap.
-    // s4: sum [7,1] = 8 -> wraps to -8 (bit3 set).
+    // i4: sum [7,1] = 8 -> wraps to -8 (bit3 set).
     let s = tensor_int::reduce(&t(&[7, 1], &[2]).view(), Dtype::I4, Monoid::Sum, &[0]).unwrap();
     assert_eq!(s.as_slice(), &[-8]);
     // u4: sum [15,1] = 16 -> 16 & 0xF = 0.

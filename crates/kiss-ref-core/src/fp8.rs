@@ -1,5 +1,11 @@
 //! The FP8 dtypes **e4m3** (OCP `E4M3FN`) and **e5m2** (OCP `E5M2`).
 //!
+//! *sk4 token spelling:* the normative KISS dtype tokens for these formats are
+//! `f8e4m3fn` and `f8e5m2` (§6.1, width-prefixed); the byte-incompatible `fnuz`
+//! variants (`f8e4m3fnuz`/`f8e5m2fnuz`) are reserved and decline compute. This
+//! module's Rust types `E4m3`/`E5m2` are the compute/storage embodiments of the
+//! two active formats and keep their short names (they are types, not tokens).
+//!
 //! Both are 8-bit floats stored in a `u8` newtype. Like `f16`/`bf16` (§6.16), the
 //! reference computes by **promoting to `f32`, evaluating with the `f32` reference,
 //! and rounding back** (round-to-nearest-even, with saturation); the coarse FP8 ULP

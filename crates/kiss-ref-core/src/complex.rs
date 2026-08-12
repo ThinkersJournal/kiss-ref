@@ -1,10 +1,10 @@
 //! Scalar reference kernels for the **§6.18 complex-arithmetic op family**
-//! (`c32`/`c64`).
+//! (`c64`/`c128`).
 //!
 //! Every complex op is non-primitive (§6.18-0002): it carries a reference
 //! decomposition into the real primitive floor (`add … copysign`), the real
 //! non-primitive `hypot`, and the `cmake`/`cre`/`cim` component bridge. A complex
-//! op on `c32` evaluates that decomposition with `f32` component lanes, on `c64`
+//! op on `c64` evaluates that decomposition with `f32` component lanes, on `c128`
 //! with `f64` (§6.18-0015) — realized here by the generic `T: ScalarFloat`
 //! instantiated at `f32`/`f64` (the only two dtypes with a complex container).
 //!
@@ -29,7 +29,7 @@ use crate::scalar::ScalarFloat;
 use crate::Error;
 
 /// A scalar complex value: an interleaved `(re, im)` pair whose component lanes
-/// are `T` (§6.16-0007). `T = f32` realizes `c32`, `T = f64` realizes `c64`.
+/// are `T` (§6.16-0007). `T = f32` realizes `c64`, `T = f64` realizes `c128`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Cplx<T> {
     pub re: T,

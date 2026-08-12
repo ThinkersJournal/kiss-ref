@@ -44,7 +44,7 @@ pub fn eval_int_expr(e: &Expr, dtype: Dtype, inputs: &[i128]) -> Result<i128, Er
 }
 
 /// `(bit width, signed)` for an integer-kind dtype (including the packed
-/// sub-byte `s4`/`u4`/`b1`), or `None` for a non-integer dtype. `bool` is
+/// sub-byte `i4`/`u4`/`b1`), or `None` for a non-integer dtype. `bool` is
 /// excluded — it is its own kind, produced by predicates, not an arithmetic
 /// integer dtype here.
 pub fn int_spec(d: Dtype) -> Option<(u32, bool)> {
@@ -323,7 +323,7 @@ mod tests {
 
     #[test]
     fn int_add_wraps_two_complement() {
-        // s8: 127 + 1 wraps to -128 (§6.2-0002).
+        // i8: 127 + 1 wraps to -128 (§6.2-0002).
         assert_eq!(eval_int_op(Op::Add, Dtype::I8, &[127, 1]).unwrap(), -128);
         // u8: 255 + 1 wraps to 0.
         assert_eq!(eval_int_op(Op::Add, Dtype::U8, &[255, 1]).unwrap(), 0);
@@ -345,7 +345,7 @@ mod tests {
         );
         // u8 bit_not(0) = 255.
         assert_eq!(eval_int_op(Op::BitNot, Dtype::U8, &[0]).unwrap(), 255);
-        // s8 bit_not(0) = -1 (all ones sign-extended).
+        // i8 bit_not(0) = -1 (all ones sign-extended).
         assert_eq!(eval_int_op(Op::BitNot, Dtype::I8, &[0]).unwrap(), -1);
     }
 
@@ -356,7 +356,7 @@ mod tests {
             eval_int_op(Op::Shr, Dtype::U8, &[0b1000_0000, 1]).unwrap(),
             0b0100_0000
         );
-        // s8 arithmetic shr keeps the sign.
+        // i8 arithmetic shr keeps the sign.
         assert_eq!(eval_int_op(Op::Shr, Dtype::I8, &[-8, 1]).unwrap(), -4);
         // shl wraps within width.
         assert_eq!(eval_int_op(Op::Shl, Dtype::U8, &[1, 7]).unwrap(), 128);
@@ -387,9 +387,9 @@ mod tests {
         // §6.13: sqr(x) = mul(x, x), wrapped to width (§6.2-0002).
         assert_eq!(eval_int_op(Op::Sqr, Dtype::I8, &[5]).unwrap(), 25);
         assert_eq!(eval_int_op(Op::Sqr, Dtype::I8, &[-5]).unwrap(), 25);
-        // 16^2 = 256 overflows s8; low 8 bits are 0.
+        // 16^2 = 256 overflows i8; low 8 bits are 0.
         assert_eq!(eval_int_op(Op::Sqr, Dtype::I8, &[16]).unwrap(), 0);
-        // s8: 12^2 = 144 = 0b1001_0000 → sign-extends to -112.
+        // i8: 12^2 = 144 = 0b1001_0000 → sign-extends to -112.
         assert_eq!(eval_int_op(Op::Sqr, Dtype::I8, &[12]).unwrap(), -112);
         // u8: 12^2 = 144 fits the pattern, unsigned.
         assert_eq!(eval_int_op(Op::Sqr, Dtype::U8, &[12]).unwrap(), 144);

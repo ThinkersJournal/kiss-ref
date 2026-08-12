@@ -39,7 +39,7 @@ fn coverage_ledger_reports_done_and_pending() {
 
     assert_eq!(l.done.len() + l.pending.len(), Op::ALL.len());
     // Every op is now evaluable on at least one lane — the full 121, including the
-    // window family and the §6.18 complex family (on c32/c64). Remaining gaps are
+    // window family and the §6.18 complex family (on c64/c128). Remaining gaps are
     // per-(op×dtype) cells (bool edges, the integer/FP8 tensor lanes), not whole
     // ops, so the per-op ledger is complete.
     assert_eq!(
@@ -58,7 +58,7 @@ fn coverage_ledger_reports_done_and_pending() {
 #[test]
 fn coverage_int_tensor_lane_done_on_integers() {
     // The integer-capable tensor ops (atoms + argmax/any/all/cum*) are Done on
-    // every integer dtype, incl. the packed s4/u4/b1.
+    // every integer dtype, incl. the packed i4/u4/b1.
     for &op in Op::ALL {
         if int_tensor_supported(op) {
             for &d in &INT_DTYPES {
@@ -90,7 +90,7 @@ fn coverage_tensor_layer_done_on_floats() {
 
 #[test]
 fn coverage_fp8_float_cells_done() {
-    // FP8 (e4m3/e5m2) covers the same float op-set as f16/bf16 (compute via
+    // FP8 (f8e4m3fn/f8e5m2) covers the same float op-set as f16/bf16 (compute via
     // promotion to f32): every non-nextafter float op is Done; nextafter and
     // bitwise are NotApplicable.
     for &op in Op::ALL {
@@ -176,7 +176,7 @@ fn coverage_support_consistency() {
 fn coverage_complex_cells_done_real_ops_not_applicable() {
     // §6.18: the complex-arithmetic family is Done on the complex compute dtypes;
     // every REAL op is NotApplicable on a complex dtype (and vice versa). The
-    // (op × c32/c64) matrix is exactly the 15 complex ops × 2 dtypes.
+    // (op × c64/c128) matrix is exactly the 15 complex ops × 2 dtypes.
     for &d in &[Dtype::C64, Dtype::C128] {
         for &op in Op::ALL {
             let expect = if op.is_complex() {

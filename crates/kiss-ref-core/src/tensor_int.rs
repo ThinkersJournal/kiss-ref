@@ -740,7 +740,7 @@ mod tests {
 
     #[test]
     fn int_reduce_sum_wraps() {
-        // s8: 100 + 100 = 200 wraps to -56 (two's-complement, §6.2-0002).
+        // i8: 100 + 100 = 200 wraps to -56 (two's-complement, §6.2-0002).
         let x = t(&[100, 100], &[2]);
         let r = reduce(&x.view(), Dtype::I8, Monoid::Sum, &[0]).unwrap();
         assert_eq!(r.as_slice(), &[-56]);
@@ -818,8 +818,8 @@ mod tests {
         assert_eq!(r.shape(), &[2, 2]);
         assert_eq!(r.as_slice(), &[19, 22, 43, 50]);
 
-        // s8 accumulator wrap: [100,100]·[1;1] = 200 → wraps to -56 (two's-
-        // complement per §6.2-0002); the wrap happens IN the s8 dtype, no wide
+        // i8 accumulator wrap: [100,100]·[1;1] = 200 → wraps to -56 (two's-
+        // complement per §6.2-0002); the wrap happens IN the i8 dtype, no wide
         // accumulator escapes it (100+100=200 → -56).
         let av = t(&[100, 100], &[1, 2]);
         let bv = t(&[1, 1], &[2, 1]);
