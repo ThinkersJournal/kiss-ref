@@ -24,9 +24,23 @@
 //! instead of orphaning the reminder.
 //!
 //! **At sk5:** add `#[non_exhaustive]` to each enum below (in its defining crate), then
-//! **delete this reminder** — or convert it to a cross-crate exhaustiveness canary
-//! (an intentional wildcard-free `match` from this crate that fails to compile once the
-//! enum is reserved, confirming the reservation landed).
+//! **delete this file** (`crates/kiss-ref-conformance/tests/sk5_reservation_reminder.rs`).
+//!
+//! Optionally replace it with a stronger successor — a *cross-crate exhaustiveness
+//! canary*: a wildcard-free `match` on each reserved enum from this crate, which fails
+//! to compile the moment the enum becomes `#[non_exhaustive]`. If you write it, give it
+//! the treatment this reminder can't self-apply, because **its success condition is its
+//! own compile failure** — a guard that, undocumented, is a trap:
+//!
+//! > A compile error at the canary means the reservation **landed** — it is the SUCCESS
+//! > signal, not a regression. The fix is to **delete the canary** (its job is done),
+//! > NOT to remove `#[non_exhaustive]` to make the build green — that would undo the very
+//! > reservation the canary exists to confirm.
+//!
+//! Put that sentence in the canary's own doc. The sk5 implementor will hit its red build
+//! at the exact moment they did the right thing; without the message, the cheapest way to
+//! green is to reverse the reservation. That one comment is the difference between a guard
+//! and a trap (KISS Architect, 2026-08-13).
 
 use kiss_classify_vocab::NumericKind;
 use kiss_ops_vocab::Family;
