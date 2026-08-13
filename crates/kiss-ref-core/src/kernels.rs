@@ -159,8 +159,8 @@ fn float_format(d: Dtype) -> Option<(u8, u8)> {
         Dtype::Bf16 => (8, 7),
         Dtype::F32 => (8, 23),
         Dtype::F64 => (11, 52),
-        Dtype::E4m3 => (4, 3),
-        Dtype::E5m2 => (5, 2),
+        Dtype::F8e4m3fn => (4, 3),
+        Dtype::F8e5m2 => (5, 2),
         _ => return None,
     })
 }
@@ -172,6 +172,13 @@ fn float_format(d: Dtype) -> Option<(u8, u8)> {
 /// Runs AFTER the diagonal + Max/Min short-circuits, so it only ever admits a
 /// strictly-wider legal `A`.
 pub(crate) fn guard_accumulator<T: ScalarFloat>(acc: Dtype) -> Result<(), Error> {
+    // A reserved FP8 variant / MX scale is `NumericKind::Float` but has no compute
+    // semantics (§6.1-0001) — reject it with the typed compute-decline rather than
+    // the misleading NonFloatAccumulator (its `float_format` is `None`, so it would
+    // otherwise fall into the non-float arm).
+    if acc.declines_compute() {
+        return Err(Error::ReservedOrScaleDtype(acc));
+    }
     match (float_format(T::DTYPE), float_format(acc)) {
         (Some((se, sm)), Some((ae, am))) => {
             if ae < se || am < sm {
@@ -319,8 +326,8 @@ pub fn reduce_ref<T: ScalarFloat>(
         Dtype::Bf16 => reduce_acc::<T, half::bf16>(x, monoid, axes),
         Dtype::F32 => reduce_acc::<T, f32>(x, monoid, axes),
         Dtype::F64 => reduce_acc::<T, f64>(x, monoid, axes),
-        Dtype::E4m3 => reduce_acc::<T, crate::fp8::E4m3>(x, monoid, axes),
-        Dtype::E5m2 => reduce_acc::<T, crate::fp8::E5m2>(x, monoid, axes),
+        Dtype::F8e4m3fn => reduce_acc::<T, crate::fp8::E4m3>(x, monoid, axes),
+        Dtype::F8e5m2 => reduce_acc::<T, crate::fp8::E5m2>(x, monoid, axes),
         _ => Err(Error::NonFloatAccumulator(acc)),
     }
 }
@@ -343,8 +350,8 @@ pub fn prefix_scan_ref<T: ScalarFloat>(
         Dtype::Bf16 => prefix_scan_acc::<T, half::bf16>(x, monoid, axis, exclusive),
         Dtype::F32 => prefix_scan_acc::<T, f32>(x, monoid, axis, exclusive),
         Dtype::F64 => prefix_scan_acc::<T, f64>(x, monoid, axis, exclusive),
-        Dtype::E4m3 => prefix_scan_acc::<T, crate::fp8::E4m3>(x, monoid, axis, exclusive),
-        Dtype::E5m2 => prefix_scan_acc::<T, crate::fp8::E5m2>(x, monoid, axis, exclusive),
+        Dtype::F8e4m3fn => prefix_scan_acc::<T, crate::fp8::E4m3>(x, monoid, axis, exclusive),
+        Dtype::F8e5m2 => prefix_scan_acc::<T, crate::fp8::E5m2>(x, monoid, axis, exclusive),
         _ => Err(Error::NonFloatAccumulator(acc)),
     }
 }
@@ -600,7 +607,12 @@ fn cmp_key<T: ScalarFloat>(a: T, b: T) -> Ordering {
 /// **sort_network** (§6.11-0007): stable per-line permutation along `axis` under
 /// the total order (NaN greatest, ties → lower original index). Two outputs: the
 /// values as a raw-bit permutation (NaN payload / −0 preserved) and the
-/// original-index vector (`i64`).
+/// original-index vector.
+///
+/// The index-output dtype is **`i64`, a provisional local pin** ([`crate::PROVISIONAL_PINS`]):
+/// §6.19 has not pinned the sort index-output wire dtype (`i64` vs `i32`/`u32`, KISS
+/// #133). When #133 rules, the ruling wins even at a break; the value-match test in
+/// this module keeps this `Dtype::I64` in lockstep with the recorded pin value.
 pub fn sort_network<T: ScalarFloat>(
     keys: &View<T>,
     axis: usize,
@@ -746,5 +758,49 @@ mod tests {
         assert_eq!(&vals.as_slice()[..3], &[1.0, 2.0, 3.0]);
         assert!(vals.as_slice()[3].is_nan()); // NaN last (ascending)
         assert_eq!(idx.as_slice(), &[1, 3, 0, 2]);
+    }
+
+    #[test]
+    fn sort_network_index_dtype_matches_provisional_pin() {
+        // #133 is unresolved: the sort index-output wire dtype is a provisional local
+        // pin (i64). This keeps the kernel's actual index dtype in lockstep with the
+        // recorded PROVISIONAL_PINS value — so a #133-driven change to the kernel FAILS
+        // here until the registry is reconciled (resolution forced, not remembered).
+        let x = t(&[3.0, 1.0, 2.0], &[3]);
+        let (_, idx) = sort_network(&x.view(), 0, Direction::Asc).unwrap();
+        let pin = crate::PROVISIONAL_PINS
+            .iter()
+            .find(|p| p.site == "sort_network index-output dtype")
+            .expect("sort_network index-output dtype must be a recorded provisional pin");
+        assert_eq!(
+            idx.dtype().token(),
+            pin.value,
+            "sort_network index dtype must equal its recorded provisional pin value (#133)"
+        );
+        assert_eq!(pin.issue, "KISS#133");
+    }
+
+    #[test]
+    fn guard_accumulator_declines_reserved_and_mx_dtypes() {
+        // A reserved/MX dtype is NumericKind::Float but declines compute — the
+        // accumulator guard must reject it with the typed ReservedOrScaleDtype
+        // decline, NOT the misleading NonFloatAccumulator (Copilot review, PR #9).
+        for acc in [
+            Dtype::F8e4m3fnuz,
+            Dtype::F8e5m2fnuz,
+            Dtype::F8e8m0,
+            Dtype::F8e6m2,
+        ] {
+            assert!(acc.is_float(), "{acc:?} is float-kind");
+            match guard_accumulator::<f32>(acc) {
+                Err(Error::ReservedOrScaleDtype(d)) => assert_eq!(d, acc),
+                other => panic!("expected ReservedOrScaleDtype for {acc:?}, got {other:?}"),
+            }
+        }
+        // A genuine non-float accumulator still reports NonFloatAccumulator.
+        match guard_accumulator::<f32>(Dtype::I32) {
+            Err(Error::NonFloatAccumulator(d)) => assert_eq!(d, Dtype::I32),
+            other => panic!("expected NonFloatAccumulator for i32, got {other:?}"),
+        }
     }
 }

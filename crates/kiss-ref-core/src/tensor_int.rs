@@ -740,9 +740,9 @@ mod tests {
 
     #[test]
     fn int_reduce_sum_wraps() {
-        // s8: 100 + 100 = 200 wraps to -56 (two's-complement, §6.2-0002).
+        // i8: 100 + 100 = 200 wraps to -56 (two's-complement, §6.2-0002).
         let x = t(&[100, 100], &[2]);
-        let r = reduce(&x.view(), Dtype::S8, Monoid::Sum, &[0]).unwrap();
+        let r = reduce(&x.view(), Dtype::I8, Monoid::Sum, &[0]).unwrap();
         assert_eq!(r.as_slice(), &[-56]);
         // u8 identity/empty axis → 0.
         let e = t(&[], &[0]);
@@ -754,13 +754,13 @@ mod tests {
     fn int_reduce_max_min_identity() {
         let x = t(&[-5, 3, -1], &[3]);
         assert_eq!(
-            reduce(&x.view(), Dtype::S8, Monoid::Max, &[0])
+            reduce(&x.view(), Dtype::I8, Monoid::Max, &[0])
                 .unwrap()
                 .as_slice(),
             &[3]
         );
         assert_eq!(
-            reduce(&x.view(), Dtype::S8, Monoid::Min, &[0])
+            reduce(&x.view(), Dtype::I8, Monoid::Min, &[0])
                 .unwrap()
                 .as_slice(),
             &[-5]
@@ -818,12 +818,12 @@ mod tests {
         assert_eq!(r.shape(), &[2, 2]);
         assert_eq!(r.as_slice(), &[19, 22, 43, 50]);
 
-        // s8 accumulator wrap: [100,100]·[1;1] = 200 → wraps to -56 (two's-
-        // complement per §6.2-0002); the wrap happens IN the s8 dtype, no wide
+        // i8 accumulator wrap: [100,100]·[1;1] = 200 → wraps to -56 (two's-
+        // complement per §6.2-0002); the wrap happens IN the i8 dtype, no wide
         // accumulator escapes it (100+100=200 → -56).
         let av = t(&[100, 100], &[1, 2]);
         let bv = t(&[1, 1], &[2, 1]);
-        let rw = matmul(&av.view(), &bv.view(), Dtype::S8).unwrap();
+        let rw = matmul(&av.view(), &bv.view(), Dtype::I8).unwrap();
         assert_eq!(rw.shape(), &[1, 1]);
         assert_eq!(rw.as_slice(), &[-56]);
     }
@@ -832,14 +832,14 @@ mod tests {
     fn int_max_pool_window_and_ident() {
         // [1,3,2,5], kernel 2 stride 1 → [max(1,3),max(3,2),max(2,5)] = [3,3,5]
         let x = t(&[1, 3, 2, 5], &[4]);
-        let y = max_pool(&x.view(), &[0], &[2], &[1], &[0], &[1], Dtype::S8).unwrap();
+        let y = max_pool(&x.view(), &[0], &[2], &[1], &[0], &[1], Dtype::I8).unwrap();
         assert_eq!(y.as_slice(), &[3, 3, 5]);
 
         // A wholly-padded window yields the max identity = the S8 minimum (-128),
         // not -inf: input extent 1, kernel 2 stride 1 pad 2 → the first output
         // window's taps land at positions -2,-1 (both OOB) → identity.
         let z = t(&[7], &[1]);
-        let yz = max_pool(&z.view(), &[0], &[2], &[1], &[2], &[1], Dtype::S8).unwrap();
+        let yz = max_pool(&z.view(), &[0], &[2], &[1], &[2], &[1], Dtype::I8).unwrap();
         assert_eq!(yz.as_slice()[0], -128);
     }
 

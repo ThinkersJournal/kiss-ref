@@ -16,7 +16,7 @@ fn t(data: &[i128], shape: &[usize]) -> Tensor<i128> {
 #[test]
 fn test_ops_int_wrapping() {
     // KISS-OPS-6.2-0002: add/sub/mul are wrapping two's-complement.
-    assert_eq!(ev(Op::Add, Dtype::S8, &[127, 1]), -128);
+    assert_eq!(ev(Op::Add, Dtype::I8, &[127, 1]), -128);
     assert_eq!(ev(Op::Mul, Dtype::U8, &[16, 16]), 0); // 256 mod 256
     assert_eq!(ev(Op::Sub, Dtype::U8, &[0, 1]), 255);
 }
@@ -24,18 +24,18 @@ fn test_ops_int_wrapping() {
 #[test]
 fn test_ops_int_packed_subbyte_wrap() {
     // KISS-OPS-6.2-0002 wrapping two's-complement at the PACKED sub-byte widths, and
-    // KISS-OPS-6.4-0005 (neg/abs of INT_MIN stay INT_MIN). s4/u4/b1 were Done by
+    // KISS-OPS-6.4-0005 (neg/abs of INT_MIN stay INT_MIN). i4/u4/b1 were Done by
     // genericity (eval_int_op wraps via int_spec width) but never value-tested — these
     // pin the 4-bit and 1-bit boundaries.
 
-    // s4: signed 4-bit, range -8..=7
-    assert_eq!(ev(Op::Add, Dtype::S4, &[7, 1]), -8); // 8 & 0xF = 8, bit3 set -> 8-16
-    assert_eq!(ev(Op::Add, Dtype::S4, &[-8, -1]), 7); // -9 & 0xF = 7
-    assert_eq!(ev(Op::Sub, Dtype::S4, &[-8, 1]), 7);
-    assert_eq!(ev(Op::Mul, Dtype::S4, &[3, 3]), -7); // 9 -> 9-16
-    assert_eq!(ev(Op::Mul, Dtype::S4, &[-3, 3]), 7); // -9 & 0xF = 7
-    assert_eq!(ev(Op::Neg, Dtype::S4, &[-8]), -8); // KISS-OPS-6.4-0005
-    assert_eq!(ev(Op::Abs, Dtype::S4, &[-8]), -8);
+    // i4: signed 4-bit, range -8..=7
+    assert_eq!(ev(Op::Add, Dtype::I4, &[7, 1]), -8); // 8 & 0xF = 8, bit3 set -> 8-16
+    assert_eq!(ev(Op::Add, Dtype::I4, &[-8, -1]), 7); // -9 & 0xF = 7
+    assert_eq!(ev(Op::Sub, Dtype::I4, &[-8, 1]), 7);
+    assert_eq!(ev(Op::Mul, Dtype::I4, &[3, 3]), -7); // 9 -> 9-16
+    assert_eq!(ev(Op::Mul, Dtype::I4, &[-3, 3]), 7); // -9 & 0xF = 7
+    assert_eq!(ev(Op::Neg, Dtype::I4, &[-8]), -8); // KISS-OPS-6.4-0005
+    assert_eq!(ev(Op::Abs, Dtype::I4, &[-8]), -8);
 
     // u4: unsigned 4-bit, range 0..=15
     assert_eq!(ev(Op::Add, Dtype::U4, &[15, 1]), 0);
@@ -103,10 +103,10 @@ fn test_ops_u32_ordinary_dtype() {
 fn test_ops_int_sqr_wraps() {
     // KISS-OPS-6.13: sqr(x) = "mul(x, x)"; the product wraps to width exactly
     // like Op::Mul (KISS-OPS-6.2-0002) — there is NO wide accumulator.
-    assert_eq!(ev(Op::Sqr, Dtype::S8, &[5]), 25);
-    assert_eq!(ev(Op::Sqr, Dtype::S8, &[-5]), 25); // (-5)^2 = 25
-    assert_eq!(ev(Op::Sqr, Dtype::S8, &[16]), 0); // 256 ≡ 0 (mod 256)
-    assert_eq!(ev(Op::Sqr, Dtype::S8, &[12]), -112); // 144 = 0b1001_0000 → sign-ext
+    assert_eq!(ev(Op::Sqr, Dtype::I8, &[5]), 25);
+    assert_eq!(ev(Op::Sqr, Dtype::I8, &[-5]), 25); // (-5)^2 = 25
+    assert_eq!(ev(Op::Sqr, Dtype::I8, &[16]), 0); // 256 ≡ 0 (mod 256)
+    assert_eq!(ev(Op::Sqr, Dtype::I8, &[12]), -112); // 144 = 0b1001_0000 → sign-ext
     assert_eq!(ev(Op::Sqr, Dtype::U8, &[12]), 144); // fits the unsigned pattern
     assert_eq!(ev(Op::Sqr, Dtype::U8, &[20]), 144); // 400 ≡ 144 (mod 256)
                                                     // (2^64-1)^2 exceeds i128 — must use wrapping_mul; low 64 bits are 1.
@@ -117,9 +117,9 @@ fn test_ops_int_sqr_wraps() {
 fn test_ops_int_step_strict_threshold() {
     // KISS-OPS-6.13: step(x) = "select(cmp_gt(x, const(0)), const(1), const(0))"
     // — strict threshold at 0, so step(0) = 0. Output {0,1} fits every width.
-    assert_eq!(ev(Op::Step, Dtype::S8, &[7]), 1);
-    assert_eq!(ev(Op::Step, Dtype::S8, &[0]), 0); // strict: not > 0
-    assert_eq!(ev(Op::Step, Dtype::S8, &[-1]), 0);
+    assert_eq!(ev(Op::Step, Dtype::I8, &[7]), 1);
+    assert_eq!(ev(Op::Step, Dtype::I8, &[0]), 0); // strict: not > 0
+    assert_eq!(ev(Op::Step, Dtype::I8, &[-1]), 0);
     assert_eq!(ev(Op::Step, Dtype::U8, &[200]), 1);
     assert_eq!(ev(Op::Step, Dtype::U8, &[0]), 0);
     assert_eq!(ev(Op::Step, Dtype::B1, &[1]), 1); // fits the 1-bit lane
@@ -128,10 +128,10 @@ fn test_ops_int_step_strict_threshold() {
 #[test]
 fn test_ops_int_relu_clamps_at_zero() {
     // KISS-OPS-6.13: relu(x) = "select(cmp_lt(x, const(0)), const(0), x)" = max(x,0).
-    assert_eq!(ev(Op::Relu, Dtype::S8, &[-5]), 0);
-    assert_eq!(ev(Op::Relu, Dtype::S8, &[5]), 5);
-    assert_eq!(ev(Op::Relu, Dtype::S8, &[0]), 0);
-    assert_eq!(ev(Op::Relu, Dtype::S8, &[-128]), 0); // INT_MIN clamps to 0
+    assert_eq!(ev(Op::Relu, Dtype::I8, &[-5]), 0);
+    assert_eq!(ev(Op::Relu, Dtype::I8, &[5]), 5);
+    assert_eq!(ev(Op::Relu, Dtype::I8, &[0]), 0);
+    assert_eq!(ev(Op::Relu, Dtype::I8, &[-128]), 0); // INT_MIN clamps to 0
                                                      // On an unsigned dtype `x < 0` is impossible → relu is the identity.
     assert_eq!(ev(Op::Relu, Dtype::U8, &[200]), 200);
 }
@@ -142,18 +142,18 @@ fn test_ops_int_fmax_fmin_degenerate_to_minmax() {
     // (`cmp_ne(a,a)`) in their decompositions. On integers there is no NaN and no
     // ±0.0 ordering, so those guards are inert and the ops are plain integer
     // max/min — byte-identical to max_prop/min_prop.
-    assert_eq!(ev(Op::FmaxIeee, Dtype::S8, &[-3, 7]), 7);
-    assert_eq!(ev(Op::FminIeee, Dtype::S8, &[-3, 7]), -3);
+    assert_eq!(ev(Op::FmaxIeee, Dtype::I8, &[-3, 7]), 7);
+    assert_eq!(ev(Op::FminIeee, Dtype::I8, &[-3, 7]), -3);
     assert_eq!(ev(Op::FmaxIeee, Dtype::U8, &[200, 100]), 200);
     assert_eq!(ev(Op::FminIeee, Dtype::U8, &[200, 100]), 100);
     // parity with the ordered min/max props on the same inputs.
     assert_eq!(
-        ev(Op::FmaxIeee, Dtype::S8, &[-3, 7]),
-        ev(Op::MaxProp, Dtype::S8, &[-3, 7])
+        ev(Op::FmaxIeee, Dtype::I8, &[-3, 7]),
+        ev(Op::MaxProp, Dtype::I8, &[-3, 7])
     );
     assert_eq!(
-        ev(Op::FminIeee, Dtype::S8, &[-3, 7]),
-        ev(Op::MinProp, Dtype::S8, &[-3, 7])
+        ev(Op::FminIeee, Dtype::I8, &[-3, 7]),
+        ev(Op::MinProp, Dtype::I8, &[-3, 7])
     );
 }
 
@@ -171,13 +171,13 @@ fn test_ops_int_matmul_wraps_per_atom() {
     assert_eq!(r.shape(), &[2, 2]);
     assert_eq!(r.as_slice(), &[19, 22, 43, 50]);
 
-    // s8 1×1 · 1×1: the single product 100*100 = 10000 wraps IN s8 to 16
+    // i8 1×1 · 1×1: the single product 100*100 = 10000 wraps IN i8 to 16
     // (10000 mod 256 = 16) — proof the *multiply* itself is at dtype width, not a
     // wide i128 accumulator (which would keep 10000).
     let rp = tensor_int::matmul(
         &t(&[100], &[1, 1]).view(),
         &t(&[100], &[1, 1]).view(),
-        Dtype::S8,
+        Dtype::I8,
     )
     .unwrap();
     assert_eq!(rp.as_slice(), &[16]);
@@ -199,14 +199,14 @@ fn test_ops_int_max_pool_window_and_identity() {
     // the dtype minimum (KISS-OPS-6.11-0002), NOT −inf (no float infinities).
     // [1,3,2,5], kernel 2 stride 1 → [max(1,3), max(3,2), max(2,5)] = [3,3,5].
     let x = t(&[1, 3, 2, 5], &[4]);
-    let y = tensor_int::max_pool(&x.view(), &[0], &[2], &[1], &[0], &[1], Dtype::S8).unwrap();
+    let y = tensor_int::max_pool(&x.view(), &[0], &[2], &[1], &[0], &[1], Dtype::I8).unwrap();
     assert_eq!(y.as_slice(), &[3, 3, 5]);
 
     // A wholly-out-of-bounds (padded) window yields the S8 max identity = -128,
     // not −inf: extent 1, kernel 2 stride 1 pad 2 → first window taps land at
     // -2,-1 (both OOB) → identity.
     let z = t(&[7], &[1]);
-    let yz = tensor_int::max_pool(&z.view(), &[0], &[2], &[1], &[2], &[1], Dtype::S8).unwrap();
+    let yz = tensor_int::max_pool(&z.view(), &[0], &[2], &[1], &[2], &[1], Dtype::I8).unwrap();
     assert_eq!(yz.as_slice()[0], -128);
 }
 
@@ -227,8 +227,8 @@ fn test_ops_int_packed_subbyte_tensor_lane() {
     // The PACKED sub-byte dtypes evaluated through the TENSOR fold (tensor_int::reduce),
     // not just scalar eval_int_op — confirms the width-wrap propagates through the
     // reduction. KISS-OPS-6.11-0002 Sum monoid + KISS-OPS-6.2-0002 two's-complement wrap.
-    // s4: sum [7,1] = 8 -> wraps to -8 (bit3 set).
-    let s = tensor_int::reduce(&t(&[7, 1], &[2]).view(), Dtype::S4, Monoid::Sum, &[0]).unwrap();
+    // i4: sum [7,1] = 8 -> wraps to -8 (bit3 set).
+    let s = tensor_int::reduce(&t(&[7, 1], &[2]).view(), Dtype::I4, Monoid::Sum, &[0]).unwrap();
     assert_eq!(s.as_slice(), &[-8]);
     // u4: sum [15,1] = 16 -> 16 & 0xF = 0.
     let u = tensor_int::reduce(&t(&[15, 1], &[2]).view(), Dtype::U4, Monoid::Sum, &[0]).unwrap();

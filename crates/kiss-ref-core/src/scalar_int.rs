@@ -44,16 +44,16 @@ pub fn eval_int_expr(e: &Expr, dtype: Dtype, inputs: &[i128]) -> Result<i128, Er
 }
 
 /// `(bit width, signed)` for an integer-kind dtype (including the packed
-/// sub-byte `s4`/`u4`/`b1`), or `None` for a non-integer dtype. `bool` is
+/// sub-byte `i4`/`u4`/`b1`), or `None` for a non-integer dtype. `bool` is
 /// excluded — it is its own kind, produced by predicates, not an arithmetic
 /// integer dtype here.
 pub fn int_spec(d: Dtype) -> Option<(u32, bool)> {
     Some(match d {
-        Dtype::S8 => (8, true),
-        Dtype::S16 => (16, true),
+        Dtype::I8 => (8, true),
+        Dtype::I16 => (16, true),
         Dtype::I32 => (32, true),
         Dtype::I64 => (64, true),
-        Dtype::S4 => (4, true),
+        Dtype::I4 => (4, true),
         Dtype::U8 => (8, false),
         Dtype::U16 => (16, false),
         Dtype::U32 => (32, false),
@@ -323,8 +323,8 @@ mod tests {
 
     #[test]
     fn int_add_wraps_two_complement() {
-        // s8: 127 + 1 wraps to -128 (§6.2-0002).
-        assert_eq!(eval_int_op(Op::Add, Dtype::S8, &[127, 1]).unwrap(), -128);
+        // i8: 127 + 1 wraps to -128 (§6.2-0002).
+        assert_eq!(eval_int_op(Op::Add, Dtype::I8, &[127, 1]).unwrap(), -128);
         // u8: 255 + 1 wraps to 0.
         assert_eq!(eval_int_op(Op::Add, Dtype::U8, &[255, 1]).unwrap(), 0);
     }
@@ -332,9 +332,9 @@ mod tests {
     #[test]
     fn int_neg_abs_wrap_at_min() {
         // §6.4-0005: neg(INT_MIN) = abs(INT_MIN) = INT_MIN.
-        assert_eq!(eval_int_op(Op::Neg, Dtype::S8, &[-128]).unwrap(), -128);
-        assert_eq!(eval_int_op(Op::Abs, Dtype::S8, &[-128]).unwrap(), -128);
-        assert_eq!(eval_int_op(Op::Abs, Dtype::S8, &[-5]).unwrap(), 5);
+        assert_eq!(eval_int_op(Op::Neg, Dtype::I8, &[-128]).unwrap(), -128);
+        assert_eq!(eval_int_op(Op::Abs, Dtype::I8, &[-128]).unwrap(), -128);
+        assert_eq!(eval_int_op(Op::Abs, Dtype::I8, &[-5]).unwrap(), 5);
     }
 
     #[test]
@@ -345,8 +345,8 @@ mod tests {
         );
         // u8 bit_not(0) = 255.
         assert_eq!(eval_int_op(Op::BitNot, Dtype::U8, &[0]).unwrap(), 255);
-        // s8 bit_not(0) = -1 (all ones sign-extended).
-        assert_eq!(eval_int_op(Op::BitNot, Dtype::S8, &[0]).unwrap(), -1);
+        // i8 bit_not(0) = -1 (all ones sign-extended).
+        assert_eq!(eval_int_op(Op::BitNot, Dtype::I8, &[0]).unwrap(), -1);
     }
 
     #[test]
@@ -356,8 +356,8 @@ mod tests {
             eval_int_op(Op::Shr, Dtype::U8, &[0b1000_0000, 1]).unwrap(),
             0b0100_0000
         );
-        // s8 arithmetic shr keeps the sign.
-        assert_eq!(eval_int_op(Op::Shr, Dtype::S8, &[-8, 1]).unwrap(), -4);
+        // i8 arithmetic shr keeps the sign.
+        assert_eq!(eval_int_op(Op::Shr, Dtype::I8, &[-8, 1]).unwrap(), -4);
         // shl wraps within width.
         assert_eq!(eval_int_op(Op::Shl, Dtype::U8, &[1, 7]).unwrap(), 128);
         // out-of-range shift → 0 (deterministic reference choice).
@@ -376,8 +376,8 @@ mod tests {
 
     #[test]
     fn int_sign_and_logical() {
-        assert_eq!(eval_int_op(Op::Sign, Dtype::S8, &[-7]).unwrap(), -1);
-        assert_eq!(eval_int_op(Op::Sign, Dtype::S8, &[0]).unwrap(), 0);
+        assert_eq!(eval_int_op(Op::Sign, Dtype::I8, &[-7]).unwrap(), -1);
+        assert_eq!(eval_int_op(Op::Sign, Dtype::I8, &[0]).unwrap(), 0);
         assert_eq!(eval_int_op(Op::LogicalAnd, Dtype::U8, &[5, 0]).unwrap(), 0);
         assert_eq!(eval_int_op(Op::LogicalNot, Dtype::U8, &[0]).unwrap(), 1);
     }
@@ -385,12 +385,12 @@ mod tests {
     #[test]
     fn int_sqr_wraps_like_mul() {
         // §6.13: sqr(x) = mul(x, x), wrapped to width (§6.2-0002).
-        assert_eq!(eval_int_op(Op::Sqr, Dtype::S8, &[5]).unwrap(), 25);
-        assert_eq!(eval_int_op(Op::Sqr, Dtype::S8, &[-5]).unwrap(), 25);
-        // 16^2 = 256 overflows s8; low 8 bits are 0.
-        assert_eq!(eval_int_op(Op::Sqr, Dtype::S8, &[16]).unwrap(), 0);
-        // s8: 12^2 = 144 = 0b1001_0000 → sign-extends to -112.
-        assert_eq!(eval_int_op(Op::Sqr, Dtype::S8, &[12]).unwrap(), -112);
+        assert_eq!(eval_int_op(Op::Sqr, Dtype::I8, &[5]).unwrap(), 25);
+        assert_eq!(eval_int_op(Op::Sqr, Dtype::I8, &[-5]).unwrap(), 25);
+        // 16^2 = 256 overflows i8; low 8 bits are 0.
+        assert_eq!(eval_int_op(Op::Sqr, Dtype::I8, &[16]).unwrap(), 0);
+        // i8: 12^2 = 144 = 0b1001_0000 → sign-extends to -112.
+        assert_eq!(eval_int_op(Op::Sqr, Dtype::I8, &[12]).unwrap(), -112);
         // u8: 12^2 = 144 fits the pattern, unsigned.
         assert_eq!(eval_int_op(Op::Sqr, Dtype::U8, &[12]).unwrap(), 144);
         // u64::MAX^2 exceeds i128 — must use wrapping_mul, not `*`. Low 64
@@ -404,9 +404,9 @@ mod tests {
     #[test]
     fn int_step_strict_threshold_at_zero() {
         // Strict `> 0`: step(0) = 0, step(neg) = 0, step(pos) = 1.
-        assert_eq!(eval_int_op(Op::Step, Dtype::S8, &[0]).unwrap(), 0);
-        assert_eq!(eval_int_op(Op::Step, Dtype::S8, &[-1]).unwrap(), 0);
-        assert_eq!(eval_int_op(Op::Step, Dtype::S8, &[7]).unwrap(), 1);
+        assert_eq!(eval_int_op(Op::Step, Dtype::I8, &[0]).unwrap(), 0);
+        assert_eq!(eval_int_op(Op::Step, Dtype::I8, &[-1]).unwrap(), 0);
+        assert_eq!(eval_int_op(Op::Step, Dtype::I8, &[7]).unwrap(), 1);
         // fits the 1-bit b1 lane.
         assert_eq!(eval_int_op(Op::Step, Dtype::B1, &[1]).unwrap(), 1);
     }
@@ -414,9 +414,9 @@ mod tests {
     #[test]
     fn int_relu_clamps_negatives() {
         // signed: max(x, 0).
-        assert_eq!(eval_int_op(Op::Relu, Dtype::S8, &[-5]).unwrap(), 0);
-        assert_eq!(eval_int_op(Op::Relu, Dtype::S8, &[5]).unwrap(), 5);
-        assert_eq!(eval_int_op(Op::Relu, Dtype::S8, &[0]).unwrap(), 0);
+        assert_eq!(eval_int_op(Op::Relu, Dtype::I8, &[-5]).unwrap(), 0);
+        assert_eq!(eval_int_op(Op::Relu, Dtype::I8, &[5]).unwrap(), 5);
+        assert_eq!(eval_int_op(Op::Relu, Dtype::I8, &[0]).unwrap(), 0);
         // unsigned: the `< 0` branch is dead → identity.
         assert_eq!(eval_int_op(Op::Relu, Dtype::U8, &[200]).unwrap(), 200);
     }
@@ -425,15 +425,15 @@ mod tests {
     fn int_fmax_fmin_are_plain_minmax() {
         // No NaN, no signed zero → _ieee degenerates to plain max/min, and
         // matches MaxProp/MinProp byte-for-byte.
-        assert_eq!(eval_int_op(Op::FmaxIeee, Dtype::S8, &[-3, 7]).unwrap(), 7);
-        assert_eq!(eval_int_op(Op::FminIeee, Dtype::S8, &[-3, 7]).unwrap(), -3);
+        assert_eq!(eval_int_op(Op::FmaxIeee, Dtype::I8, &[-3, 7]).unwrap(), 7);
+        assert_eq!(eval_int_op(Op::FminIeee, Dtype::I8, &[-3, 7]).unwrap(), -3);
         assert_eq!(
-            eval_int_op(Op::FmaxIeee, Dtype::S8, &[-3, 7]).unwrap(),
-            eval_int_op(Op::MaxProp, Dtype::S8, &[-3, 7]).unwrap()
+            eval_int_op(Op::FmaxIeee, Dtype::I8, &[-3, 7]).unwrap(),
+            eval_int_op(Op::MaxProp, Dtype::I8, &[-3, 7]).unwrap()
         );
         assert_eq!(
-            eval_int_op(Op::FminIeee, Dtype::S8, &[-3, 7]).unwrap(),
-            eval_int_op(Op::MinProp, Dtype::S8, &[-3, 7]).unwrap()
+            eval_int_op(Op::FminIeee, Dtype::I8, &[-3, 7]).unwrap(),
+            eval_int_op(Op::MinProp, Dtype::I8, &[-3, 7]).unwrap()
         );
     }
 }

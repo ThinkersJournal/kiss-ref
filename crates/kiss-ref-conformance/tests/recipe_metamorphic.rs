@@ -187,7 +187,7 @@ fn metamorphic_int_matmul_is_exactly_distributive() {
     // identity holds under wrapping while a SATURATING implementation would
     // diverge: A·B = 200→(sat)127, A·C = −180→(sat)−128, sat-sum = −1, but
     // A·(B+C) = 20 — so saturation breaks the equality this test asserts.
-    let s8 = Dtype::S8;
+    let s8 = Dtype::I8;
     let a = ti(&[1, 1], &[1, 2]);
     let b = ti(&[100, 100], &[2, 1]);
     let c = ti(&[-90, -90], &[2, 1]);

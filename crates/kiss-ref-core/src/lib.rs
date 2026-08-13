@@ -17,20 +17,20 @@
 //!
 //! ## Scope
 //! - **Scalar floor + non-primitives** over `f16`/`bf16`/`f32`/`f64` (float, via
-//!   `libm`) and every integer dtype (incl. packed `s4`/`u4`/`b1`, computed in
+//!   `libm`) and every integer dtype (incl. packed `i4`/`u4`/`b1`, computed in
 //!   `i128` and wrapped).
 //! - **Tensor layer** ([`tensor`]/[`kernels`]/[`tensor_ops`]/[`window`]): the six
 //!   §6.11 structural atoms + all §6.13 tensor non-primitives on the float lane,
 //!   plus an [`tensor_int`] integer tensor lane.
-//! - **FP8** ([`fp8`]): `e4m3`/`e5m2` as `u8` newtypes with a hand-rolled f32 codec
-//!   (RNE + saturation), computed via the narrow-float promote-to-f32 lane.
+//! - **FP8** ([`fp8`]): `f8e4m3fn`/`f8e5m2` as `u8` newtypes with a hand-rolled f32
+//!   codec (RNE + saturation), computed via the narrow-float promote-to-f32 lane.
 //! - **bool** ([`boolean`]): the truth-valued lane (§6.2-0006) over the integer
 //!   engine, `{0,1}`-normalized.
 //! - **complex** ([`complex`]): the §6.18 complex-arithmetic family
-//!   (`cmake`/`cre`/`cim` bridge + `cadd`…`cpow`) on `c32`/`c64`, evaluating the
+//!   (`cmake`/`cre`/`cim` bridge + `cadd`…`cpow`) on `c64`/`c128`, evaluating the
 //!   real-atom decompositions in the `f32`/`f64` component lane (§6.18-0015) with
 //!   the Annex-G special-value/recovery rules governing the inf/NaN edges
-//!   (§6.18-0013). Every `(complex op, c32/c64)` cell is [`Support::Done`]; a real
+//!   (§6.18-0013). Every `(complex op, c64/c128)` cell is [`Support::Done`]; a real
 //!   op on a complex dtype (and any complex op on a real dtype) is
 //!   [`Support::NotApplicable`].
 //!
@@ -154,8 +154,19 @@ pub enum Error {
     /// would be lossy, so it is a typed decline, not a silent rounding.
     AccumulatorTooNarrow { storage: Dtype, acc: Dtype },
     /// A requested accumulator dtype is not a float. A reduction/scan/contraction
-    /// accumulator MUST be a float dtype (RFC #92 C1).
+    /// accumulator MUST be a float dtype (RFC #92 C1). This is the genuine
+    /// wrong-kind decline (e.g. an integer accumulator); a `NumericKind::Float`
+    /// dtype that merely has **no compute semantics** declines as
+    /// [`Error::ReservedOrScaleDtype`] instead, so the two are not conflated.
     NonFloatAccumulator(Dtype),
+    /// A dtype that is a **recognized** member of the sk4 vocabulary but has **no
+    /// element-value compute semantics** at this schema version — a reserved FP8
+    /// variant (`f8e4m3fnuz`/`f8e5m2fnuz`) or an MX scale (`f8e8m0`/`f8e6m2`,
+    /// §6.1-0013) — was supplied in a compute position (e.g. an accumulator dtype).
+    /// These are `NumericKind::Float`, so this is a **typed compute-decline**
+    /// distinct from [`Error::NonFloatAccumulator`] (§6.1-0001;
+    /// [`kiss_classify_vocab::Dtype::declines_compute`]).
+    ReservedOrScaleDtype(Dtype),
 }
 
 /// Coverage of an `(op, dtype)` cell. Three states: a cell is either
@@ -175,6 +186,44 @@ pub enum Support {
     /// from the coverage denominator.
     NotApplicable,
 }
+
+/// A **provisional local pin**: a value the reference fixes to keep evaluating while
+/// the KISS spec leaves it open, recorded so the reference never presents an
+/// unratified choice as settled conformance.
+///
+/// The pin is a fact about a **site**, not an `(op × dtype)` coverage cell — so it
+/// does not muddy the `Support` verdict of any cell (a cell whose *value* semantics
+/// are verified stays [`Support::Done`]; only the named sub-decision is provisional).
+/// It carries its **value** (not merely its existence): a test asserts the code still
+/// produces `value`, so when `issue` rules differently the assertion **fails** and
+/// forces reconciliation — the pin's resolution is driven, not remembered.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProvisionalPin {
+    /// The site whose value is fixed (where the pin lives).
+    pub site: &'static str,
+    /// The pinned value, as its normative token (asserted against the code by a test).
+    pub value: &'static str,
+    /// The KISS tracking issue whose ruling resolves the pin.
+    pub issue: &'static str,
+}
+
+/// The reference's **provisional local pins** — choices kiss-ref fixes to keep
+/// evaluating while the spec leaves them open. Each is countable and surfaced in the
+/// coverage ledger **beside the Done/Pending counts** (not in prose); when its `issue`
+/// rules and the pin is ratified or re-pinned, the entry is removed and the count
+/// drops. **Zero is the resolved state.**
+///
+/// Current pins:
+/// - `sort_network` **index-output dtype** = `i64` (KISS #133): §6.19 has not pinned
+///   the sort index-output wire dtype (`i64` vs `i32`/`u32`). kiss-ref widens to `i64`
+///   locally; when #133 rules, the ruling wins even at a break (per the KISS Architect,
+///   2026-08-12). The sorted **values** are fully verified — only the index dtype is
+///   provisional.
+pub const PROVISIONAL_PINS: &[ProvisionalPin] = &[ProvisionalPin {
+    site: "sort_network index-output dtype",
+    value: "i64",
+    issue: "KISS#133",
+}];
 
 /// Where a reference kernel came from — the provenance rule of `DESIGN.md`
 /// ("reuse Fuel iff spec-exact").

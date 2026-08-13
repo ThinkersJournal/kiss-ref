@@ -1061,8 +1061,14 @@ fn narrow_nextafter_declines_on_fp8_as_well_as_f16_bf16() {
         eval_op(Op::Nextafter, &[E5m2::of(1.0), E5m2::of(2.0)]),
         Err(Error::Unsupported(Op::Nextafter))
     );
-    assert_eq!(support(Op::Nextafter, Dtype::E4m3), Support::NotApplicable);
-    assert_eq!(support(Op::Nextafter, Dtype::E5m2), Support::NotApplicable);
+    assert_eq!(
+        support(Op::Nextafter, Dtype::F8e4m3fn),
+        Support::NotApplicable
+    );
+    assert_eq!(
+        support(Op::Nextafter, Dtype::F8e5m2),
+        Support::NotApplicable
+    );
 }
 
 /// The ops this file EXECUTES on the narrow lanes — the honest backing for the
@@ -1088,7 +1094,7 @@ fn narrow_executed_cells_are_the_cells_the_ledger_calls_done() {
     // file, so its `Done` in the coverage ledger is backed by execution rather
     // than by genericity alone.
     for &op in EXECUTED_HERE {
-        for &d in &[Dtype::F16, Dtype::Bf16, Dtype::E4m3, Dtype::E5m2] {
+        for &d in &[Dtype::F16, Dtype::Bf16, Dtype::F8e4m3fn, Dtype::F8e5m2] {
             assert_eq!(support(op, d), Support::Done, "{op:?}/{d:?}");
         }
     }
