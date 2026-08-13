@@ -154,8 +154,19 @@ pub enum Error {
     /// would be lossy, so it is a typed decline, not a silent rounding.
     AccumulatorTooNarrow { storage: Dtype, acc: Dtype },
     /// A requested accumulator dtype is not a float. A reduction/scan/contraction
-    /// accumulator MUST be a float dtype (RFC #92 C1).
+    /// accumulator MUST be a float dtype (RFC #92 C1). This is the genuine
+    /// wrong-kind decline (e.g. an integer accumulator); a `NumericKind::Float`
+    /// dtype that merely has **no compute semantics** declines as
+    /// [`Error::ReservedOrScaleDtype`] instead, so the two are not conflated.
     NonFloatAccumulator(Dtype),
+    /// A dtype that is a **recognized** member of the sk4 vocabulary but has **no
+    /// element-value compute semantics** at this schema version — a reserved FP8
+    /// variant (`f8e4m3fnuz`/`f8e5m2fnuz`) or an MX scale (`f8e8m0`/`f8e6m2`,
+    /// §6.1-0013) — was supplied in a compute position (e.g. an accumulator dtype).
+    /// These are `NumericKind::Float`, so this is a **typed compute-decline**
+    /// distinct from [`Error::NonFloatAccumulator`] (§6.1-0001;
+    /// [`kiss_classify_vocab::Dtype::declines_compute`]).
+    ReservedOrScaleDtype(Dtype),
 }
 
 /// Coverage of an `(op, dtype)` cell. Three states: a cell is either

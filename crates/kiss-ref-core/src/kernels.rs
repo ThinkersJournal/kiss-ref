@@ -172,6 +172,13 @@ fn float_format(d: Dtype) -> Option<(u8, u8)> {
 /// Runs AFTER the diagonal + Max/Min short-circuits, so it only ever admits a
 /// strictly-wider legal `A`.
 pub(crate) fn guard_accumulator<T: ScalarFloat>(acc: Dtype) -> Result<(), Error> {
+    // A reserved FP8 variant / MX scale is `NumericKind::Float` but has no compute
+    // semantics (§6.1-0001) — reject it with the typed compute-decline rather than
+    // the misleading NonFloatAccumulator (its `float_format` is `None`, so it would
+    // otherwise fall into the non-float arm).
+    if acc.declines_compute() {
+        return Err(Error::ReservedOrScaleDtype(acc));
+    }
     match (float_format(T::DTYPE), float_format(acc)) {
         (Some((se, sm)), Some((ae, am))) => {
             if ae < se || am < sm {
@@ -771,5 +778,29 @@ mod tests {
             "sort_network index dtype must equal its recorded provisional pin value (#133)"
         );
         assert_eq!(pin.issue, "KISS#133");
+    }
+
+    #[test]
+    fn guard_accumulator_declines_reserved_and_mx_dtypes() {
+        // A reserved/MX dtype is NumericKind::Float but declines compute — the
+        // accumulator guard must reject it with the typed ReservedOrScaleDtype
+        // decline, NOT the misleading NonFloatAccumulator (Copilot review, PR #9).
+        for acc in [
+            Dtype::F8e4m3fnuz,
+            Dtype::F8e5m2fnuz,
+            Dtype::F8e8m0,
+            Dtype::F8e6m2,
+        ] {
+            assert!(acc.is_float(), "{acc:?} is float-kind");
+            match guard_accumulator::<f32>(acc) {
+                Err(Error::ReservedOrScaleDtype(d)) => assert_eq!(d, acc),
+                other => panic!("expected ReservedOrScaleDtype for {acc:?}, got {other:?}"),
+            }
+        }
+        // A genuine non-float accumulator still reports NonFloatAccumulator.
+        match guard_accumulator::<f32>(Dtype::I32) {
+            Err(Error::NonFloatAccumulator(d)) => assert_eq!(d, Dtype::I32),
+            other => panic!("expected NonFloatAccumulator for i32, got {other:?}"),
+        }
     }
 }
