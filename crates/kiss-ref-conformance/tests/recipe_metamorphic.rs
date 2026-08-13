@@ -180,14 +180,14 @@ fn metamorphic_sort_desc_equals_reverse_of_sort_asc() {
 
 #[test]
 fn metamorphic_int_matmul_is_exactly_distributive() {
-    // A·(B+C) == A·B + A·C, BYTE-EXACT at s8 — integer two's-complement arithmetic
+    // A·(B+C) == A·B + A·C, BYTE-EXACT at i8 — integer two's-complement arithmetic
     // is a ring, so matmul is EXACTLY linear (unlike the float lane, whose rounding
     // makes the two sides differ and forces the OrderInvariantNondeterministic
-    // class). Inputs are chosen to overflow s8 with MIXED signs so the ring
+    // class). Inputs are chosen to overflow i8 with MIXED signs so the ring
     // identity holds under wrapping while a SATURATING implementation would
     // diverge: A·B = 200→(sat)127, A·C = −180→(sat)−128, sat-sum = −1, but
     // A·(B+C) = 20 — so saturation breaks the equality this test asserts.
-    let s8 = Dtype::I8;
+    let i8_dt = Dtype::I8;
     let a = ti(&[1, 1], &[1, 2]);
     let b = ti(&[100, 100], &[2, 1]);
     let c = ti(&[-90, -90], &[2, 1]);
@@ -223,14 +223,14 @@ fn metamorphic_int_matmul_is_exactly_distributive() {
     );
 
     let inputs = [a, b, c];
-    let lhs = eval_recipe_int(&lhs_dag, &[s8; 5], &inputs, &[], &[]).expect("A·(B+C)");
-    let rhs = eval_recipe_int(&rhs_dag, &[s8; 6], &inputs, &[], &[]).expect("A·B + A·C");
+    let lhs = eval_recipe_int(&lhs_dag, &[i8_dt; 5], &inputs, &[], &[]).expect("A·(B+C)");
+    let rhs = eval_recipe_int(&rhs_dag, &[i8_dt; 6], &inputs, &[], &[]).expect("A·B + A·C");
 
     let l = lhs.outputs[0].as_slice();
     let r = rhs.outputs[0].as_slice();
-    // Both wrap to the same s8 value; pin it (=20) so a both-wrong-but-equal bug
+    // Both wrap to the same i8 value; pin it (=20) so a both-wrong-but-equal bug
     // is caught too.
-    assert_eq!(l, &[20], "A·(B+C) must wrap to 20 at s8");
-    assert_eq!(r, &[20], "A·B + A·C must wrap to 20 at s8");
+    assert_eq!(l, &[20], "A·(B+C) must wrap to 20 at i8");
+    assert_eq!(r, &[20], "A·B + A·C must wrap to 20 at i8");
     assert_eq!(l, r, "integer matmul must be exactly distributive");
 }

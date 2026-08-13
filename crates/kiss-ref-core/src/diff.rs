@@ -635,12 +635,23 @@ pub fn reference_matmul_acc<T: ScalarFloat>(
 
 use crate::complex::{eval_complex_op, Cplx, CplxOut};
 
-/// Reference `c64` outputs of a complex `op` over a batch of complex-operand rows.
+// NOTE (sk4 naming): these public helpers keep their sk3-era `_c64`/`_c32` suffixes
+// for API stability — they are historical names, NOT sk4 dtype tokens. Under the sk4
+// total-width flip, pair-`f64` is now `c128` and pair-`f32` is now `c64`, so a
+// suffix-accurate rename (`_c64`→`_c128`, `_c32`→`_c64`) both breaks the public API
+// and collides on `c64`; it is deferred to the next breaking release. The functions
+// are keyed on the `f64`/`f32` **component** type, which is unambiguous across versions.
+
+/// Reference outputs of a complex `op` over a batch of pair-of-`f64` (sk4 `c128`,
+/// sk3 `c64`) operand rows. Keyed on the `f64` component lane; `_c64` is a historical
+/// suffix (see the note above), not the sk4 token.
 pub fn reference_c64(op: Op, rows: &[&[Cplx<f64>]]) -> Result<Vec<CplxOut<f64>>, Error> {
     rows.iter().map(|r| eval_complex_op::<f64>(op, r)).collect()
 }
 
-/// Reference `c32` outputs of a complex `op` over a batch of complex-operand rows.
+/// Reference outputs of a complex `op` over a batch of pair-of-`f32` (sk4 `c64`,
+/// sk3 `c32`) operand rows. Keyed on the `f32` component lane; `_c32` is a historical
+/// suffix (see the note above), not the sk4 token.
 pub fn reference_c32(op: Op, rows: &[&[Cplx<f32>]]) -> Result<Vec<CplxOut<f32>>, Error> {
     rows.iter().map(|r| eval_complex_op::<f32>(op, r)).collect()
 }
@@ -673,7 +684,8 @@ fn is_pi_endpoint_f32(x: f32) -> bool {
 
 /// §6.18-0017 split comparator for a complex→complex ULP op (`cexp`/`clog`/
 /// `csqrt`): ULP on both component magnitudes, exact sign on any zero component
-/// and on an imaginary component at the ±π branch endpoint.
+/// and on an imaginary component at the ±π branch endpoint. Operates on `f64`
+/// components (sk4 `c128`); `_c64` is a historical suffix, not the sk4 token.
 pub fn complex_conforms_c64(reference: Cplx<f64>, candidate: Cplx<f64>, ulp: u64) -> bool {
     let re_ok = split_component_f64(reference.re, candidate.re, ulp, reference.re == 0.0);
     let im_sign_exact = reference.im == 0.0 || is_pi_endpoint_f64(reference.im);
@@ -681,7 +693,8 @@ pub fn complex_conforms_c64(reference: Cplx<f64>, candidate: Cplx<f64>, ulp: u64
     re_ok && im_ok
 }
 
-/// `c32` form of [`complex_conforms_c64`].
+/// The `f32`-component form of [`complex_conforms_c64`] (sk4 `c64`); `_c32` is a
+/// historical suffix, not the sk4 token.
 pub fn complex_conforms_c32(reference: Cplx<f32>, candidate: Cplx<f32>, ulp: u64) -> bool {
     let re_ok = split_component_f32(reference.re, candidate.re, ulp, reference.re == 0.0);
     let im_sign_exact = reference.im == 0.0 || is_pi_endpoint_f32(reference.im);
