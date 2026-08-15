@@ -9,7 +9,8 @@ A foundational root of [`kiss-ref`](https://github.com/ThinkersJournal/kiss-ref)
 KISS-Ops only and imports **nothing** — in particular never `kiss-classify-vocab`, because
 the computation and data vocabularies are independent sibling roots (KISS-Ops §6.9).
 
-`no_std`, zero dependencies. Pre-1.0, tracking the unfrozen KISS drafts.
+`no_std`, zero dependencies. Pre-1.0, tracking KISS — each release bound to a frozen spec commit,
+not a live draft.
 
 See the [kiss-ref repository](https://github.com/ThinkersJournal/kiss-ref) for the full
 reference implementation, its architecture (`DESIGN.md`), and the conformance corpus.
