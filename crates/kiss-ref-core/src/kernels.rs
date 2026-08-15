@@ -609,10 +609,11 @@ fn cmp_key<T: ScalarFloat>(a: T, b: T) -> Ordering {
 /// values as a raw-bit permutation (NaN payload / −0 preserved) and the
 /// original-index vector.
 ///
-/// The index-output dtype is **`i64`, a provisional local pin** ([`crate::PROVISIONAL_PINS`]):
-/// §6.19 has not pinned the sort index-output wire dtype (`i64` vs `i32`/`u32`, KISS
-/// #133). When #133 rules, the ruling wins even at a break; the value-match test in
-/// this module keeps this `Dtype::I64` in lockstep with the recorded pin value.
+/// The index-output dtype is **`i64`**, pinned by **KISS-OPS-6.11-0019**: the sort
+/// index-lane output MUST be `i64`, producer-side with no wire field (kiss-ref has no
+/// wire codec, so this is simply the produced dtype; `i64` is the §6.11-0009 member
+/// covering every legal extent). `test_ops_sort_index_output_i64` (conformance crate)
+/// and the kernel-level guard below assert it against the clause.
 pub fn sort_network<T: ScalarFloat>(
     keys: &View<T>,
     axis: usize,
@@ -761,23 +762,18 @@ mod tests {
     }
 
     #[test]
-    fn sort_network_index_dtype_matches_provisional_pin() {
-        // #133 is unresolved: the sort index-output wire dtype is a provisional local
-        // pin (i64). This keeps the kernel's actual index dtype in lockstep with the
-        // recorded PROVISIONAL_PINS value — so a #133-driven change to the kernel FAILS
-        // here until the registry is reconciled (resolution forced, not remembered).
+    fn sort_network_index_dtype_is_i64() {
+        // KISS-OPS-6.11-0019: the sort index-lane output MUST be i64 (producer-side,
+        // no wire field). Kernel-level guard that the produced index dtype is i64; the
+        // conformance crate's test_ops_sort_index_output_i64 asserts the same against
+        // the clause at the reference-path level.
         let x = t(&[3.0, 1.0, 2.0], &[3]);
         let (_, idx) = sort_network(&x.view(), 0, Direction::Asc).unwrap();
-        let pin = crate::PROVISIONAL_PINS
-            .iter()
-            .find(|p| p.site == "sort_network index-output dtype")
-            .expect("sort_network index-output dtype must be a recorded provisional pin");
         assert_eq!(
-            idx.dtype().token(),
-            pin.value,
-            "sort_network index dtype must equal its recorded provisional pin value (#133)"
+            idx.dtype(),
+            Dtype::I64,
+            "sort index-lane output dtype must be i64 (KISS-OPS-6.11-0019)"
         );
-        assert_eq!(pin.issue, "KISS#133");
     }
 
     #[test]

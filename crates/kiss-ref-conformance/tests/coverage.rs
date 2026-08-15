@@ -267,22 +267,25 @@ fn coverage_reserved_and_mx_dtypes_not_applicable() {
 }
 
 #[test]
-fn coverage_ledger_surfaces_provisional_pins() {
+fn coverage_ledger_surfaces_provisional_pin_count() {
     let l = ledger();
-    // Condition 1 (Architect ruling, 2026-08-12): the provisional-pin COUNT is in
-    // the machine-readable summary, beside the Done/Pending counts — not in prose.
+    // The provisional-pin COUNT sits in the machine-readable summary, beside the
+    // Done/Pending counts (not in prose) — robust to the count being zero (the
+    // resolved state, currently) or nonzero (Architect ruling, 2026-08-12).
     let s = l.summary();
     assert!(
         s.contains(&format!("{} PROVISIONAL PIN(S)", l.provisional.len())),
         "summary must surface the provisional-pin count beside Done/Pending: {s}"
     );
-    // Condition 2: the #133 sort_network index-output dtype pin is recorded WITH its
-    // value (i64), so a #133-driven change is forced to reconcile the registry.
-    let pin = l
-        .provisional
-        .iter()
-        .find(|p| p.site == "sort_network index-output dtype")
-        .expect("the #133 sort index-output dtype pin must be recorded");
-    assert_eq!(pin.value, "i64");
-    assert_eq!(pin.issue, "KISS#133");
+    // Whenever a genuinely-open decision IS pinned, each entry must render its
+    // site=value=issue detail in the summary so it can't hide — the forcing-function
+    // contract for the next pin. The sort_network index-output dtype pin was resolved
+    // by KISS-OPS-6.11-0019, so the registry is currently empty and this loop is a
+    // no-op; it keeps teeth for the next pin without asserting a resolved one.
+    for p in l.provisional {
+        assert!(
+            s.contains(&format!("[{}={} pending {}]", p.site, p.value, p.issue)),
+            "each provisional pin must render its detail in the summary: {s}"
+        );
+    }
 }
