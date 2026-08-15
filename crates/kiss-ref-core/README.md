@@ -11,14 +11,17 @@ differential *target*, **not** the KISS-Conform oracle (that oracle is independe
 It exposes a differential export seam (`ulp_distance`, `reference_*`, `diff_*`) so a conformance
 harness or an on-device kernel generator can dev-depend on it and cross-run.
 
-- **Coverage:** all 106 ops evaluable over `f16`/`bf16`/`f32`/`f64`, the integer dtypes (incl.
-  packed `s4`/`u4`/`b1`), `e4m3`/`e5m2` FP8, and the bool lane; complex is `NotApplicable`
-  (the deferred §6.18 family). Cell coverage is three-state (Done / Pending / NotApplicable),
-  driven by a spec-derived `legality(op, dtype)`.
+- **Coverage:** all 121 ops evaluable over `f16`/`bf16`/`f32`/`f64`, the integer dtypes (incl.
+  packed `i4`/`u4`/`b1`), `f8e4m3fn`/`f8e5m2` FP8, the bool lane, and the complex lane
+  (`c64`/`c128`, the §6.18 arithmetic family) — only real-only ops are `NotApplicable` on complex
+  dtypes. The reserved `f8e4m3fnuz`/`f8e5m2fnuz` and MX-scale `f8e8m0`/`f8e6m2` dtypes parse but
+  decline to compute (`NotApplicable` by design). Cell coverage is three-state
+  (Done / Pending / NotApplicable), driven by a spec-derived `legality(op, dtype)`.
 - **`no_std`** (default features off); depends only on `libm` (pure-Rust transcendentals) and
   `half` (f16/bf16 storage), plus the two KISS vocabulary crates.
 
-`Error` is `#[non_exhaustive]`. Pre-1.0, tracking the unfrozen KISS drafts.
+`Error` is `#[non_exhaustive]`. Pre-1.0, tracking KISS — each release bound to a frozen spec commit,
+not a live draft.
 
 See the [repository](https://github.com/ThinkersJournal/kiss-ref) for `DESIGN.md` (architecture,
 KISS binding, provenance rule, scope) and the `kiss-ref-conformance` corpus.
