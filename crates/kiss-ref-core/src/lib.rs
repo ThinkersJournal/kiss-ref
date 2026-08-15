@@ -211,19 +211,21 @@ pub struct ProvisionalPin {
 /// evaluating while the spec leaves them open. Each is countable and surfaced in the
 /// coverage ledger **beside the Done/Pending counts** (not in prose); when its `issue`
 /// rules and the pin is ratified or re-pinned, the entry is removed and the count
-/// drops. **Zero is the resolved state.**
+/// drops. **Zero is the resolved state — and is the current state.**
 ///
-/// Current pins:
-/// - `sort_network` **index-output dtype** = `i64` (KISS #133): §6.19 has not pinned
-///   the sort index-output wire dtype (`i64` vs `i32`/`u32`). kiss-ref widens to `i64`
-///   locally; when #133 rules, the ruling wins even at a break (per the KISS Architect,
-///   2026-08-12). The sorted **values** are fully verified — only the index dtype is
-///   provisional.
-pub const PROVISIONAL_PINS: &[ProvisionalPin] = &[ProvisionalPin {
-    site: "sort_network index-output dtype",
-    value: "i64",
-    issue: "KISS#133",
-}];
+/// Currently **empty**. The one prior pin — `sort_network` **index-output dtype** =
+/// `i64` — is resolved by **KISS-OPS-6.11-0019** (the sort index-lane output MUST be
+/// `i64`, producer-side, with no wire field; realized in KISS `daa5f43` / PR #83, and
+/// already present in kiss-ref's bound spec artifact `19c3ad7`). The ruling *agreed*
+/// with the pinned value, so reconciliation was a re-cite, not a re-pin: the `i64`
+/// output is now asserted directly against the clause (`test_ops_sort_index_output_i64`
+/// in the conformance crate, plus a kernel-level guard in `kernels.rs`), not against
+/// this registry. The pin had tracked KISS **#133** — an `rfc` issue filed 2026-08-08,
+/// fifteen days *after* the ruling merged (a re-file of an already-answered question).
+/// A guard that cites an open issue rather than the merged clause re-transmits a stale
+/// "waiting on X" to every reader, so the fix is to anchor to the clause. The mechanism
+/// stays for the next genuinely-open decision.
+pub const PROVISIONAL_PINS: &[ProvisionalPin] = &[];
 
 /// Where a reference kernel came from — the provenance rule of `DESIGN.md`
 /// ("reuse Fuel iff spec-exact").
