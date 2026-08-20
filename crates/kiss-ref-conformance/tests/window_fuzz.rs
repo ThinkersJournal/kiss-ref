@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Never-panic fuzz suite for the **window family** — `avg_pool`, `max_pool`,
 //! `im2col` (`kiss-ref-core/src/window.rs`).
 //!

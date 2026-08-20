@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! The FP8 dtypes **e4m3** (OCP `E4M3FN`) and **e5m2** (OCP `E5M2`).
 //!
 //! *sk4 token spelling:* the normative KISS dtype tokens for these formats are

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! PRELIMINARY reassociation-tolerance calibration for RFC #92 direction b
 //! (C4 / KISS-CONTRACT-6.8-0012).
 //!

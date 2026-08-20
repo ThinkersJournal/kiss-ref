@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! The coverage gate: enumerate every (op × dtype) cell and enforce the
 //! implemented paths stay covered. A regression that drops a covered op to
 //! `Pending` fails this test.

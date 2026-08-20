@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Never-panic adversarial-DAG fuzz suite for `eval_recipe` (the recipe evaluator).
 //!
 //! CONTRACT: `eval_recipe` never panics — every failure is a typed `Error`.

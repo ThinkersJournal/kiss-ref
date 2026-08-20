@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! The **recipe evaluator**: `eval_recipe(dag, inputs, params, indices) ->
 //! RecipeEval { outputs, index_outputs, dets }`.
 //!

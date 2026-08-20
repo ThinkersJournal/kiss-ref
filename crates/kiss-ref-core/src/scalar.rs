@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Scalar reference implementations of the floating-point floor atoms
 //! (KISS-Ops §6.4–§6.9), plus the overflow-safe refined forms (§6.13-0003) the
 //! resolver substitutes for the overflow-unsafe non-primitive decompositions.

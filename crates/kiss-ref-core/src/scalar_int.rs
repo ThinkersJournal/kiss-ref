@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Scalar reference implementations of the **integer** floor atoms (KISS-Ops
 //! §6.2-0002 wrapping arithmetic, §6.6 comparisons, §6.10 bitwise) plus the few
 //! integer-valued non-primitives (`sign`, `max_prop`/`min_prop`, the `logical_*`

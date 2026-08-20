@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! # kiss-ref-core
 //!
 //! The KISS base-op **reference kernels**: the floating-point floor atoms

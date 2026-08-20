@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! The recursive-resolution engine (KISS-Ops §6.13 / §6.14).
 //!
 //! [`eval_op`] evaluates any KISS-Ops op on scalar float arguments: a floor atom

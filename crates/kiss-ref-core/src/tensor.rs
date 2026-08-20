@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Dense, row-major, strided tensors for the reference tensor-evaluation layer.
 //!
 //! A [`Tensor<T>`] owns a contiguous `Vec<T>` in row-major (C) order; a

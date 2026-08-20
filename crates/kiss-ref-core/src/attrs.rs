@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Attribute enums for the tensor-evaluation layer.
 //!
 //! These stand in for the deferred §6.19 `OpAttrs` channel: a structural atom's
