@@ -360,7 +360,9 @@ fn index_ref_det<T: Clone>(r: IndexRef, memo: &[Option<(Tensor<T>, DetClass)>]) 
 ///
 /// **Precision contract.** Evaluates **at** the compute dtype `T`, never wider: an `f32`
 /// recipe computes in `f32` (own-precision `libm` atoms — `expf`/`logf`/…), an `f64` recipe
-/// in `f64`. `T::to_f64` exists for truthiness/diagnostics only, **never for compute**.
+/// in `f64`. `T::to_f64` is used only for classification, ordering, branch conditions, and
+/// dtype conversion — **never to evaluate a value in wider precision and round it back** (the
+/// wide-precision-oracle pattern kiss-ref deliberately is not).
 /// kiss-ref is the same-precision differential *target*, **not** the wide-precision
 /// KISS-Conform oracle (which evaluates wider than the compute dtype and rounds once — see
 /// `DESIGN.md`). The one widening is the spec-defined narrow-float lane (`f16`/`bf16`/FP8

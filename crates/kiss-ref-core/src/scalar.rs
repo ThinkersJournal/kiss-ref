@@ -73,7 +73,9 @@ pub trait ScalarFloat: sealed::Sealed + Copy + PartialEq + PartialOrd {
         Self::from_f64(v)
     }
 
-    /// Widen to `f64` (for truthiness / diagnostics, never for compute).
+    /// Widen to `f64` for classification, ordering, branch conditions, and dtype conversion —
+    /// **never** to evaluate a value in wider precision and round it back (kiss-ref computes at
+    /// the storage dtype, not as the wide-precision oracle).
     fn to_f64(self) -> f64;
     /// IEEE `isnan` (`x != x`).
     fn is_nan(self) -> bool;
