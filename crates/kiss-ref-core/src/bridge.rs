@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! The bridge from the scalar reference engine to the tensor layer.
 //!
 //! The whole trick of the tensor layer is that it reuses the **unchanged** scalar

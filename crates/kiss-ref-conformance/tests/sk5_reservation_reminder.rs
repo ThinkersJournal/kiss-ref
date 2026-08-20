@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! **sk5 `#[non_exhaustive]` reservation reminder** — a build-participating to-do,
 //! deliberately NOT a memory note or a code comment.
 //!

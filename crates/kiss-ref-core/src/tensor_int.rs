@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! The **integer tensor lane**: the §6.11 structural atoms + the integer-valued
 //! §6.13 non-primitives (`argmax`/`any`/`all`/`cum{sum,prod,max}`) over the integer
 //! dtypes, computed in `i128` and wrapped to the dtype (mirroring `scalar_int`).

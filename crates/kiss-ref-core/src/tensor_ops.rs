@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! The tensor non-primitives (§6.13), each a spec-faithful transcription of its
 //! §6.13 reference decomposition over the six structural atoms + the scalar engine.
 //!

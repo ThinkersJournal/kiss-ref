@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! # kiss-ops-vocab
 //!
 //! A Rust binding of the **KISS-Ops** op vocabulary

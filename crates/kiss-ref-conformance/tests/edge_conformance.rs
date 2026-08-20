@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Broadened edge corpus — inf/subnormal arithmetic, `nextafter`, `copysign`,
 //! and narrow-float (f16/bf16) compute — the cases the first corpus skipped.
 

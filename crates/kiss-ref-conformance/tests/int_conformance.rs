@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Integer-path conformance corpus — the pinned integer semantics of KISS-Ops
 //! §6.2 / §6.4 / §6.10, with KISS-Conform `test_ops_*` names.
 

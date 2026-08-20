@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Conformance corpus — the pinned numeric semantics of KISS-Ops §6, with test
 //! names mirroring KISS-Conform's `test_ops_*` (KISS-Ops §9.1 clause→test
 //! traceability). Each test cites the clause it exercises.

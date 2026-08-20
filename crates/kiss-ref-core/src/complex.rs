@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Scalar reference kernels for the **§6.18 complex-arithmetic op family**
 //! (`c64`/`c128`).
 //!

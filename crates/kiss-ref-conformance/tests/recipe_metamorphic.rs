@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Metamorphic / invariant conformance — relations that MUST hold between the
 //! outputs of related recipes, checked without a hand-typed golden for the
 //! relation itself.

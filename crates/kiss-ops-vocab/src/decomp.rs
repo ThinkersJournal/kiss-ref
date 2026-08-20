@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! §6.13 reference decompositions of non-primitive ops.
 //!
 //! Each non-primitive op resolves to the primitive floor via the reference

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! The **differential export seam** — the API other implementations dev-depend
 //! on to test against this reference.
 //!

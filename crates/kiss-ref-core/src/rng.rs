@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Counter-based RNG — the `RandomBits` floor atom: the Philox-4x32-10 core plus the
 //! §8 counter-derivation mapping (KISS-Classify §6.8 `rnd` family; the cross-backend
 //! bit-identical generator seam co-designed with Fuel, 2026-07-31).

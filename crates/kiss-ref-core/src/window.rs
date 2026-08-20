@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! The window family (§6.13): `avg_pool`, `max_pool`, `im2col`.
 //!
 //! Each pools/gathers over a sliding window across a set of spatial `axes` with

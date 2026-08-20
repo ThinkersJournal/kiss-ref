@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Ruling-conformance vectors — the seven KISS-Ops clauses ruled 2026-07-23
 //! (KISS #75/#76), pinned as the kiss-ref reference mirror of KISS-Conform's
 //! `test_ops_*` (KISS-Ops §9.1 clause→test traceability). Every value here is

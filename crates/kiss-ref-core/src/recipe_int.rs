@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! The **integer recipe evaluator**: `eval_recipe_int(dag, node_dtypes, inputs,
 //! params, indices) -> RecipeEval<i128>` — the `i128`-backed sibling of
 //! [`crate::recipe::eval_recipe`].

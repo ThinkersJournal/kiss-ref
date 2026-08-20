@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! The six structural floor atoms (KISS-Ops §6.11) — the irreducible hand-written
 //! tensor kernels. Everything numeric routes back through the scalar engine:
 //! `element_map` bodies via [`eval_expr`], monoid combines and scatter combines

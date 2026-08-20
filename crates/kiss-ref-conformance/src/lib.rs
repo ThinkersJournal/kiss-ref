@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! # kiss-ref-conformance
 //!
 //! The **coverage ledger** and the **conformance corpus** for `kiss-ref`.

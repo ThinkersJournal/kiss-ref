@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Recipe conformance corpus — golden flat-DAG recipes with hand-derived
 //! outputs and per-node [`DetClass`] vectors.
 //!

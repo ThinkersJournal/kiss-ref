@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! The truth-valued **bool** lane (§6.2-0006, §6.1-0007).
 //!
 //! `bool` is a 1-byte truth value: `0` = false, any non-zero = true, canonical

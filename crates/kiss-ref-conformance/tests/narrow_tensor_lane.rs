@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! **Narrow-lane EXECUTION coverage** — the tensor layer and the recipe
 //! evaluator actually run on `f16`, `bf16`, `e4m3fn`, and `e5m2`.
 //!

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! **The self-differential: hand-written kernel vs the §6.13 reference
 //! decomposition it claims to transcribe.**
 //!
