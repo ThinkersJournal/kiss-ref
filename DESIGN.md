@@ -110,20 +110,23 @@ binding preserves that — a consumer needing only dtypes never pulls in the op 
 
 `kiss-ref-conformance` is the **deliberate conformance host** — not a crate whose tests
 happen to live away from the code they exercise. Its public surface is the coverage
-**`Ledger`** (`ledger()` → the machine-readable (op × dtype) `Done`/`Pending`/`NotApplicable`
-report evaluating teams read): that API *is* the crate's product. It is therefore the correct
-home for the cross-crate conformance layer — the corpus mirroring KISS-Conform's `test_ops_*`
-names, the self-differential (hand-written kernel vs its §6.13 decomposition), the metamorphic
-relations, the fuzz suites, and the coverage gate.
+**`Ledger`** (`ledger()` → the machine-readable **per-op** `Done`/`Pending` split plus
+provisional pins that evaluating teams read): that API *is* the crate's product. (The
+per-`(op × dtype)` three-state — `Done`/`Pending`/`NotApplicable` — is the spec-derived
+`support(op, dtype)` function in `kiss-ref-core`, which the coverage tests enforce cell by
+cell; the `Ledger` reports the per-op roll-up.) It is therefore the correct home for the
+cross-crate conformance layer — the corpus mirroring KISS-Conform's `test_ops_*` names, the
+self-differential (hand-written kernel vs its §6.13 decomposition), the metamorphic relations,
+the fuzz suites, and the coverage gate.
 
 **The guarantee is the workspace run.** `cargo test` at the root (equivalently
 `cargo test --workspace`) exercises every layer — the vocab crates, `kiss-ref-core`'s own
 tests, and the full conformance suite. That is the command the README names and CI runs, and it
 is what validates spec-exactness end to end.
 
-**Residual, named rather than left implicit:** `cargo test -p kiss-ref-core` runs core's ~150
-**colocated `src/` unit tests** — a real local guard on the kernels (every module carries its own
-`#[test]` block) — but **not** the conformance corpus or the decomposition-differential, which
+**Residual, named rather than left implicit:** `cargo test -p kiss-ref-core` runs core's
+**colocated `src/` unit tests** — a real local guard on the kernels (150 tests across 15 of the
+crate's 18 `src/` files) — but **not** the conformance corpus or the decomposition-differential, which
 also guard core's spec-exactness *from the conformance crate*. So a contributor iterating on
 `kiss-ref-core` alone gets a genuine but partial signal; run the workspace suite for the full
 guarantee. This is deliberate layering, **not** the "core properties guarded only elsewhere"
