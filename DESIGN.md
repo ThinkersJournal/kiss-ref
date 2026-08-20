@@ -1,6 +1,6 @@
 # kiss-ref — a reference implementation of the KISS base ops
 
-**Status:** seed (first cut, 2026-07-16). Pre-1.0, unratified, following unfrozen KISS drafts.
+**Status:** Pre-1.0, published on crates.io (0.3.x). Tracks KISS (itself pre-freeze); each release binds a specific frozen spec commit, not a live draft (see [Spec pin](#spec-pin)). First cut 2026-07-16.
 **License:** spec-conformance code MIT-OR-Apache-2.0; it implements the CC0 KISS standard.
 
 `kiss-ref` is a **project-agnostic, spec-exact reference implementation** of the KISS base-op
@@ -49,7 +49,7 @@ non-primitive by expanding its §6.13 decomposition to the floor** is therefore 
 op basis: every op is evaluable, so the same artifact can be a differential reference (verify
 against it) and a correctness floor (execute on it when nothing else will).
 
-**Total cover now spans all 106 ops — the scalar floor + a full tensor-evaluation layer.** The scalar
+**Total cover now spans all 121 ops — the scalar floor + a full tensor-evaluation layer + the §6.18 complex family.** The scalar
 path covers the elementwise float floor atoms + the non-primitives that decompose through them, and
 the integer floor atoms. The six **structural atoms** (`element_map`/`reduce`/`prefix_scan`/`gather`/
 `scatter`/`sort_network`, §6.11) are hand-written strided-tensor kernels, and `matmul`/`softmax`/the
@@ -59,10 +59,11 @@ scalar resolver inside a row-major odometer** — `element_map`'s per-element bo
 and a `reduce`/scan monoid combine is one `eval_op` call. The one order-sensitive op, float
 `scatter_add`, is pinned to row-major source order and tagged order-invariant/nondeterministic
 (§6.0-0004) — compared under tolerance, never byte-exact. The **window family** (`avg_pool`/`max_pool`/
-`im2col`) is included, so **every op is evaluable on at least the float lane (106/106)**; the
+`im2col`) is included, so **every op is evaluable on at least the float lane (121/121)**; the
 **integer tensor lane** additionally covers the atoms + `argmax`/`any`/`all`/`cum*` over the integer
-dtypes (via `eval_int_op` wrapping). The remaining `Pending` cells are per-(op × dtype): the FP8
-(`e4m3`/`e5m2`) / `bool` / complex (`c32`/`c64`) dtype breadth, on both lanes. Three §6.11
+dtypes (via `eval_int_op` wrapping). FP8 (`f8e4m3fn`/`f8e5m2`), the `bool` lane, and the §6.18 complex
+family (`c64`/`c128`) are now all `Done`; the remaining `Pending` cells are per-(op × dtype): the
+float-only tensor ops (the reductions/normalizations needing `div`/`sqrt`) on the integer lane. Three §6.11
 under-specifications surfaced (gather skip-read value; scatter base-state / output-shape; empty-axis
 for `prefix_scan`/`gather`/`scatter`/`sort_network`); kiss-ref pinned each by local convention, filed
 them as a KISS RFC (PR #75), and **all three were ruled kiss-ref's way 2026-07-23** (gather-skip =
@@ -82,7 +83,7 @@ above. Two honest readings diverging is the signal.
 ## Architecture
 
 ```
-kiss-classify-vocab   binds KISS-Classify §6.1 — the 20 pinned dtypes + bit layouts + numeric kinds.
+kiss-classify-vocab   binds KISS-Classify §6.1 — the 24 pinned dtypes + bit layouts + numeric kinds.
                       Depends on NOTHING (foundational root; sibling of ops-vocab, never imports it).
 
 kiss-ops-vocab        binds KISS-Ops §6.1/§6.3/§6.13/§6.18 — op tokens, family tags, primitive-floor
@@ -113,6 +114,15 @@ with the source of truth at `../KISS/spec/{ops,classify}.md`. Where the §6.13 d
 they follow the spec's pinned grammar (§6.13-0006), so they can be regenerated from the spec rather
 than hand-maintained. When a base op or dtype is missing from the standard, that is an RFC back to
 KISS — not something this project invents locally.
+
+### Spec pin
+
+kiss-ref binds a **specific frozen KISS spec commit** per release, never the moving `main`. **The
+0.3.x line binds `19c3ad7`** — the sk4-frozen §6.1 dtype set (the closed 24-token vocabulary) and the
+KISS-Ops op vocabulary at `../KISS/spec/{ops,classify}.md`. A spec change is adopted by **re-binding to
+a new commit in a new release**, not by tracking drafts — a differential result is only meaningful
+against the commit it was measured on, so each release cites its pin. (0.3.1/0.3.2 are docs/metadata
+only and bind the same `19c3ad7` as 0.3.0.)
 
 ### Consumers adapt to the core (core/adapter split)
 
@@ -160,38 +170,44 @@ consumed through Fuel's normal backend-contract seam via the thin adapter; it ne
 optimizer/executor/IR. As an execution route it must honor Fuel's never-panic/`Result` discipline —
 so `kiss-ref-core` returns typed errors, never panics.
 
-## Scope of this first cut
+## Scope
 
-- **Vocab: complete.** Both vocab crates enumerate the *full* KISS op set + 20 dtypes, so the coverage
+- **Vocab: complete.** Both vocab crates enumerate the *full* KISS op set + 24 dtypes, so the coverage
   ledger is a complete list even where a kernel is still pending.
 - **Scalar kernels: the mandatory core across the common dtypes.** The floor atoms + resolver over the
-  float dtypes (`f32`, `f64`, `f16`, `bf16`) and every legal integer dtype (incl. packed `s4`/`u4`/`b1`),
+  float dtypes (`f32`, `f64`, `f16`, `bf16`) and every legal integer dtype (incl. packed `i4`/`u4`/`b1`),
   with the elementwise non-primitives resolved end-to-end.
 - **Tensor layer: the 6 structural atoms + all 22 tensor non-primitives on the float lane** (§6.11/
   §6.13). `element_map`/`reduce`/`prefix_scan`/`gather`/`scatter`/`sort_network` as strided-tensor
   kernels; the reductions, scans, normalizations (`softmax`/`log_softmax`/`rms_norm`/`layer_norm`/
   `logsumexp`), `matmul`, `argmax`, `any`/`all`, the gather/scatter family (`index_select`/`embedding`/
   `scatter_add`), and the window family (`avg_pool`/`max_pool`/`im2col`) as spec-faithful transcriptions
-  of their §6.13 decompositions. **Lands the ledger at 106/106.**
+  of their §6.13 decompositions. With the §6.18 complex family, this **lands the ledger at 121/121.**
 - **Integer tensor lane:** the 6 atoms + `argmax`/`any`/`all`/`cum*` over every integer dtype (via
   `eval_int_op` two's-complement wrapping). The float-only tensor ops (`reduce_mean`/`var`/`std`/
   `norm2`, the normalizations, `matmul`, pooling — anything needing `div`/`sqrt`/`exp`) stay float.
-- **Dtype breadth:** **FP8** (`e4m3`/`e5m2`) as `u8` newtypes with a hand-rolled f32 codec (RNE +
+- **Dtype breadth:** **FP8** (`f8e4m3fn`/`f8e5m2`) as `u8` newtypes with a hand-rolled f32 codec (RNE +
   saturation), computed via the narrow-float promote-to-f32 lane; the truth-valued **bool** lane
-  (§6.2-0006) over the integer engine, `{0,1}`-normalized. **Complex** (`c32`/`c64`) is
-  **NotApplicable** — its arithmetic is the deferred §6.18 op family (absent from the vocab), so every
-  `(op, c32/c64)` cell is `NotApplicable` (§6.16-0007), not pending.
+  (§6.2-0006) over the integer engine, `{0,1}`-normalized; and the **complex** lane (`c64` = pair-`f32`,
+  `c128` = pair-`f64`), whose §6.18 arithmetic family is **`Done`** — only a real-only op on a complex
+  dtype (and any complex op on a real dtype) is `NotApplicable`.
+- **Recognize-but-decline-compute dtypes:** the reserved `f8e4m3fnuz`/`f8e5m2fnuz` and the MX scales
+  `f8e8m0`/`f8e6m2` parse (distinct from an unknown token) but report `NotApplicable` for every op **by
+  design** — a typed compute-decline, not backlog.
 - **Coverage is three-state** — `Done` / `Pending` / `NotApplicable` — driven by a spec-derived
   `legality(op, dtype)` (op family × numeric kind); only legal cells form the denominator, so
-  permanently-illegal cells (bitwise × float, `div` × int, `nextafter` × narrow, every op × complex)
+  permanently-illegal cells (bitwise × float, `div` × int, `nextafter` × narrow, real-only-op × complex)
   leave the backlog entirely. Remaining `Pending`: the float-only tensor ops on the integer lane. (The
   three §6.11 spec-gap cells were held provisional until the KISS PR #75 rulings landed — 2026-07-23,
   all three kiss-ref's way — and are no longer flagged.)
 
 The coverage gate reports DONE vs PENDING for every (atom × legal-dtype) cell, so what remains is
-machine-visible to the evaluating teams. They fill cells; this seed dictates *how*.
+machine-visible to the evaluating teams. They fill cells; kiss-ref dictates *how*.
 
 ## Non-goals
 
 No optimizer, no fusion, no scheduling, no device management, no performance. Not a framework. Not a
-consumer's IR. It is the slow, correct thing everything else is measured against.
+consumer's IR. **No wire codec** — kiss-ref binds the *vocabulary and semantics*, not the KISS wire
+format: there is no `SCHEMA_VERSION` and no `structure_key` encoder here. Its agreement with KISS is
+checked at the **vocabulary level** (dtype/op token spellings), never the wire `structure_key` (which
+lives in KISS). It is the slow, correct thing everything else is measured against.
