@@ -357,6 +357,17 @@ fn index_ref_det<T: Clone>(r: IndexRef, memo: &[Option<(Tensor<T>, DetClass)>]) 
 /// returning a [`RecipeEval`]: the value-lane output tensor(s), the index-lane
 /// outputs, and the **per-node** [`DetClass`]. Float lane. Never panics — every
 /// failure is an [`Error`].
+///
+/// **Precision contract.** Evaluates **at** the compute dtype `T`, never wider: an `f32`
+/// recipe computes in `f32` (own-precision `libm` atoms — `expf`/`logf`/…), an `f64` recipe
+/// in `f64`. `T::to_f64` exists for truthiness/diagnostics only, **never for compute**.
+/// kiss-ref is the same-precision differential *target*, **not** the wide-precision
+/// KISS-Conform oracle (which evaluates wider than the compute dtype and rounds once — see
+/// `DESIGN.md`). The one widening is the spec-defined narrow-float lane (`f16`/`bf16`/FP8
+/// promote to `f32` per §6.16), which is those dtypes' own defined semantics, not oracle
+/// widening. **For a consumer:** a differential run against `eval_recipe` compares at the
+/// SAME precision as `T` — it is a spec-exact same-precision reference, not a wide-precision
+/// one, and cannot substitute for a wide-precision oracle.
 pub fn eval_recipe<T: ScalarFloat>(
     dag: &FlatDag,
     inputs: &[Tensor<T>],
