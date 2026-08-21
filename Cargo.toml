@@ -14,7 +14,10 @@ license    = "MIT OR Apache-2.0"
 # The code repository (crates.io links here). The KISS *spec* the code binds
 # lives at github.com/ThinkersJournal/KISS — cited in DESIGN.md's "Spec pin".
 repository = "https://github.com/ThinkersJournal/kiss-ref"
-rust-version = "1.74"
+# Exercised by the `msrv` CI job (builds under exactly this toolchain). Raised
+# from 1.74, which never built — the `half` dependency requires rustc 1.81+ — to
+# the portfolio-standard 1.85, build-verified host + no_std on rustc 1.85.0.
+rust-version = "1.85"
 
 # The reference implementation targets the KISS working-tree drafts as of
 # 2026-07-16 (both KISS-Ops and KISS-Classify are unfrozen first-draft
