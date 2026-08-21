@@ -37,10 +37,10 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  # The channel every gate runs on. Swap for an exact version (e.g. "1.99.0") if a
-  # future stable's clippy ever adds a lint that breaks `-D warnings` on code that
-  # has not changed.
-  RUST_TOOLCHAIN: stable
+  # Pinned to an exact version per the portfolio toolchain ruling (2026-08-21) —
+  # never the moving `stable` alias, so a repo at rest cannot silently diverge from
+  # whatever `stable` resolves to. Matches rust-toolchain.toml; bump deliberately.
+  RUST_TOOLCHAIN: "1.98.0"
   # Bare-metal ARM Cortex-M4/M7: core + alloc only, `std` does not exist.
   NOSTD_TARGET: thumbv7em-none-eabi
 
