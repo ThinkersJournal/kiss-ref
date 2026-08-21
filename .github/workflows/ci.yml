@@ -123,3 +123,35 @@ jobs:
         # regression BEFORE it breaks the next `cargo publish`, now that we ship
         # releases. (The workspace build/test gates cover the in-tree compile.)
         run: cargo package --workspace
+
+  # A declared `rust-version` is a promise to consumers; unexercised, it is worse
+  # than none (a consumer on the floor reads it as tested). This job builds under
+  # EXACTLY the declared MSRV, read from the manifest so the promise and the gate
+  # cannot drift. `stable`/pinned gates above run on the current toolchain; this
+  # one runs on the floor.
+  msrv:
+    name: msrv (declared rust-version builds)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read declared MSRV from Cargo.toml
+        id: msrv
+        run: echo "v=$(grep -m1 '^rust-version' Cargo.toml | sed -E 's/.*\"([0-9.]+)\".*/\1/')" >> "$GITHUB_OUTPUT"
+
+      - name: Install the declared MSRV toolchain + bare-metal target
+        run: |
+          rustup toolchain install "${{ steps.msrv.outputs.v }}" --profile minimal
+          rustup target add "$NOSTD_TARGET" --toolchain "${{ steps.msrv.outputs.v }}"
+          rustc "+${{ steps.msrv.outputs.v }}" -V
+
+      # BUILD, not test: the MSRV promise is that a consumer on this rustc can
+      # COMPILE kiss-ref, not that its dev-only test suite runs. `+<version>` is
+      # explicit so it overrides the repo's `rust-toolchain.toml` pin.
+      - name: Build the whole workspace under the declared MSRV
+        run: cargo "+${{ steps.msrv.outputs.v }}" build --workspace
+
+      - name: no_std build of kiss-ref-core under the declared MSRV
+        run: cargo "+${{ steps.msrv.outputs.v }}" build -p kiss-ref-core --target "$NOSTD_TARGET"

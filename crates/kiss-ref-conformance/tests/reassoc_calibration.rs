@@ -816,20 +816,16 @@ fn matmul_reuses_sum_engine_over_realized_products() {
         );
     }
     // the narrow_tensor_lane K=8 golden: 64*1 x8, and the [128, eight 8s]*1 contraction.
-    let a8: Vec<E4m3> = core::iter::repeat(E4m3::from_f32(64.0)).take(8).collect();
-    let b8: Vec<E4m3> = core::iter::repeat(E4m3::from_f32(1.0)).take(8).collect();
+    let a8: Vec<E4m3> = core::iter::repeat_n(E4m3::from_f32(64.0), 8).collect();
+    let b8: Vec<E4m3> = core::iter::repeat_n(E4m3::from_f32(1.0), 8).collect();
     check::<E4m3, f32>(&a8, &b8);
     check::<E5m2, f32>(
-        &core::iter::repeat(E5m2::from_f32(64.0))
-            .take(8)
-            .collect::<Vec<_>>(),
-        &core::iter::repeat(E5m2::from_f32(1.0))
-            .take(8)
-            .collect::<Vec<_>>(),
+        &core::iter::repeat_n(E5m2::from_f32(64.0), 8).collect::<Vec<_>>(),
+        &core::iter::repeat_n(E5m2::from_f32(1.0), 8).collect::<Vec<_>>(),
     );
     let mut av = vec![E4m3::from_f32(128.0)];
-    av.extend(core::iter::repeat(E4m3::from_f32(8.0)).take(8));
-    let bv: Vec<E4m3> = core::iter::repeat(E4m3::from_f32(1.0)).take(9).collect();
+    av.extend(core::iter::repeat_n(E4m3::from_f32(8.0), 8));
+    let bv: Vec<E4m3> = core::iter::repeat_n(E4m3::from_f32(1.0), 9).collect();
     check::<E4m3, f32>(&av, &bv);
 }
 
@@ -840,7 +836,7 @@ fn scan_prefix_is_a_length_j_fold() {
     use kiss_ref_core::kernels::prefix_scan_ref;
     let inp: Vec<E4m3> = {
         let mut v = vec![E4m3::from_f32(128.0)];
-        v.extend(core::iter::repeat(E4m3::from_f32(8.0)).take(8));
+        v.extend(core::iter::repeat_n(E4m3::from_f32(8.0), 8));
         v
     };
     let x = Tensor::from_vec(inp.clone(), &[inp.len()]).unwrap();

@@ -283,7 +283,7 @@ fn check_reduce_sum_stagnation<T: Narrow>(want: f32) {
     // 128 followed by eight 8s. Exact sum = 192, itself exactly representable in
     // EVERY lane (192 = 1.100b·2^7 — 2 mantissa bits).
     let mut v = vec![128.0f32];
-    v.extend(core::iter::repeat(8.0f32).take(8));
+    v.extend(core::iter::repeat_n(8.0f32, 8));
     assert_exact::<T>(192.0);
     let x: Tensor<T> = tn(&v, &[9]);
     let r = reduce(&x.view(), Monoid::Sum, &[0])
@@ -338,7 +338,7 @@ fn narrow_reduce_f32_accumulator_recovers_the_true_sum() {
     // exists to make conformant-and-bounded.
     fn f32acc<T: Narrow>() {
         let mut v = vec![128.0f32];
-        v.extend(core::iter::repeat(8.0f32).take(8));
+        v.extend(core::iter::repeat_n(8.0f32, 8));
         let x: Tensor<T> = tn(&v, &[9]);
         let r = reduce_ref::<T>(&x.view(), Monoid::Sum, &[0], Dtype::F32)
             .unwrap_or_else(|e| panic!("[{}] reduce_ref f32: {e:?}", T::NAME));
@@ -391,7 +391,7 @@ fn narrow_matmul_f32_accumulator() {
 
     fn contract<T: Narrow>() {
         let mut av = vec![128.0f32];
-        av.extend(core::iter::repeat(8.0f32).take(8));
+        av.extend(core::iter::repeat_n(8.0f32, 8));
         let a: Tensor<T> = tn(&av, &[1, 9]);
         let b: Tensor<T> = tn(&[1.0; 9], &[9, 1]);
         let r = matmul_ref::<T>(&a.view(), &b.view(), Dtype::F32)
@@ -411,7 +411,7 @@ fn narrow_reduce_cross_storage_f16_accumulator() {
     // narrow 192 → e5m2 = 192). Exercises the legality set (e5m2 → f16 admitted:
     // f16 subsumes e5m2, exp 5≥5, mant 10≥2).
     let mut v = vec![128.0f32];
-    v.extend(core::iter::repeat(8.0f32).take(8));
+    v.extend(core::iter::repeat_n(8.0f32, 8));
     let x: Tensor<E5m2> = tn(&v, &[9]);
     let r = reduce_ref::<E5m2>(&x.view(), Monoid::Sum, &[0], Dtype::F16)
         .expect("e5m2 storage / f16 accumulator");
