@@ -6,6 +6,11 @@ version.workspace      = true
 license.workspace      = true
 repository.workspace   = true
 rust-version.workspace = true
+# Dev-only: the coverage gate + conformance corpus, never a released crate. The
+# published unit is exactly kiss-classify-vocab, kiss-ops-vocab, kiss-ref-core.
+# `publish = false` makes that UNCONSTRUCTIBLE rather than remembered — a
+# `cargo publish --workspace` (or a stray publish) cannot push this to crates.io.
+publish      = false
 
 [dependencies]
 kiss-classify-vocab = { workspace = true }
