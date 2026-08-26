@@ -46,9 +46,10 @@ fn hex(bytes: &[u8]) -> String {
 
 macro_rules! gen_dtype {
     ($name:expr, $T:ty, $uint:ty, $finite:expr, $inf:expr, $qa:expr, $qb:expr, $sx:expr, $tc:ident, $rows:ident) => {{
-        // signed NaN in `a`, in `b`, both-distinct, sNaN both positions,
-        // sNaN-vs-qNaN (catches a quieted moved sNaN), and NaN-vs-inf both
-        // positions (inf is not NaN, so the second cmp_ne branch differs).
+        // quiet NaN (qNaN) in `a`, in `b`, both-distinct; signaling NaN (sNaN)
+        // in both positions; sNaN-vs-qNaN (catches a quieted moved sNaN); and
+        // NaN-vs-inf both positions (inf is not NaN, so the second cmp_ne branch
+        // differs).
         let cases: [Case; 8] = [
             Case { tags: r#"["nan","qnan","pos-a"]"#,                              a: $qa,     an: true,  b: $finite, bn: false },
             Case { tags: r#"["nan","qnan","pos-b"]"#,                              a: $finite, an: false, b: $qb,     bn: true  },
