@@ -65,7 +65,9 @@ macro_rules! gen_dtype {
             // (no finite-ordering branch is ever reached).
             assert!(c.an || c.bn, "{}: case a=0x{:X} b=0x{:X} has no NaN operand", $name, c.a, c.b);
             let mut max_out = 0u64;
+            let mut min_out = 0u64;
             let mut fmax_out = 0u64;
+            let mut fmin_out = 0u64;
             for (op_name, op, propagates) in OPS.iter() {
                 let got: $uint = eval_op::<$T>(
                     *op,
@@ -87,11 +89,12 @@ macro_rules! gen_dtype {
                     "{} {}: a=0x{:X} b=0x{:X} — eval_op diverged from the decomposition rule",
                     $name, op_name, c.a, c.b
                 );
-                if *op_name == "max_prop" {
-                    max_out = got as u64;
-                }
-                if *op_name == "fmax_ieee" {
-                    fmax_out = got as u64;
+                match *op_name {
+                    "max_prop" => max_out = got as u64,
+                    "min_prop" => min_out = got as u64,
+                    "fmax_ieee" => fmax_out = got as u64,
+                    "fmin_ieee" => fmin_out = got as u64,
+                    _ => {}
                 }
                 $tc += 1;
                 let a_bytes = hex(&(c.a as $uint).to_be_bytes());
@@ -107,6 +110,24 @@ macro_rules! gen_dtype {
                 max_out, fmax_out,
                 "{}: max_prop and fmax_ieee agree on a=0x{:X} b=0x{:X} — case does not discriminate",
                 $name, c.a, c.b
+            );
+            // SCOPE STATEMENT (KISS #333's lesson — say which PAIRS a corpus
+            // separates, not how many ops it names). This file separates
+            // propagate from suppress; it is BLIND to max-from-min BY
+            // CONSTRUCTION: a NaN row short-circuits at the `cmp_ne` guards and
+            // never reaches the `cmp_ge`/`cmp_le` branch that is the only
+            // difference between max_prop and min_prop. Asserted so the blindness
+            // stays deliberate — max-from-min needs a finite-ordering vector,
+            // which does not belong in a NaN file (KISS #333, not this file).
+            assert_eq!(
+                max_out, min_out,
+                "{}: max_prop != min_prop on a NaN row — this file cannot separate them; something changed",
+                $name
+            );
+            assert_eq!(
+                fmax_out, fmin_out,
+                "{}: fmax_ieee != fmin_ieee on a NaN row — unexpected",
+                $name
             );
         }
     }};
@@ -147,7 +168,7 @@ fn minmax_nan_corpus_generate_and_guard() {
     gen_dtype!("bf16", bf16, u16, 0x3F80u64, 0x7F80u64, 0x7FC1u64, 0x7FD2u64, 0x7F81u64, tc, rows);
 
     let json = format!(
-        "{{\n  \"schema\": \"kiss-oracle-vectors-v1.json\",\n  \"kiss_substandard\": \"OPS\",\n  \"schema_version\": 1,\n  \"spec_clause\": \"KISS-CONFORM-6.5-0008\",\n  \"generator\": \"hand-drafted by kiss-ref; cosigned kiss-ref + Baracuda (ThinkersJournal/KISS#329)\",\n  \"number_of_vectors\": {},\n  \"byte_order\": \"hex is the value's bytes most-significant first, left to right\",\n  \"provenance_note\": \"non-normative: every cell is decomposition-traced by kiss-ref's eval_op over the §6.13 select-decompositions. A minmax NaN is a MOVED select output, so KISS-CONFORM-6.8-0010(a) pins it exact-byte, payload included; propagate ops return the NaN operand's bytes, suppress ops the other operand's. Both-NaN rows carry two distinct payloads so max_prop (returns a) and fmax_ieee (returns b) differ by bits. sNaN rows verify a moved sNaN is not quieted (host: x86 SSE2 preserves it).\",\n  \"vectors\": [\n{}\n  ]\n}}",
+        "{{\n  \"schema\": \"kiss-oracle-vectors-v1.json\",\n  \"kiss_substandard\": \"OPS\",\n  \"schema_version\": 1,\n  \"spec_clause\": \"KISS-CONFORM-6.5-0008\",\n  \"generator\": \"hand-drafted by kiss-ref; cosigned kiss-ref + Baracuda (ThinkersJournal/KISS#329)\",\n  \"number_of_vectors\": {},\n  \"byte_order\": \"hex is the value's bytes most-significant first, left to right\",\n  \"provenance_note\": \"non-normative: every cell is decomposition-traced by kiss-ref's eval_op over the §6.13 select-decompositions. A minmax NaN is a MOVED select output, so KISS-CONFORM-6.8-0010(a) pins it exact-byte, payload included; propagate ops return the NaN operand's bytes, suppress ops the other operand's. Both-NaN rows carry two distinct payloads so max_prop (returns a) and fmax_ieee (returns b) differ by bits. sNaN rows verify a moved sNaN is not quieted (host: x86 SSE2 preserves it). Discrimination scope (KISS #333): these vectors separate propagate (max_prop/min_prop) from suppress (fmax_ieee/fmin_ieee) but do NOT separate max from min: every NaN row short-circuits before the cmp_ge/cmp_le branch, so max_prop==min_prop and fmax_ieee==fmin_ieee on all 96. Separating max from min needs a finite-ordering vector, which does not belong in a NaN file.\",\n  \"vectors\": [\n{}\n  ]\n}}",
         tc,
         rows.join(",\n")
     );
