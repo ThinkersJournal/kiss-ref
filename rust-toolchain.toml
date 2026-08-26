@@ -1,0 +1,10 @@
+# Pinned per the portfolio-wide toolchain ruling (2026-08-21): an explicit
+# version, never the moving `stable` alias — two machines' `stable` differ, and
+# a repo at rest cannot otherwise discover the compiler moved underneath it.
+# kiss-ref's "fp is not rustc-dependent" contract is OBSERVED to hold across
+# 1.97.1 and 1.98.0 (differential suite bit-identical, 2026-08-21); the pin makes
+# 1.98.0 — one of that observed pair — the compiler every run actually uses.
+[toolchain]
+channel = "1.98.0"
+components = ["rustfmt", "clippy"]
+targets = ["thumbv7em-none-eabi"]

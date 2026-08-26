@@ -186,6 +186,17 @@ versions can later serve only as a refined fast lane.
   (§6.2-0009); the reference evaluates exactly that (with the §6.13-0003 overflow-safe refinements
   where the spec marks them MUST, e.g. `tanh`/`softplus`).
 
+**Compiler-independence is observed, not just constructed.** The exact ops are bit-determined by IEEE
+754 and the transcendentals are pinned to the `libm` *crate* (a versioned dependency, not the
+compiler), so the reference's numbers should not depend on the Rust compiler. This is *measured*, not
+merely intended: the full deterministic differential suite is **bit-identical across rustc 1.97.1 and
+1.98.0** (22 binaries, 371 tests, byte-identical per-binary results, 2026-08-21) — the exact-byte cells
+match the same goldens under both compilers, the ULP cells stay within bound under both. The toolchain
+is pinned (`rust-toolchain.toml`) so every run uses a named compiler rather than a moving `stable`
+alias, and a version bump re-runs this check. (Residual the check does *not* cover: cross-**target**
+excess precision, e.g. 32-bit x87, is a target property rather than a compiler-version one, and is out
+of scope for a two-toolchain run on a single SSE2 host.)
+
 ## Execution route (Fuel's "it always works" floor)
 
 Because the reference is a total cover, Fuel can adopt it not only at the verify seam but as a
