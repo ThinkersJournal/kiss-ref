@@ -8,7 +8,7 @@
 //! which evaluates the §6.13 reference decomposition (`select(cmp_ne(a,a), …)`),
 //! not a native `max`. A minmax NaN output is a MOVED `select` value, so per
 //! **KISS-CONFORM-6.8-0010(a)** it compares **exact-byte, payload included** —
-//! this file is all `exact-byte`, and the both-NaN rows discriminate by carrying
+//! this file is all `exact-byte`, and both-NaN rows discriminate by carrying
 //! two DISTINCT payloads (max_prop returns a's bits, fmax_ieee returns b's).
 //!
 //! This test IS the permanent guard: it asserts eval_op matches an INDEPENDENT
@@ -74,7 +74,12 @@ macro_rules! gen_dtype {
                     *op,
                     &[<$T>::from_bits(c.a as $uint), <$T>::from_bits(c.b as $uint)],
                 )
-                .unwrap()
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "{} {}: a=0x{:X} b=0x{:X} — eval_op failed: {:?}",
+                        $name, op_name, c.a, c.b, e
+                    )
+                })
                 .to_bits();
                 // INDEPENDENT rule (>=1 operand is NaN in every case here):
                 // propagate -> the NaN operand (a first); suppress -> the OTHER.
@@ -169,7 +174,7 @@ fn minmax_nan_corpus_generate_and_guard() {
     gen_dtype!("bf16", bf16, u16, 0x3F80u64, 0x7F80u64, 0x7FC1u64, 0x7FD2u64, 0x7F81u64, tc, rows);
 
     let json = format!(
-        "{{\n  \"schema\": \"kiss-oracle-vectors-v1.json\",\n  \"kiss_substandard\": \"OPS\",\n  \"schema_version\": 1,\n  \"spec_clause\": \"KISS-CONFORM-6.5-0008\",\n  \"generator\": \"hand-drafted by kiss-ref; cosigned kiss-ref + Baracuda (ThinkersJournal/KISS#329)\",\n  \"number_of_vectors\": {},\n  \"byte_order\": \"hex is the value's bytes most-significant first, left to right\",\n  \"provenance_note\": \"non-normative: every cell is decomposition-traced by kiss-ref's eval_op over the §6.13 select-decompositions. A minmax NaN is a MOVED select output, so KISS-CONFORM-6.8-0010(a) pins it exact-byte, payload included; propagate ops return the NaN operand's bytes, suppress ops the other operand's. Both-NaN rows carry two distinct payloads so max_prop (returns a) and fmax_ieee (returns b) differ by bits. sNaN rows verify a moved sNaN is not quieted (host: x86 SSE2 preserves it). Discrimination scope (KISS #333): these vectors separate propagate (max_prop/min_prop) from suppress (fmax_ieee/fmin_ieee) but do NOT separate max from min: every NaN row short-circuits before the cmp_ge/cmp_le branch, so max_prop==min_prop and fmax_ieee==fmin_ieee on all 96. Separating max from min needs a finite-ordering vector, which does not belong in a NaN file.\",\n  \"vectors\": [\n{}\n  ]\n}}",
+        "{{\n  \"schema\": \"kiss-oracle-vectors-v1.json\",\n  \"kiss_substandard\": \"OPS\",\n  \"schema_version\": 1,\n  \"spec_clause\": \"KISS-CONFORM-6.5-0008\",\n  \"generator\": \"hand-drafted by kiss-ref; cosigned kiss-ref + Baracuda (ThinkersJournal/KISS#329)\",\n  \"number_of_vectors\": {},\n  \"byte_order\": \"hex is the value's bytes most-significant first, left to right\",\n  \"provenance_note\": \"non-normative: every cell is decomposition-traced by kiss-ref's eval_op over the §6.13 select-decompositions. A minmax NaN is a MOVED select output, so KISS-CONFORM-6.8-0010(a) pins it exact-byte, payload included; propagate ops return the NaN operand's bytes, suppress ops the other operand's. Both-NaN rows carry two distinct payloads so max_prop (returns a) and fmax_ieee (returns b) differ by bits. sNaN rows verify a moved sNaN is not quieted. Moved-payload preservation under §6.8-0010(a): (1) host x86 SSE2 — kiss-ref's guard exercises all 96 rows (4 ops x 3 dtypes x 8 cases) and asserts bit-exact preservation. (2) CUDA sm_89 (RTX 4070 Laptop, CUDA 13.3, nvcc -O3), measured by Baracuda DIRECTLY on the max_prop select-move (sNaN 0x7F801234->0x7F801234, qNaN 0x7FC01234->0x7FC01234), SASS-verified as a select MOVE not a folded min/max (PTX setp.nan.f32 + selp.f32 with no max.f32; SASS FSETP.NAN.AND + @!P1 FSEL, FMNMX count 0 — greppable at ciresnave/baracuda commit 38554cbf569648d6c9315b2e26312c64ba614b89, docs/measurements/kiss-329-cuda-nan-payload/), with an arithmetic control a+b canonicalizing to 0x7FFFFFFF so the exact-byte path is falsifiable. min_prop/fmax_ieee/fmin_ieee move the NaN through the IDENTICAL outer select, differing only in propagate-vs-suppress and the finite-ordering cmp_ge/cmp_le branch (neither touches the moved NaN's bytes), so the CUDA measurement covers their moved-NaN payload by construction, the direct SASS being the max_prop kernel. CUDA scope is a point measurement: exactly sm_89 / CUDA 13.3 / -O3 / the select-decomposition op-shape, NOT a general claim that CUDA preserves NaN payloads. Discrimination scope (KISS #333): these vectors separate propagate (max_prop/min_prop) from suppress (fmax_ieee/fmin_ieee) but do NOT separate max from min: every NaN row short-circuits before the cmp_ge/cmp_le branch, so max_prop==min_prop and fmax_ieee==fmin_ieee on all 96. Separating max from min needs a finite-ordering vector, which does not belong in a NaN file.\",\n  \"vectors\": [\n{}\n  ]\n}}",
         tc,
         rows.join(",\n")
     );
