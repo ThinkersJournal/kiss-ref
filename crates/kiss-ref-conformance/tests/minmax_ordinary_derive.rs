@@ -53,12 +53,14 @@ fn minmax_ordinary_derive_and_orient() {
             let want = if *larger_family { larger } else { smaller };
 
             let got_f32 = eval_op::<f32>(*op, &[a as f32, b as f32])
-                .unwrap()
+                .unwrap_or_else(|e| panic!("{name} f32 {dir}: eval_op failed: {e:?}"))
                 .to_bits();
-            let got_f64 = eval_op::<f64>(*op, &[a, b]).unwrap().to_bits();
+            let got_f64 = eval_op::<f64>(*op, &[a, b])
+                .unwrap_or_else(|e| panic!("{name} f64 {dir}: eval_op failed: {e:?}"))
+                .to_bits();
             let got_bf16 =
                 eval_op::<bf16>(*op, &[bf16::from_f32(a as f32), bf16::from_f32(b as f32)])
-                    .unwrap()
+                    .unwrap_or_else(|e| panic!("{name} bf16 {dir}: eval_op failed: {e:?}"))
                     .to_bits();
 
             // eval_op (decomposition) must match the native-value orientation on
