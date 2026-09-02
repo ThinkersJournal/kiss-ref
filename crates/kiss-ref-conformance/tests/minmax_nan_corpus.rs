@@ -13,7 +13,12 @@
 //!
 //! This test IS the permanent guard: it asserts eval_op matches an INDEPENDENT
 //! propagate/suppress rule on every row, and that max_prop and fmax_ieee differ
-//! (the swap-test) on every case. Run with `--nocapture` to emit the JSON.
+//! (the swap-test) on every case. That swap-test is also TALLIED and emitted in
+//! the envelope as `prop_vs_ieee_discrimination` (24/24 dtype×case), so a
+//! consumer (Fuel #GAP-236) reads the discrimination count as an assertion made
+//! AT THE SOURCE rather than re-deriving it — and a downstream re-derivation
+//! that disagrees with the published number is then a visible finding. Run with
+//! `--nocapture` to emit the JSON.
 
 use half::bf16;
 use kiss_ops_vocab::Op;
@@ -45,7 +50,7 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 macro_rules! gen_dtype {
-    ($name:expr, $T:ty, $uint:ty, $finite:expr, $inf:expr, $qa:expr, $qb:expr, $sx:expr, $tc:ident, $rows:ident) => {{
+    ($name:expr, $T:ty, $uint:ty, $finite:expr, $inf:expr, $qa:expr, $qb:expr, $sx:expr, $tc:ident, $rows:ident, $disc:ident, $pairs:ident) => {{
         // quiet NaN (qNaN) in `a`, in `b`, both-distinct; signaling NaN (sNaN)
         // in both positions; sNaN-vs-qNaN (catches a quieted moved sNaN); and
         // NaN-vs-inf both positions (inf is not NaN, so the second cmp_ne branch
@@ -112,6 +117,15 @@ macro_rules! gen_dtype {
                 ));
             }
             // the swap-test, structurally: every case discriminates propagate vs suppress.
+            // COUNTED as an emitted measurement (KISS #329 assert+count, so Fuel's
+            // GAP-236 reads the discrimination instead of re-deriving it): one
+            // (dtype, case) pair, discriminating iff propagate != suppress. The
+            // assert below is the hard guard; $disc/$pairs are the same fact tallied
+            // for the envelope, so the emitted count cannot silently drift from the test.
+            $pairs += 1;
+            if max_out != fmax_out {
+                $disc += 1;
+            }
             assert_ne!(
                 max_out, fmax_out,
                 "{}: max_prop and fmax_ieee agree on a=0x{:X} b=0x{:X} — case does not discriminate",
@@ -142,6 +156,10 @@ macro_rules! gen_dtype {
 #[test]
 fn minmax_nan_corpus_generate_and_guard() {
     let mut tc = 0u32;
+    // prop-vs-ieee discrimination, tallied by the guard for the emitted envelope:
+    // `disc` = (dtype, case) pairs where propagate != suppress; `pairs` = all of them.
+    let mut disc = 0u32;
+    let mut pairs = 0u32;
     let mut rows: Vec<String> = Vec::new();
 
     // f32: 1.0=3F800000, +inf=7F800000, qNaN payloads A/B, sNaN (quiet bit clear).
@@ -155,7 +173,9 @@ fn minmax_nan_corpus_generate_and_guard() {
         0x7FC0_5678u64,
         0x7F80_1234u64,
         tc,
-        rows
+        rows,
+        disc,
+        pairs
     );
     // f64.
     gen_dtype!(
@@ -168,16 +188,31 @@ fn minmax_nan_corpus_generate_and_guard() {
         0x7FF8_0000_0000_5678u64,
         0x7FF0_0000_0000_1234u64,
         tc,
-        rows
+        rows,
+        disc,
+        pairs
     );
     // bf16 (top 16 bits of f32): 1.0=3F80, +inf=7F80, qNaN A/B, sNaN.
-    gen_dtype!("bf16", bf16, u16, 0x3F80u64, 0x7F80u64, 0x7FC1u64, 0x7FD2u64, 0x7F81u64, tc, rows);
+    gen_dtype!(
+        "bf16", bf16, u16, 0x3F80u64, 0x7F80u64, 0x7FC1u64, 0x7FD2u64, 0x7F81u64, tc, rows, disc,
+        pairs
+    );
 
     let json = format!(
-        "{{\n  \"schema\": \"kiss-oracle-vectors-v1.json\",\n  \"kiss_substandard\": \"OPS\",\n  \"schema_version\": 1,\n  \"spec_clause\": \"KISS-CONFORM-6.5-0008\",\n  \"generator\": \"hand-drafted by kiss-ref; cosigned kiss-ref + Baracuda (ThinkersJournal/KISS#329)\",\n  \"number_of_vectors\": {},\n  \"byte_order\": \"hex is the value's bytes most-significant first, left to right\",\n  \"ulp_metric\": \"integer totalOrder distance (lib.rs::ulp_distance_*); exact-byte cells compare raw bits, ulp_bound 0\",\n  \"provenance_note\": \"non-normative: every cell is decomposition-traced by kiss-ref's eval_op over the §6.13 select-decompositions. A minmax NaN is a MOVED select output, so KISS-CONFORM-6.8-0010(a) pins it exact-byte, payload included; propagate ops return the NaN operand's bytes, suppress ops the other operand's. Both-NaN rows carry two distinct payloads so max_prop (returns a) and fmax_ieee (returns b) differ by bits. sNaN rows verify a moved sNaN is not quieted. Moved-payload preservation under §6.8-0010(a): (1) host x86 SSE2 — kiss-ref's guard exercises all 96 rows (4 ops x 3 dtypes x 8 cases) and asserts bit-exact preservation. (2) CUDA sm_89 (RTX 4070 Laptop, CUDA 13.3, nvcc -O3), measured by Baracuda DIRECTLY on the max_prop AND min_prop select-moves (both arms preserve: sNaN 0x7F801234->0x7F801234, qNaN 0x7FC01234->0x7FC01234), SASS-verified as select MOVES not folded min/max (PTX two selp.f32 with no max.f32/min.f32; SASS FSEL count 2, FMNMX count 0 — the a!=a/b!=b tests are CSE'd so FSETP.NAN is 2 not 4; greppable at ciresnave/baracuda commit e31f47548af9281dddbf199181147635b1a653aa, docs/measurements/kiss-329-cuda-nan-payload/), with an arithmetic control a+b canonicalizing to 0x7FFFFFFF so the exact-byte path is falsifiable. fmax_ieee/fmin_ieee (the IEEE NaN-suppressing ops, a different op class whose moved-NaN case is both-NaN not NaN-vs-finite, and which Baracuda did NOT measure) move the NaN through the IDENTICAL outer select, so their moved-NaN payload is covered by construction; min_prop's direct measurement also corroborates that construction argument on the propagating arm. CUDA scope is a point measurement: exactly sm_89 / CUDA 13.3 / -O3 / the select-decomposition op-shape, NOT a general claim that CUDA preserves NaN payloads. Discrimination scope (KISS #333): these vectors separate propagate (max_prop/min_prop) from suppress (fmax_ieee/fmin_ieee) but do NOT separate max from min: every NaN row short-circuits before the cmp_ge/cmp_le branch, so max_prop==min_prop and fmax_ieee==fmin_ieee on all 96. Separating max from min needs a finite-ordering vector, which does not belong in a NaN file.\",\n  \"vectors\": [\n{}\n  ]\n}}",
+        "{{\n  \"schema\": \"kiss-oracle-vectors-v1.json\",\n  \"kiss_substandard\": \"OPS\",\n  \"schema_version\": 1,\n  \"spec_clause\": \"KISS-CONFORM-6.5-0008\",\n  \"generator\": \"hand-drafted by kiss-ref; cosigned kiss-ref + Baracuda (ThinkersJournal/KISS#329)\",\n  \"number_of_vectors\": {},\n  \"prop_vs_ieee_discrimination\": {{\"discriminating\": {}, \"total\": {}, \"unit\": \"(dtype,case)\", \"rule\": \"max_prop/min_prop (propagate: return the NaN operand) differ bit-for-bit from fmax_ieee/fmin_ieee (suppress: return the other operand) on every NaN (dtype,case). Generator-asserted (assert_ne), not inferred from the file existing. Descriptive provenance for a consumer (Fuel #GAP-236) to check against; the KISS §6.5-0017 reader ignores it. KISS #333 lesson: this counts which PAIR-CLASS the vectors discriminate (propagate vs suppress), not how many ops they name.\"}},\n  \"byte_order\": \"hex is the value's bytes most-significant first, left to right\",\n  \"ulp_metric\": \"integer totalOrder distance (lib.rs::ulp_distance_*); exact-byte cells compare raw bits, ulp_bound 0\",\n  \"provenance_note\": \"non-normative: every cell is decomposition-traced by kiss-ref's eval_op over the §6.13 select-decompositions. A minmax NaN is a MOVED select output, so KISS-CONFORM-6.8-0010(a) pins it exact-byte, payload included; propagate ops return the NaN operand's bytes, suppress ops the other operand's. Both-NaN rows carry two distinct payloads so max_prop (returns a) and fmax_ieee (returns b) differ by bits. sNaN rows verify a moved sNaN is not quieted. Moved-payload preservation under §6.8-0010(a): (1) host x86 SSE2 — kiss-ref's guard exercises all 96 rows (4 ops x 3 dtypes x 8 cases) and asserts bit-exact preservation. (2) CUDA sm_89 (RTX 4070 Laptop, CUDA 13.3, nvcc -O3), measured by Baracuda DIRECTLY on the max_prop AND min_prop select-moves (both arms preserve: sNaN 0x7F801234->0x7F801234, qNaN 0x7FC01234->0x7FC01234), SASS-verified as select MOVES not folded min/max (PTX two selp.f32 with no max.f32/min.f32; SASS FSEL count 2, FMNMX count 0 — the a!=a/b!=b tests are CSE'd so FSETP.NAN is 2 not 4; greppable at ciresnave/baracuda commit e31f47548af9281dddbf199181147635b1a653aa, docs/measurements/kiss-329-cuda-nan-payload/), with an arithmetic control a+b canonicalizing to 0x7FFFFFFF so the exact-byte path is falsifiable. fmax_ieee/fmin_ieee (the IEEE NaN-suppressing ops, a different op class whose moved-NaN case is both-NaN not NaN-vs-finite, and which Baracuda did NOT measure) move the NaN through the IDENTICAL outer select, so their moved-NaN payload is covered by construction; min_prop's direct measurement also corroborates that construction argument on the propagating arm. CUDA scope is a point measurement: exactly sm_89 / CUDA 13.3 / -O3 / the select-decomposition op-shape, NOT a general claim that CUDA preserves NaN payloads. Discrimination scope (KISS #333): these vectors separate propagate (max_prop/min_prop) from suppress (fmax_ieee/fmin_ieee) but do NOT separate max from min: every NaN row short-circuits before the cmp_ge/cmp_le branch, so max_prop==min_prop and fmax_ieee==fmin_ieee on all 96. Separating max from min needs a finite-ordering vector, which does not belong in a NaN file.\",\n  \"vectors\": [\n{}\n  ]\n}}",
         tc,
+        disc,
+        pairs,
         rows.join(",\n")
     );
     println!("KISS329_JSON_BEGIN\n{json}\nKISS329_JSON_END");
     assert_eq!(tc, 96, "expected 8 cases x 4 ops x 3 dtypes = 96 vectors");
+    assert_eq!(
+        pairs, 24,
+        "expected 3 dtypes x 8 NaN cases = 24 (dtype,case) pairs"
+    );
+    assert_eq!(
+        disc, pairs,
+        "every (dtype,case) pair must discriminate propagate from suppress — emitted count must equal the guard's"
+    );
 }
