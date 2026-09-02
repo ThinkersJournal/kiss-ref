@@ -355,21 +355,11 @@ mod tests {
         // abs/neg are family=arithmetic yet payload-determining; copysign is raw-bit
         // by KISS-OPS-6.9-0002 — the counterexamples that break an "arithmetic-free"
         // predicate and force a determinacy one.
+        #[rustfmt::skip]
         let determined = [
-            Op::Select,
-            Op::Copysign,
-            Op::Abs,
-            Op::Neg,
-            Op::Nextafter,
-            Op::Floor,
-            Op::Ceil,
-            Op::Trunc,
-            Op::RoundEven,
-            Op::MaxProp,
-            Op::MinProp,
-            Op::FmaxIeee,
-            Op::FminIeee,
-            Op::Relu,
+            Op::Select, Op::Copysign, Op::Abs, Op::Neg, Op::Nextafter, Op::Floor,
+            Op::Ceil, Op::Trunc, Op::RoundEven, Op::MaxProp, Op::MinProp,
+            Op::FmaxIeee, Op::FminIeee, Op::Relu,
         ];
         for op in determined {
             assert!(
@@ -382,27 +372,11 @@ mod tests {
         // COMPUTED — arithmetic or a transcendental MINTS the NaN payload per device
         // (the sm_89 `add`→0x7fffffff vs x86 0x7fc00000 witness), so Exact must stay
         // payload-blind. A flip of any of these to determined false-FAILS conformance.
+        #[rustfmt::skip]
         let computed = [
-            Op::Add,
-            Op::Sub,
-            Op::Mul,
-            Op::Div,
-            Op::Sqr,
-            Op::Recip,
-            Op::Exp,
-            Op::Log,
-            Op::Sin,
-            Op::Cos,
-            Op::Sqrt,
-            Op::Erf,
-            Op::Atan,
-            Op::Lgamma,
-            Op::Atan2,
-            Op::Tanh,
-            Op::Sigmoid,
-            Op::Gelu,
-            Op::Pow,
-            Op::Hypot,
+            Op::Add, Op::Sub, Op::Mul, Op::Div, Op::Sqr, Op::Recip, Op::Exp, Op::Log,
+            Op::Sin, Op::Cos, Op::Sqrt, Op::Erf, Op::Atan, Op::Lgamma, Op::Atan2,
+            Op::Tanh, Op::Sigmoid, Op::Gelu, Op::Pow, Op::Hypot,
         ];
         for op in computed {
             assert!(
@@ -420,18 +394,11 @@ mod tests {
 
         // the composed-Expr analogue: an abs node does NOT poison a region, an add
         // node does (determined iff EVERY node is payload-determining).
-        assert!(expr_nan_payload_is_determined(
-            &parse("abs(neg(a))").unwrap()
-        ));
-        assert!(expr_nan_payload_is_determined(
-            &parse("select(cmp_ne(a, a), a, b)").unwrap()
-        ));
-        assert!(!expr_nan_payload_is_determined(
-            &parse("add(a, b)").unwrap()
-        ));
-        assert!(!expr_nan_payload_is_determined(
-            &parse("select(cmp_ge(a, b), add(a, b), a)").unwrap()
-        ));
+        let det = |s| expr_nan_payload_is_determined(&parse(s).unwrap());
+        assert!(det("abs(neg(a))"));
+        assert!(det("select(cmp_ne(a, a), a, b)"));
+        assert!(!det("add(a, b)"));
+        assert!(!det("select(cmp_ge(a, b), add(a, b), a)"));
     }
 
     /// The exact §6.3-0001 primitive-floor token set.
