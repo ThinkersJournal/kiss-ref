@@ -18,6 +18,17 @@
 //! match (class equality), while ±0 stays 1 ULP apart — that asymmetry is what
 //! keeps the metric NaN-portable without losing signed-zero sensitivity (the
 //! `max_prop` tie-bug catcher).
+//!
+//! **`Tolerance::Exact` is op-aware on NaN (§6.8-0010).** The both-NaN=0 rule
+//! above is the COMPUTED-NaN convention — correct for arithmetic, whose payload
+//! is architectural. But a MOVED NaN — a `select` / minmax / `copysign` / `abs`
+//! / `neg` output (KISS-OPS-6.16-0009: an arithmetic-free decomposition moves,
+//! it does not compute) — has a payload DETERMINED by the inputs, so §6.8-0010(a)
+//! binds it exact-byte. So `Exact` bit-compares the determined-NaN ops and keeps
+//! the payload-blind metric for the computed ones, selecting on
+//! [`kiss_ops_vocab::Op::nan_payload_is_determined`]. `ulp_distance_*` itself is
+//! unchanged — it stays the computed-NaN / ULP metric; only the `Exact` decision
+//! gained the op branch.
 
 extern crate alloc;
 use alloc::vec::Vec;
@@ -79,8 +90,16 @@ pub fn ulp_distance_f32(a: f32, b: f32) -> u32 {
 /// A comparison tolerance for a differential run.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tolerance {
-    /// Bitwise-identical (0 ULP) — for the exact ops (integer, comparison,
-    /// `select`, rounding, signed-zero pins).
+    /// The exact-comparison tolerance. A finite result compares bitwise-identical
+    /// (0 ULP). A **NaN** result compares **op-aware, per §6.8-0010**: a
+    /// determined-NaN op (a move / bit-transform — `select`, the minmax family,
+    /// `abs`/`neg`/`copysign`) binds the payload AND sign exact-byte
+    /// (§6.8-0010(a)), while a computed-NaN op (arithmetic / transcendental) stays
+    /// payload-blind (the metric's any-NaN=0), because arithmetic re-mints the
+    /// payload per device. The seam selects the arm from the op's (or region's)
+    /// [`kiss_ops_vocab::Op::nan_payload_is_determined`], so `Exact` is the honest
+    /// comparison for BOTH exact-op populations — the integer, comparison,
+    /// `select`, rounding, and signed-zero pins included.
     Exact,
     /// Within `n` ULP — for the declared-ULP transcendentals (§6.8). Use the
     /// op's [`kiss_ops_vocab::Op::ulp_ceiling`] as the bound.
@@ -128,6 +147,7 @@ pub fn diff_f64(
     tol: Tolerance,
 ) -> Result<DiffReport, Error> {
     let reference = reference_f64(op, rows)?;
+    let determined = op.nan_payload_is_determined();
     if candidate.len() != reference.len() {
         return Err(Error::LengthMismatch {
             expected: reference.len(),
@@ -146,7 +166,17 @@ pub fn diff_f64(
             report.max_ulp = d;
         }
         let ok = match tol {
-            Tolerance::Exact => d == 0,
+            // §6.8-0010(a): a determined-NaN op (a move / bit-transform) compares
+            // exact-byte, payload+sign — so a wrong moved NaN payload fails even at
+            // 0 ULP. A computed-NaN op stays payload-blind (the metric's any-NaN=0),
+            // because arithmetic re-mints the payload per device (the module witness).
+            Tolerance::Exact => {
+                if determined {
+                    e.to_bits() == g.to_bits()
+                } else {
+                    d == 0
+                }
+            }
             Tolerance::Ulp(n) => d <= n,
         };
         if !ok {
@@ -168,6 +198,7 @@ pub fn diff_f32(
     tol: Tolerance,
 ) -> Result<DiffReport, Error> {
     let reference = reference_f32(op, rows)?;
+    let determined = op.nan_payload_is_determined();
     if candidate.len() != reference.len() {
         return Err(Error::LengthMismatch {
             expected: reference.len(),
@@ -186,7 +217,17 @@ pub fn diff_f32(
             report.max_ulp = d;
         }
         let ok = match tol {
-            Tolerance::Exact => d == 0,
+            // §6.8-0010(a): a determined-NaN op (a move / bit-transform) compares
+            // exact-byte, payload+sign — so a wrong moved NaN payload fails even at
+            // 0 ULP. A computed-NaN op stays payload-blind (the metric's any-NaN=0),
+            // because arithmetic re-mints the payload per device (the module witness).
+            Tolerance::Exact => {
+                if determined {
+                    e.to_bits() == g.to_bits()
+                } else {
+                    d == 0
+                }
+            }
             Tolerance::Ulp(n) => d <= n,
         };
         if !ok {
@@ -253,6 +294,7 @@ pub fn diff_expr(
     tol: Tolerance,
 ) -> Result<DiffReport, Error> {
     let reference = reference_expr(expr, rows)?;
+    let determined = kiss_ops_vocab::decomp::expr_nan_payload_is_determined(expr);
     if candidate.len() != reference.len() {
         return Err(Error::LengthMismatch {
             expected: reference.len(),
@@ -271,7 +313,17 @@ pub fn diff_expr(
             report.max_ulp = d;
         }
         let ok = match tol {
-            Tolerance::Exact => d == 0,
+            // §6.8-0010(a): a determined-NaN op (a move / bit-transform) compares
+            // exact-byte, payload+sign — so a wrong moved NaN payload fails even at
+            // 0 ULP. A computed-NaN op stays payload-blind (the metric's any-NaN=0),
+            // because arithmetic re-mints the payload per device (the module witness).
+            Tolerance::Exact => {
+                if determined {
+                    e.to_bits() == g.to_bits()
+                } else {
+                    d == 0
+                }
+            }
             Tolerance::Ulp(n) => d <= n,
         };
         if !ok {
@@ -301,6 +353,7 @@ pub fn diff_expr_f32(
     tol: Tolerance,
 ) -> Result<DiffReport, Error> {
     let reference = reference_expr_f32(expr, rows)?;
+    let determined = kiss_ops_vocab::decomp::expr_nan_payload_is_determined(expr);
     if candidate.len() != reference.len() {
         return Err(Error::LengthMismatch {
             expected: reference.len(),
@@ -319,7 +372,17 @@ pub fn diff_expr_f32(
             report.max_ulp = d;
         }
         let ok = match tol {
-            Tolerance::Exact => d == 0,
+            // §6.8-0010(a): a determined-NaN op (a move / bit-transform) compares
+            // exact-byte, payload+sign — so a wrong moved NaN payload fails even at
+            // 0 ULP. A computed-NaN op stays payload-blind (the metric's any-NaN=0),
+            // because arithmetic re-mints the payload per device (the module witness).
+            Tolerance::Exact => {
+                if determined {
+                    e.to_bits() == g.to_bits()
+                } else {
+                    d == 0
+                }
+            }
             Tolerance::Ulp(n) => d <= n,
         };
         if !ok {
@@ -372,6 +435,7 @@ macro_rules! narrow_diff {
             tol: Tolerance,
         ) -> Result<DiffReport, Error> {
             let reference = $refr(op, rows)?;
+            let determined = op.nan_payload_is_determined();
             if candidate.len() != reference.len() {
                 return Err(Error::LengthMismatch {
                     expected: reference.len(),
@@ -390,7 +454,16 @@ macro_rules! narrow_diff {
                     report.max_ulp = d;
                 }
                 let ok = match tol {
-                    Tolerance::Exact => d == 0,
+                    // §6.8-0010(a): determined-NaN ops compare exact-byte
+                    // (payload+sign); computed-NaN ops stay payload-blind. See the
+                    // scalar seam above.
+                    Tolerance::Exact => {
+                        if determined {
+                            e.to_bits() == g.to_bits()
+                        } else {
+                            d == 0
+                        }
+                    }
                     Tolerance::Ulp(n) => d <= n,
                 };
                 if !ok {
@@ -433,6 +506,7 @@ macro_rules! narrow_expr {
             tol: Tolerance,
         ) -> Result<DiffReport, Error> {
             let reference = $refr(expr, rows)?;
+            let determined = kiss_ops_vocab::decomp::expr_nan_payload_is_determined(expr);
             if candidate.len() != reference.len() {
                 return Err(Error::LengthMismatch {
                     expected: reference.len(),
@@ -451,7 +525,16 @@ macro_rules! narrow_expr {
                     report.max_ulp = d;
                 }
                 let ok = match tol {
-                    Tolerance::Exact => d == 0,
+                    // §6.8-0010(a): determined-NaN ops compare exact-byte
+                    // (payload+sign); computed-NaN ops stay payload-blind. See the
+                    // scalar seam above.
+                    Tolerance::Exact => {
+                        if determined {
+                            e.to_bits() == g.to_bits()
+                        } else {
+                            d == 0
+                        }
+                    }
                     Tolerance::Ulp(n) => d <= n,
                 };
                 if !ok {
@@ -521,6 +604,7 @@ macro_rules! fp8_diff {
             tol: Tolerance,
         ) -> Result<DiffReport, Error> {
             let reference = $refr(op, rows)?;
+            let determined = op.nan_payload_is_determined();
             if candidate.len() != reference.len() {
                 return Err(Error::LengthMismatch {
                     expected: reference.len(),
@@ -539,7 +623,16 @@ macro_rules! fp8_diff {
                     report.max_ulp = d;
                 }
                 let ok = match tol {
-                    Tolerance::Exact => d == 0,
+                    // §6.8-0010(a): determined-NaN ops compare exact-byte
+                    // (payload+sign); computed-NaN ops stay payload-blind. See the
+                    // scalar seam above.
+                    Tolerance::Exact => {
+                        if determined {
+                            e.to_bits() == g.to_bits()
+                        } else {
+                            d == 0
+                        }
+                    }
                     Tolerance::Ulp(n) => d <= n,
                 };
                 if !ok {
@@ -749,6 +842,71 @@ mod tests {
         assert!(!r.conforms());
         assert_eq!(r.mismatches, 1);
         assert_eq!(r.first_mismatch.unwrap().0, 1);
+    }
+
+    #[test]
+    fn exact_binds_a_determined_nan_payload_but_not_a_computed_one() {
+        // §6.8-0010(a): a determined-NaN op's output is a MOVED value, so Tolerance::
+        // Exact must bind payload+sign bit-for-bit — a wrong moved payload fails even
+        // at 0 ULP (this is a false-PASS under the old payload-blind Exact; the born-
+        // red for the fix). min_prop on two distinct-payload NaNs propagates operand a
+        // via a select-move.
+        let a = f32::from_bits(0x7FC0_1234); // qNaN, payload …1234
+        let b = f32::from_bits(0x7FC0_5678); // qNaN, payload …5678
+        let rows: [&[f32]; 1] = [&[a, b]];
+        let reference = reference_f32(Op::MinProp, &rows).unwrap();
+        assert_eq!(
+            reference[0].to_bits(),
+            0x7FC0_1234,
+            "min_prop moves operand a"
+        );
+
+        let wrong = [f32::from_bits(0x7FC0_FFFF)]; // a NaN, but the wrong payload
+        assert!(
+            !diff_f32(Op::MinProp, &rows, &wrong, Tolerance::Exact)
+                .unwrap()
+                .conforms(),
+            "a determined-NaN op must REJECT a wrong moved payload at Exact"
+        );
+        let right = [f32::from_bits(0x7FC0_1234)];
+        assert!(
+            diff_f32(Op::MinProp, &rows, &right, Tolerance::Exact)
+                .unwrap()
+                .conforms(),
+            "the correct moved payload conforms"
+        );
+
+        // COMPUTED contrast — the module doc's sm_89-vs-x86 witness: add(inf, -inf) is
+        // a COMPUTED NaN whose payload is architectural, so Exact stays payload-blind
+        // and a different-payload candidate still conforms. Bit-comparing HERE would
+        // false-FAIL a conformant implementation, which is why the fix is op-aware.
+        let crows: [&[f32]; 1] = [&[f32::INFINITY, f32::NEG_INFINITY]];
+        assert!(reference_f32(Op::Add, &crows).unwrap()[0].is_nan());
+        let other = [f32::from_bits(0x7FC0_ABCD)];
+        assert!(
+            diff_f32(Op::Add, &crows, &other, Tolerance::Exact)
+                .unwrap()
+                .conforms(),
+            "a computed-NaN op must stay payload-blind at Exact"
+        );
+
+        // the composed-Expr seam mirrors it: a select-region is determined, an
+        // add-region is computed (determined iff EVERY node is payload-determining).
+        use kiss_ops_vocab::decomp::parse;
+        let sel = parse("select(cmp_ne(a, a), a, b)").unwrap();
+        assert!(
+            !diff_expr_f32(&sel, &rows, &wrong, Tolerance::Exact)
+                .unwrap()
+                .conforms(),
+            "a determined select-region binds the moved payload"
+        );
+        let plus = parse("add(a, b)").unwrap();
+        assert!(
+            diff_expr_f32(&plus, &crows, &other, Tolerance::Exact)
+                .unwrap()
+                .conforms(),
+            "a computed add-region stays payload-blind"
+        );
     }
 
     #[test]

@@ -134,6 +134,29 @@ pub fn parse(src: &str) -> Result<Expr, ParseError> {
     Ok(e)
 }
 
+/// Whether any node in a decomposition expression MINTS (computes) a value — the
+/// walk behind [`Op::nan_payload_is_determined`]. Recurses through nested
+/// non-primitive [`Op::Apply`] nodes to their floor (via
+/// [`Op::nan_payload_mints`]), so e.g. a `recip` node expands to its `div` and is
+/// seen as minting rather than read as a leaf. `Input`/`Const` leaves mint
+/// nothing. Terminates because the §6.13 decomposition graph is acyclic and
+/// bottoms out at primitives.
+pub(crate) fn expr_mints(e: &Expr) -> bool {
+    match e {
+        Expr::Input(_) | Expr::Const(_) => false,
+        Expr::Apply(op, args) => op.nan_payload_mints() || args.iter().any(expr_mints),
+    }
+}
+
+/// Whether a NaN a composed expression emits is bit-**determined** by its inputs
+/// — the [`Op::nan_payload_is_determined`] analogue for a fused elementwise
+/// region ([`crate::decomp::Expr`]). Determined iff EVERY node is
+/// payload-determining: an `abs`/`select` node does not poison the region, an
+/// `add` node does.
+pub fn expr_nan_payload_is_determined(e: &Expr) -> bool {
+    !expr_mints(e)
+}
+
 struct Parser<'a> {
     s: &'a [u8],
     i: usize,

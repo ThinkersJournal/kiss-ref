@@ -272,11 +272,134 @@ impl Op {
     pub const fn is_complex_component_bridge(self) -> bool {
         matches!(self, Op::Cmake | Op::Cre | Op::Cim)
     }
+
+    /// Whether a NaN this op emits has a bit pattern **determined by the input
+    /// bits** — the predicate that selects an exact-byte comparison over a
+    /// payload-blind one for a `Tolerance::Exact` differential (KISS-CONFORM
+    /// §6.8-0010(a), the moved/determined arm, vs the §6.8-0010 main rule for a
+    /// computed NaN).
+    ///
+    /// Derived, per **KISS-OPS-6.16-0009** (an op whose §6.13 reference
+    /// decomposition contains no arithmetic computes nothing, so it can only MOVE
+    /// its operands): the payload is determined iff nothing in the op's evaluation
+    /// *mints* a value. A minting atom is an arithmetic primitive
+    /// (`add`/`sub`/`mul`/`div`) or a transcendental (a declared-ULP atom) — these
+    /// re-mint a NaN's payload per device (the sm_89-vs-x86 `add` witness).
+    /// Everything else — a raw-bit move/transform (`abs`/`neg`/`copysign`,
+    /// `select`, `nextafter`), a comparison, or a rounding atom — carries the
+    /// input bits through, so `expected` binds bit-exactly.
+    ///
+    /// **Determinacy, not "arithmetic-free family":** `abs`/`neg` are
+    /// `family = arithmetic` yet payload-determining bit-transforms (they clear /
+    /// flip the sign bit, payload untouched), and `copysign` is raw-bit by
+    /// KISS-OPS-6.9-0002. The predicate keys on whether the value is minted, not
+    /// on the family tag — a classifier keyed on "arithmetic-free" mis-files all
+    /// three.
+    ///
+    /// **Enforcement is partial (Convention 16(d), stated not discovered):** the
+    /// derivation classifies on whether the decomposition CONTAINS a minting atom,
+    /// not on whether the NaN PATH reaches it. An op whose NaN branch moved while
+    /// another branch computed would be conservatively classified payload-blind
+    /// (under-enforcing). No such op exists at the current op set, so the guard
+    /// test cannot pin that case — a future op is not in the pin.
+    ///
+    /// Meaningful for scalar-evaluable ops; the structural/tensor atoms never
+    /// reach the scalar differential seam (it errors before any comparator) and
+    /// are outside this predicate's domain.
+    pub fn nan_payload_is_determined(self) -> bool {
+        !self.nan_payload_mints()
+    }
+
+    /// Whether the op MINTS (computes) its output rather than moving it — the
+    /// inverse of [`Op::nan_payload_is_determined`]. `pub(crate)` because the
+    /// [`crate::decomp`] Expr walk recurses through it to expand nested
+    /// non-primitives to their floor.
+    pub(crate) fn nan_payload_mints(self) -> bool {
+        match self.reference_decomposition_src() {
+            // primitive floor atom: mints iff it is an arithmetic or transcendental
+            // atom. A move / bit-transform / comparison / rounding / bitwise atom
+            // does not. (The structural floor atoms are out of domain — see above.)
+            None => {
+                matches!(self, Op::Add | Op::Sub | Op::Mul | Op::Div)
+                    || self.ulp_ceiling().is_some()
+            }
+            // non-primitive: mints iff any node in its §6.13 decomposition mints,
+            // recursing into nested non-primitives. An unparseable BOUND
+            // decomposition is a build-time bug, not a runtime input; degrade to
+            // `true` (payload-blind — today's behaviour) rather than panic, so the
+            // never-panic differential seam holds and no conformant impl is newly
+            // failed.
+            Some(src) => crate::decomp::parse(src)
+                .map(|e| crate::decomp::expr_mints(&e))
+                .unwrap_or(true),
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- §6.8-0010(a) determinacy predicate (nan_payload_is_determined) --------
+    //
+    // Pins BOTH directions, per KISS-OPS-6.16-0009: a flip determined→computed
+    // under-enforces (false-PASS a wrong moved payload); a flip computed→determined
+    // false-FAILS a conformant impl (the diff.rs sm_89-vs-x86 `add` witness). A
+    // one-directional pin catches only the first.
+    #[test]
+    fn nan_payload_determinacy_pins_both_directions() {
+        use crate::decomp::{expr_nan_payload_is_determined, parse};
+
+        // DETERMINED — a NaN these emit is bit-fixed by the inputs (a move, or a
+        // deterministic bit-transform), so a Tolerance::Exact diff must bit-compare.
+        // abs/neg are family=arithmetic yet payload-determining; copysign is raw-bit
+        // by KISS-OPS-6.9-0002 — the counterexamples that break an "arithmetic-free"
+        // predicate and force a determinacy one.
+        #[rustfmt::skip]
+        let determined = [
+            Op::Select, Op::Copysign, Op::Abs, Op::Neg, Op::Nextafter, Op::Floor,
+            Op::Ceil, Op::Trunc, Op::RoundEven, Op::MaxProp, Op::MinProp,
+            Op::FmaxIeee, Op::FminIeee, Op::Relu,
+        ];
+        for op in determined {
+            assert!(
+                op.nan_payload_is_determined(),
+                "{} must be payload-determining (moved / bit-transform)",
+                op.token()
+            );
+        }
+
+        // COMPUTED — arithmetic or a transcendental MINTS the NaN payload per device
+        // (the sm_89 `add`→0x7fffffff vs x86 0x7fc00000 witness), so Exact must stay
+        // payload-blind. A flip of any of these to determined false-FAILS conformance.
+        #[rustfmt::skip]
+        let computed = [
+            Op::Add, Op::Sub, Op::Mul, Op::Div, Op::Sqr, Op::Recip, Op::Exp, Op::Log,
+            Op::Sin, Op::Cos, Op::Sqrt, Op::Erf, Op::Atan, Op::Lgamma, Op::Atan2,
+            Op::Tanh, Op::Sigmoid, Op::Gelu, Op::Pow, Op::Hypot,
+        ];
+        for op in computed {
+            assert!(
+                !op.nan_payload_is_determined(),
+                "{} MINTS its NaN payload; must stay payload-blind",
+                op.token()
+            );
+        }
+
+        // sign/step never PRODUCE a NaN (every arm is a const; a NaN input drives all
+        // comparisons false → const(0)); the predicate is vacuous for them, and it
+        // classifies them determined, which is harmless.
+        assert!(Op::Sign.nan_payload_is_determined());
+        assert!(Op::Step.nan_payload_is_determined());
+
+        // the composed-Expr analogue: an abs node does NOT poison a region, an add
+        // node does (determined iff EVERY node is payload-determining).
+        let det = |s| expr_nan_payload_is_determined(&parse(s).unwrap());
+        assert!(det("abs(neg(a))"));
+        assert!(det("select(cmp_ne(a, a), a, b)"));
+        assert!(!det("add(a, b)"));
+        assert!(!det("select(cmp_ge(a, b), add(a, b), a)"));
+    }
 
     /// The exact §6.3-0001 primitive-floor token set.
     const FLOOR_SPEC: &[&str] = &[
