@@ -235,9 +235,12 @@ so `kiss-ref-core` returns typed errors, never panics.
 - **Coverage is three-state** — `Done` / `Pending` / `NotApplicable` — driven by a spec-derived
   `legality(op, dtype)` (op family × numeric kind); only legal cells form the denominator, so
   permanently-illegal cells (bitwise × float, `div` × int, `nextafter` × narrow, real-only-op × complex)
-  leave the backlog entirely. Remaining `Pending`: the float-only tensor ops on the integer lane. (The
-  three §6.11 spec-gap cells were held provisional until the KISS PR #75 rulings landed — 2026-07-23,
-  all three kiss-ref's way — and are no longer flagged.)
+  leave the backlog entirely — as do the float-only tensor ops on the integer lane
+  (`reduce_mean`/norms/`avg_pool`): they decompose through float `div`/`sqrt`, and KISS-OPS-6.4-0002
+  excludes integer division and remainder from the op set, so they are `NotApplicable` on integers, not
+  backlog. The `Pending` set is empty — every legal cell is `Done`. (The three §6.11 spec-gap cells were
+  held provisional until the KISS PR #75 rulings landed — 2026-07-23, all three kiss-ref's way — and are
+  no longer flagged.)
 
 The coverage gate reports DONE vs PENDING for every (atom × legal-dtype) cell, so what remains is
 machine-visible to the evaluating teams. They fill cells; kiss-ref dictates *how*.
