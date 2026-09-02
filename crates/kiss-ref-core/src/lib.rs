@@ -37,9 +37,10 @@
 //!
 //! Coverage is a three-state model — [`Support::Done`] / [`Support::Pending`] /
 //! [`Support::NotApplicable`] — driven by the spec-derived [`legality`] function;
-//! only legal cells form the denominator. The remaining `Pending` cells are the
-//! integer-tensor float-only ops (`reduce_mean`/norms/… need `div`/`sqrt`) and a
-//! few genuinely-legal-but-unimplemented edges.
+//! only legal cells form the denominator. The `Pending` set is empty — every legal
+//! cell is `Done`. The integer-tensor float-only ops (`reduce_mean`/norms/… need
+//! `div`/`sqrt`) are `NotApplicable` on integers, not backlog: KISS-OPS-6.4-0002
+//! excludes integer division and remainder from the op set.
 
 #![cfg_attr(not(test), no_std)]
 
