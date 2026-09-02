@@ -346,6 +346,15 @@ mod tests {
     // under-enforces (false-PASS a wrong moved payload); a flip computed→determined
     // false-FAILS a conformant impl (the diff.rs sm_89-vs-x86 `add` witness). A
     // one-directional pin catches only the first.
+    //
+    // The pin arrays are kept ONE OP PER LINE deliberately: this is an exhaustive
+    // control, and one-per-line makes a dropped op a VISIBLE DIFF rather than a
+    // formatting change nobody reviews. Codacy's "≤50 LOC per fn" rule flags this
+    // test — DECLINED: that rule is not enforced on this repo (it analyses only a
+    // PR's changed lines, so it never touched e.g. decomp.rs::reference_decomposition_src,
+    // a 40+-arm match well over 50 LOC that rides main unflagged). It reports "new to
+    // my scope," not "risky," and reshaping an exhaustive pin to satisfy an unenforced
+    // rule trades the reviewability property for nothing. Do not compact these arrays.
     #[test]
     fn nan_payload_determinacy_pins_both_directions() {
         use crate::decomp::{expr_nan_payload_is_determined, parse};
@@ -355,11 +364,21 @@ mod tests {
         // abs/neg are family=arithmetic yet payload-determining; copysign is raw-bit
         // by KISS-OPS-6.9-0002 — the counterexamples that break an "arithmetic-free"
         // predicate and force a determinacy one.
-        #[rustfmt::skip]
         let determined = [
-            Op::Select, Op::Copysign, Op::Abs, Op::Neg, Op::Nextafter, Op::Floor,
-            Op::Ceil, Op::Trunc, Op::RoundEven, Op::MaxProp, Op::MinProp,
-            Op::FmaxIeee, Op::FminIeee, Op::Relu,
+            Op::Select,
+            Op::Copysign,
+            Op::Abs,
+            Op::Neg,
+            Op::Nextafter,
+            Op::Floor,
+            Op::Ceil,
+            Op::Trunc,
+            Op::RoundEven,
+            Op::MaxProp,
+            Op::MinProp,
+            Op::FmaxIeee,
+            Op::FminIeee,
+            Op::Relu,
         ];
         for op in determined {
             assert!(
@@ -372,11 +391,27 @@ mod tests {
         // COMPUTED — arithmetic or a transcendental MINTS the NaN payload per device
         // (the sm_89 `add`→0x7fffffff vs x86 0x7fc00000 witness), so Exact must stay
         // payload-blind. A flip of any of these to determined false-FAILS conformance.
-        #[rustfmt::skip]
         let computed = [
-            Op::Add, Op::Sub, Op::Mul, Op::Div, Op::Sqr, Op::Recip, Op::Exp, Op::Log,
-            Op::Sin, Op::Cos, Op::Sqrt, Op::Erf, Op::Atan, Op::Lgamma, Op::Atan2,
-            Op::Tanh, Op::Sigmoid, Op::Gelu, Op::Pow, Op::Hypot,
+            Op::Add,
+            Op::Sub,
+            Op::Mul,
+            Op::Div,
+            Op::Sqr,
+            Op::Recip,
+            Op::Exp,
+            Op::Log,
+            Op::Sin,
+            Op::Cos,
+            Op::Sqrt,
+            Op::Erf,
+            Op::Atan,
+            Op::Lgamma,
+            Op::Atan2,
+            Op::Tanh,
+            Op::Sigmoid,
+            Op::Gelu,
+            Op::Pow,
+            Op::Hypot,
         ];
         for op in computed {
             assert!(
