@@ -60,19 +60,23 @@ fn coverage_ledger_reports_done_and_pending() {
 fn coverage_int_tensor_lane_done_on_integers() {
     // The integer-capable tensor ops (atoms + argmax/any/all/cum*) are Done on
     // every integer dtype, incl. the packed i4/u4/b1.
+    let mut checked = 0usize;
     for &op in Op::ALL {
         if int_tensor_supported(op) {
             for &d in &INT_DTYPES {
                 assert_eq!(support(op, d), Support::Done, "{op:?}/{d:?}");
+                checked += 1;
             }
         }
     }
+    assert!(checked > 0, "vacuous: int_tensor_supported matched no op");
 }
 
 #[test]
 fn coverage_tensor_layer_done_on_floats() {
     // The 6 structural atoms + the tensor non-primitives are Done on every float
     // dtype (the float lane: f16/bf16/f32/f64), Pending elsewhere in this cut.
+    let mut checked = 0usize;
     for &op in Op::ALL {
         if tensor_supported(op) {
             for &d in &[
@@ -84,9 +88,11 @@ fn coverage_tensor_layer_done_on_floats() {
                 Dtype::F8e5m2,
             ] {
                 assert_eq!(support(op, d), Support::Done, "{op:?}/{d:?}");
+                checked += 1;
             }
         }
     }
+    assert!(checked > 0, "vacuous: tensor_supported matched no op");
 }
 
 #[test]
@@ -94,13 +100,16 @@ fn coverage_fp8_float_cells_done() {
     // FP8 (f8e4m3fn/f8e5m2) covers the same float op-set as f16/bf16 (compute via
     // promotion to f32): every non-nextafter float op is Done; nextafter and
     // bitwise are NotApplicable.
+    let mut checked = 0usize;
     for &op in Op::ALL {
         for &d in &[Dtype::F8e4m3fn, Dtype::F8e5m2] {
             if float_supported(op) && op != Op::Nextafter {
                 assert_eq!(support(op, d), Support::Done, "{op:?}/{d:?}");
+                checked += 1;
             }
         }
     }
+    assert!(checked > 0, "vacuous: float_supported matched no fp8 cell");
     assert_eq!(
         support(Op::Nextafter, Dtype::F8e4m3fn),
         Support::NotApplicable
@@ -110,43 +119,61 @@ fn coverage_fp8_float_cells_done() {
 
 #[test]
 fn coverage_float_ops_done_on_f32_f64() {
+    let mut checked = 0usize;
     for &op in Op::ALL {
         if float_supported(op) {
             assert_eq!(support(op, Dtype::F32), Support::Done, "{op:?}/f32");
             assert_eq!(support(op, Dtype::F64), Support::Done, "{op:?}/f64");
+            checked += 1;
         }
     }
+    assert!(checked > 0, "vacuous: float_supported matched no op");
 }
 
 #[test]
 fn coverage_int_ops_done_on_every_integer_dtype() {
     // The integer scalar path covers the bitwise/arithmetic atoms uniformly
     // across all integer dtypes — a consumer's correctness floor for integers.
+    let mut checked = 0usize;
     for &op in Op::ALL {
         if int_supported(op) {
             for &d in &INT_DTYPES {
                 assert_eq!(support(op, d), Support::Done, "{op:?}/{d:?}");
+                checked += 1;
             }
         }
     }
+    assert!(checked > 0, "vacuous: int_supported matched no op");
 }
 
 #[test]
 fn coverage_narrow_floats_match_wide_except_nextafter() {
     // f16/bf16 cover the same float ops as f32/f64, minus nextafter (KISS-OPS-6.9-0003).
+    let mut checked = 0usize;
     for &op in Op::ALL {
         for &d in &[Dtype::F16, Dtype::Bf16] {
             if float_supported(op) && op != Op::Nextafter {
                 assert_eq!(support(op, d), Support::Done, "{op:?}/{d:?}");
+                checked += 1;
             }
         }
-        // nextafter is NOT APPLICABLE on the narrow floats (KISS-OPS-6.9-0003) — spec-illegal,
-        // not merely unimplemented.
-        assert_eq!(support(Op::Nextafter, Dtype::F16), Support::NotApplicable);
-        assert_eq!(support(Op::Nextafter, Dtype::Bf16), Support::NotApplicable);
-        // ...but supported on the wide floats.
-        assert_eq!(support(Op::Nextafter, Dtype::F32), Support::Done);
     }
+    assert!(
+        checked > 0,
+        "vacuous: float_supported matched no narrow-float cell"
+    );
+    // The `nextafter` facts below are loop-INVARIANT — they name one op, so their
+    // population is one and they are asserted once, outside the loop. Inside it they
+    // executed `Op::ALL` times for a claim that holds once: the mirror of the vacuity
+    // this file now guards against (a loop that asserts nothing vs. a loop that asserts
+    // the same thing N times). Neither shape reports its own arity, so keep them apart.
+    //
+    // nextafter is NOT APPLICABLE on the narrow floats (KISS-OPS-6.9-0003) — spec-illegal,
+    // not merely unimplemented...
+    assert_eq!(support(Op::Nextafter, Dtype::F16), Support::NotApplicable);
+    assert_eq!(support(Op::Nextafter, Dtype::Bf16), Support::NotApplicable);
+    // ...but supported on the wide floats.
+    assert_eq!(support(Op::Nextafter, Dtype::F32), Support::Done);
 }
 
 #[test]
@@ -223,11 +250,14 @@ fn coverage_bool_truth_cells_done() {
     // The truth-valued bool ops (logical / eq / select / min-max / {0,1}-preserving
     // structural + data-movement) are Done; arithmetic, bitwise, transcendental,
     // and the sum/prod-bearing reductions are NotApplicable on bool.
+    let mut checked = 0usize;
     for &op in Op::ALL {
         if bool_supported(op) {
             assert_eq!(support(op, Dtype::Bool), Support::Done, "{op:?}/bool");
+            checked += 1;
         }
     }
+    assert!(checked > 0, "vacuous: bool_supported matched no op");
     assert_eq!(support(Op::Add, Dtype::Bool), Support::NotApplicable);
     assert_eq!(support(Op::BitAnd, Dtype::Bool), Support::NotApplicable);
     assert_eq!(support(Op::Exp, Dtype::Bool), Support::NotApplicable);
