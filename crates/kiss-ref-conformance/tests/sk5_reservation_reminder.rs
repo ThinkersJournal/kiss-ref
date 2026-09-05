@@ -97,20 +97,16 @@ fn the_sk5_reservation_scope_is_pinned_and_we_are_still_pre_sk5() {
     // ⚠ The arrival check. The reservation must ride the next breaking release, which
     // for a 0.x crate is a minor bump. Nothing watched for that event: sk5 could ship
     // with the reservation undone and this file would sit here, ignored, saying so to
-    // nobody. Reading the workspace version couples the reminder to the release that
+    // nobody. Coupling the reminder to the version couples it to the release that
     // discharges it.
-    let manifest = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Cargo.toml"),
-    )
-    .expect("cannot read the workspace Cargo.toml — this test checked nothing");
-
-    let version = manifest
-        .lines()
-        .find_map(|l| {
-            let rest = l.strip_prefix("version")?.trim_start().strip_prefix('=')?;
-            rest.trim().strip_prefix('"')?.split('"').next()
-        })
-        .expect("no workspace `version` key parsed — this test checked nothing");
+    //
+    // `CARGO_PKG_VERSION`, not a hand-parse of `../../Cargo.toml`. This crate declares
+    // `version.workspace = true`, so the two are the same string by construction — and
+    // the macro is resolved by cargo at compile time, so it cannot be defeated by an
+    // indented key, a reordered manifest, or a relative path that is wrong under some
+    // other working directory. Cargo treats the manifest as a fingerprint input, so a
+    // version bump rebuilds this test rather than leaving a stale constant baked in.
+    let version = env!("CARGO_PKG_VERSION");
 
     assert!(
         version.starts_with("0.3."),
