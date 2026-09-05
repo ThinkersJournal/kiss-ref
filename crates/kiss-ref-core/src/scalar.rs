@@ -437,11 +437,22 @@ macro_rules! impl_scalar_float_via_f32 {
             }
             #[inline]
             fn neg(self) -> $t {
-                <$t>::from_f32(-self.to_f32())
+                // KISS-OPS-6.4-0003 (and KISS-OPS-6.16-0009 for the narrow dtypes, which
+                // KISS-OPS-6.2-0001 routes to §6.16 rather than IEEE 754-2019; KISS #399
+                // scopes which citation is primary). `neg` flips the sign bit as a RAW-BIT
+                // operation so a NaN operand's payload is preserved. Promoting through
+                // `f32` would route the value through `half`'s quieting `to_f32`, which
+                // §6.16-0009 names non-conforming for a narrow float (it quiets a moved
+                // signaling NaN).
+                const SIGN: $uint = 1 << (<$uint>::BITS - 1);
+                <$t>::from_bits(self.to_bits() ^ SIGN)
             }
             #[inline]
             fn abs(self) -> $t {
-                <$t>::from_f32(ScalarFloat::abs(self.to_f32()))
+                // KISS-OPS-6.4-0004 (and -6.16-0009 for the narrow dtypes): clear the sign
+                // bit as a RAW-BIT operation; a NaN operand's payload is preserved.
+                const SIGN: $uint = 1 << (<$uint>::BITS - 1);
+                <$t>::from_bits(self.to_bits() & !SIGN)
             }
 
             #[inline]
@@ -500,7 +511,11 @@ macro_rules! impl_scalar_float_via_f32 {
             }
             #[inline]
             fn copysign(self, sign: $t) -> $t {
-                <$t>::from_f32(ScalarFloat::copysign(self.to_f32(), sign.to_f32()))
+                // KISS-OPS-6.9-0002 (and -6.16-0009 for the narrow dtypes): a value with
+                // the magnitude bits of `self` and the sign bit of `sign`, as a RAW-BIT
+                // operation so a moved NaN's payload (and the copied sign) survive.
+                const SIGN: $uint = 1 << (<$uint>::BITS - 1);
+                <$t>::from_bits((self.to_bits() & !SIGN) | (sign.to_bits() & SIGN))
             }
             #[inline]
             fn nextafter(self, to: $t) -> $t {

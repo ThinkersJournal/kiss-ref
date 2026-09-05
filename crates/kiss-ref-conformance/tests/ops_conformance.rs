@@ -74,6 +74,96 @@ fn test_ops_abs_raw_bit() {
     assert!(ev(Op::Abs, &[f64::NAN]).is_nan());
 }
 
+#[test]
+fn test_ops_narrow_sign_ops_preserve_snan_payload() {
+    // KISS-OPS-6.4-0003 (`neg`), -6.4-0004 (`abs`), -6.9-0002 (`copysign`): each is a
+    // raw-bit sign transform, so a NaN operand's payload is preserved (the result is a
+    // NaN with the same payload, sign flipped/cleared/copied). For the narrow dtypes
+    // `bf16`/`f16`/`f8e5m2`, KISS-OPS-6.2-0001 routes to §6.16, and KISS-OPS-6.16-0009
+    // names a promote-to-`f32`-and-round-back implementation NON-CONFORMING precisely
+    // because it quiets a moved signaling NaN. (KISS #399 leaves the scope citation —
+    // §6.4 vs §6.16 — open; the payload-preservation obligation holds under either read.)
+    //
+    // Unlike the atom tests above, this drives `eval_op` at the narrow *storage* dtype so
+    // the sign op's own body is exercised rather than the `f64` path. Teeth: the previous
+    // body computed `from_f32(-self.to_f32())` etc.; `half`'s `bf16 -> f32` sets the quiet
+    // bit, so `neg(0x7F81)` returned `0xFFC1` (quieted; payload `0x01` -> `0x41`), not
+    // `0xFF81`. Each assertion below fails on that body and passes on the raw-bit one.
+    use half::{bf16, f16};
+    use kiss_ref_core::E5m2;
+
+    // bf16 signaling NaN 0x7F81 = 0|11111111|0000001 (payload 0x01); -1.0 = 0xBF80.
+    let bs = bf16::from_bits(0x7F81);
+    assert_eq!(
+        eval_op(Op::Neg, &[bs]).unwrap().to_bits(),
+        0xFF81,
+        "bf16 neg: flip sign, keep sNaN payload"
+    );
+    assert_eq!(
+        eval_op(Op::Abs, &[bs]).unwrap().to_bits(),
+        0x7F81,
+        "bf16 abs: clear sign, keep sNaN payload"
+    );
+    assert_eq!(
+        eval_op(Op::Abs, &[bf16::from_bits(0xFF81)])
+            .unwrap()
+            .to_bits(),
+        0x7F81,
+        "bf16 abs of -sNaN"
+    );
+    assert_eq!(
+        eval_op(Op::Copysign, &[bs, bf16::from_bits(0xBF80)])
+            .unwrap()
+            .to_bits(),
+        0xFF81,
+        "bf16 copysign: carry sign onto sNaN, keep payload"
+    );
+
+    // f16 signaling NaN 0x7C01 = 0|11111|0000000001 (payload 0x001); -1.0 = 0xBC00.
+    let fs = f16::from_bits(0x7C01);
+    assert_eq!(
+        eval_op(Op::Neg, &[fs]).unwrap().to_bits(),
+        0xFC01,
+        "f16 neg: flip sign, keep sNaN payload"
+    );
+    assert_eq!(
+        eval_op(Op::Abs, &[f16::from_bits(0xFC01)])
+            .unwrap()
+            .to_bits(),
+        0x7C01,
+        "f16 abs of -sNaN"
+    );
+    assert_eq!(
+        eval_op(Op::Copysign, &[fs, f16::from_bits(0xBC00)])
+            .unwrap()
+            .to_bits(),
+        0xFC01,
+        "f16 copysign: carry sign onto sNaN, keep payload"
+    );
+
+    // f8e5m2 signaling NaN 0x7D = 0|11111|01 (payload 0x1); -1.0 = 0xBC. (u8 sign lane.)
+    let es = E5m2::from_bits(0x7D);
+    assert_eq!(
+        eval_op(Op::Neg, &[es]).unwrap().to_bits(),
+        0xFD,
+        "f8e5m2 neg: flip sign, keep sNaN payload"
+    );
+    assert_eq!(
+        eval_op(Op::Abs, &[E5m2::from_bits(0xFD)])
+            .unwrap()
+            .to_bits(),
+        0x7D,
+        "f8e5m2 abs of -sNaN"
+    );
+    assert_eq!(
+        eval_op(Op::Copysign, &[es, E5m2::from_bits(0xBC)])
+            .unwrap()
+            .to_bits(),
+        0xFD,
+        "f8e5m2 copysign: carry sign onto sNaN, keep payload"
+    );
+}
+
 // ---- §6.5 raw-bit select ----------------------------------------------------
 
 #[test]
