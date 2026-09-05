@@ -157,17 +157,23 @@ fn coverage_narrow_floats_match_wide_except_nextafter() {
                 checked += 1;
             }
         }
-        // nextafter is NOT APPLICABLE on the narrow floats (KISS-OPS-6.9-0003) — spec-illegal,
-        // not merely unimplemented.
-        assert_eq!(support(Op::Nextafter, Dtype::F16), Support::NotApplicable);
-        assert_eq!(support(Op::Nextafter, Dtype::Bf16), Support::NotApplicable);
-        // ...but supported on the wide floats.
-        assert_eq!(support(Op::Nextafter, Dtype::F32), Support::Done);
     }
     assert!(
         checked > 0,
         "vacuous: float_supported matched no narrow-float cell"
     );
+    // The `nextafter` facts below are loop-INVARIANT — they name one op, so their
+    // population is one and they are asserted once, outside the loop. Inside it they
+    // executed `Op::ALL` times for a claim that holds once: the mirror of the vacuity
+    // this file now guards against (a loop that asserts nothing vs. a loop that asserts
+    // the same thing N times). Neither shape reports its own arity, so keep them apart.
+    //
+    // nextafter is NOT APPLICABLE on the narrow floats (KISS-OPS-6.9-0003) — spec-illegal,
+    // not merely unimplemented...
+    assert_eq!(support(Op::Nextafter, Dtype::F16), Support::NotApplicable);
+    assert_eq!(support(Op::Nextafter, Dtype::Bf16), Support::NotApplicable);
+    // ...but supported on the wide floats.
+    assert_eq!(support(Op::Nextafter, Dtype::F32), Support::Done);
 }
 
 #[test]
