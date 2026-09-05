@@ -1,6 +1,22 @@
 # RFC: Float-reduction accumulator width as a tolerance-cell key (KISS #90, direction b)
 
-**Status:** draft · 2026-07-24 · authored by kiss-ref (the reference implementation)
+**Status:** **RATIFIED AND LANDED** · drafted 2026-07-24 by kiss-ref (the reference
+implementation) · direction (b) ruled by Eric 2026-07-24 · filed KISS-side as **PR #92**,
+realized by **KISS PR #96** · **KISS #90 closed COMPLETED 2026-08-08**. The clauses are
+normative: `KISS-OPS-6.17-0008` is on KISS `main` at `spec/ops.md:1631` with a named
+backing test (verified at KISS `4dba0afba4bddddd5ffea9ed1928897fedc188a3`, not inferred
+from the issue being closed). **This document is the drafting record, not an open proposal.**
+
+> ⚠ **DISCHARGED 2026-09-05.** This field read *“Status: draft · 2026-07-24”* until today,
+> four weeks after the issue it targets closed as COMPLETED. **The contradiction was already
+> inside this repository:** `crates/kiss-ref-conformance/tests/narrow_tensor_lane.rs:329`
+> states *“NORMATIVE now: KISS PR #96 (the #92 realization) merged 2026-07-24 … these cells
+> are no longer Provisional — they BACK 6.17-0008/-0009”*, while the RFC that produced those
+> clauses went on calling itself a draft. A reader reaching for the authoritative field got
+> the stale one. Replaced rather than annotated; the tense of the body is left as drafted,
+> because it is the record of what was proposed and why.
+> `tests/rfc_status_matches_the_clause_state.rs` now fails if the two disagree again.
+
 **Direction:** **(b)** — signaled by Eric 2026-07-24; supersedes the open (a)/(b)
 choice on KISS #90.
 **Clauses AMENDED (existing text changes):** §6.17-0007 (the "bound against
