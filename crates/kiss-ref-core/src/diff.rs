@@ -1220,12 +1220,20 @@ mod tests {
                 "f8e4m3fn: {bits:#04x} must conform — no quietness distinction exists to fail on"
             );
         }
-        // ⚠️ HONEST LIMIT, stated rather than implied: this pins the OBSERVABLE behaviour
-        // but cannot falsify the vacuity FLAG itself. Both of f8e4m3fn's NaNs have every
-        // mantissa bit set, so even a spurious quiet-bit mask would read both as "quiet"
-        // and the comparison would pass anyway. The flag's value is structural — it stops a
-        // quiet bit being read from a format that has none — and that is not black-box
-        // observable here. A test that cannot fail for the reason it names should say so.
+        // ⚠️ HONEST LIMIT — and it is **partial**, not total. Which tightening this catches
+        // and which it does not, stated explicitly, because a guard whose coverage is
+        // partial and UNSTATED gets read as total:
+        //
+        //   • tightened to a BIT-COMPARE → 0x7F and 0xFF DIFFER, so this test REDS. CAUGHT.
+        //   • tightened to a spurious QUIETNESS check → both of f8e4m3fn's NaNs have every
+        //     mantissa bit set, so any quiet-bit mask reads BOTH as quiet and this test
+        //     still passes. NOT CAUGHT.
+        //
+        // The uncaught one is the subtler tightening, and the likelier: "check quietness"
+        // looks more principled than "bit-compare", so it is the change someone actually
+        // makes. Against it the vacuity flag's value is structural — it stops a quiet bit
+        // being read from a format that has none — and that is not black-box observable
+        // here. A test that cannot fail for the reason it names should say so out loud.
     }
 
     #[test]
