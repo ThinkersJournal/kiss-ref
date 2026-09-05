@@ -29,6 +29,16 @@
 //! [`kiss_ops_vocab::Op::nan_payload_is_determined`]. `ulp_distance_*` itself is
 //! unchanged — it stays the computed-NaN / ULP metric; only the `Exact` decision
 //! gained the op branch.
+//!
+//! **…and a computed NaN's QUIETNESS is compared, though its payload is not.** The quiet
+//! bit is carved explicitly OUT of the payload exemption: KISS-OPS-6.16-0010 makes
+//! delivering a *quiet* NaN a MUST for a decomposition containing arithmetic, so exempting
+//! the whole payload would leave that clause undetectable by any conformant harness. A
+//! computed NaN therefore matches iff the observed value is also NaN and — **where the
+//! dtype's encoding admits a signaling NaN** — agrees in quietness with the expected value.
+//! For `f8e4m3fn`, whose single NaN encoding has no quiet bit, the comparison is **vacuous**
+//! and MUST NOT be synthesized (§6.8-0010). This MIRRORS KISS #352's `compare_nan_output`
+//! rather than re-deriving it; the rule lives once, in `computed_nan_conforms`.
 
 extern crate alloc;
 use alloc::vec::Vec;
@@ -87,6 +97,76 @@ pub fn ulp_distance_f32(a: f32, b: f32) -> u32 {
     }
 }
 
+/// KISS-CONFORM-6.8-0010's **computed-NaN** rule, in ONE place.
+///
+/// It is applied at seven comparison sites, and a rule copied seven times is a rule with
+/// seven chances to be copied wrong — so the sites delegate here rather than restating it.
+///
+/// This MIRRORS KISS #352's `compare_nan_output` COMPUTED arm rather than re-deriving it
+/// (a second independent copy of a normative rule is the defect that mechanism exists to
+/// remove): a computed NaN matches **iff** the observed value is also NaN and, **where the
+/// dtype's encoding admits a signaling NaN, agrees in quietness with the expected value**.
+///
+/// Payload and sign are NOT compared — a computed NaN's payload is architectural (the
+/// sm_89-vs-x86 witness in this module's docs) and bit-comparing it would fail conformant
+/// hardware. The **quiet bit is carved explicitly out of that exemption**: KISS-OPS-6.16-0010
+/// makes delivering a *quiet* NaN a MUST for a decomposition containing arithmetic, so
+/// exempting the whole payload would leave that clause undetectable by any harness.
+///
+/// ⚠️ For a dtype whose encoding admits **no** signaling NaN (`f8e4m3fn`, a single NaN
+/// encoding) the quietness comparison is **vacuous**, and a comparator MUST NOT synthesize a
+/// distinction the format cannot represent (§6.8-0010). That is what `admits_snan` gates.
+#[inline]
+fn computed_nan_conforms(
+    e_nan: bool,
+    g_nan: bool,
+    admits_snan: bool,
+    e_quiet: bool,
+    g_quiet: bool,
+) -> bool {
+    e_nan && g_nan && (!admits_snan || e_quiet == g_quiet)
+}
+
+/// Is this NaN **quiet**? (The quiet bit is the mantissa's most-significant bit.)
+#[inline]
+fn quiet_f64(x: f64) -> bool {
+    x.to_bits() & 0x0008_0000_0000_0000 != 0
+}
+
+/// Is this NaN **quiet**? (The quiet bit is the mantissa's most-significant bit.)
+#[inline]
+fn quiet_f32(x: f32) -> bool {
+    x.to_bits() & 0x0040_0000 != 0
+}
+
+/// The whole `Tolerance::Exact` decision for the `f64` lane: §6.8-0010(a) binds a
+/// **determined** (moved) NaN exact-byte, payload and sign included; a **computed** NaN
+/// goes to [`computed_nan_conforms`]. `f64` admits a signaling NaN, so quietness is
+/// compared and never vacuous here.
+#[inline]
+fn exact_conforms_f64(determined: bool, e: f64, g: f64, d: u64) -> bool {
+    if determined {
+        e.to_bits() == g.to_bits()
+    } else if e.is_nan() || g.is_nan() {
+        computed_nan_conforms(e.is_nan(), g.is_nan(), true, quiet_f64(e), quiet_f64(g))
+    } else {
+        d == 0
+    }
+}
+
+/// The `f32` lane's [`Tolerance::Exact`] decision. Same rule as [`exact_conforms_f64`];
+/// `f32` also admits a signaling NaN.
+#[inline]
+fn exact_conforms_f32(determined: bool, e: f32, g: f32, d: u64) -> bool {
+    if determined {
+        e.to_bits() == g.to_bits()
+    } else if e.is_nan() || g.is_nan() {
+        computed_nan_conforms(e.is_nan(), g.is_nan(), true, quiet_f32(e), quiet_f32(g))
+    } else {
+        d == 0
+    }
+}
+
 /// A comparison tolerance for a differential run.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tolerance {
@@ -94,9 +174,11 @@ pub enum Tolerance {
     /// (0 ULP). A **NaN** result compares **op-aware, per §6.8-0010**: a
     /// determined-NaN op (a move / bit-transform — `select`, the minmax family,
     /// `abs`/`neg`/`copysign`) binds the payload AND sign exact-byte
-    /// (§6.8-0010(a)), while a computed-NaN op (arithmetic / transcendental) stays
-    /// payload-blind (the metric's any-NaN=0), because arithmetic re-mints the
-    /// payload per device. The seam selects the arm from the op's (or region's)
+    /// (§6.8-0010(a)), while a computed-NaN op (arithmetic / transcendental) keeps
+    /// its payload and sign UNcompared, because arithmetic re-mints the payload per
+    /// device — but its **quietness IS compared** wherever the dtype's encoding admits
+    /// a signaling NaN (vacuous for `f8e4m3fn`), because KISS-OPS-6.16-0010 makes
+    /// delivering a quiet NaN a MUST. The seam selects the arm from the op's (or region's)
     /// [`kiss_ops_vocab::Op::nan_payload_is_determined`], so `Exact` is the honest
     /// comparison for BOTH exact-op populations — the integer, comparison,
     /// `select`, rounding, and signed-zero pins included.
@@ -168,15 +250,10 @@ pub fn diff_f64(
         let ok = match tol {
             // §6.8-0010(a): a determined-NaN op (a move / bit-transform) compares
             // exact-byte, payload+sign — so a wrong moved NaN payload fails even at
-            // 0 ULP. A computed-NaN op stays payload-blind (the metric's any-NaN=0),
-            // because arithmetic re-mints the payload per device (the module witness).
-            Tolerance::Exact => {
-                if determined {
-                    e.to_bits() == g.to_bits()
-                } else {
-                    d == 0
-                }
-            }
+            // 0 ULP. A computed-NaN op's payload and sign stay uncompared (arithmetic
+            // re-mints the payload per device — the module witness), but its QUIETNESS
+            // is compared per §6.8-0010; see `exact_conforms_f64`.
+            Tolerance::Exact => exact_conforms_f64(determined, e, g, d),
             Tolerance::Ulp(n) => d <= n,
         };
         if !ok {
@@ -219,15 +296,10 @@ pub fn diff_f32(
         let ok = match tol {
             // §6.8-0010(a): a determined-NaN op (a move / bit-transform) compares
             // exact-byte, payload+sign — so a wrong moved NaN payload fails even at
-            // 0 ULP. A computed-NaN op stays payload-blind (the metric's any-NaN=0),
-            // because arithmetic re-mints the payload per device (the module witness).
-            Tolerance::Exact => {
-                if determined {
-                    e.to_bits() == g.to_bits()
-                } else {
-                    d == 0
-                }
-            }
+            // 0 ULP. A computed-NaN op's payload and sign stay uncompared (arithmetic
+            // re-mints the payload per device — the module witness), but its QUIETNESS
+            // is compared per §6.8-0010; see `exact_conforms_f32`.
+            Tolerance::Exact => exact_conforms_f32(determined, e, g, d),
             Tolerance::Ulp(n) => d <= n,
         };
         if !ok {
@@ -315,15 +387,10 @@ pub fn diff_expr(
         let ok = match tol {
             // §6.8-0010(a): a determined-NaN op (a move / bit-transform) compares
             // exact-byte, payload+sign — so a wrong moved NaN payload fails even at
-            // 0 ULP. A computed-NaN op stays payload-blind (the metric's any-NaN=0),
-            // because arithmetic re-mints the payload per device (the module witness).
-            Tolerance::Exact => {
-                if determined {
-                    e.to_bits() == g.to_bits()
-                } else {
-                    d == 0
-                }
-            }
+            // 0 ULP. A computed-NaN op's payload and sign stay uncompared (arithmetic
+            // re-mints the payload per device — the module witness), but its QUIETNESS
+            // is compared per §6.8-0010; see `exact_conforms_f64`.
+            Tolerance::Exact => exact_conforms_f64(determined, e, g, d),
             Tolerance::Ulp(n) => d <= n,
         };
         if !ok {
@@ -374,15 +441,10 @@ pub fn diff_expr_f32(
         let ok = match tol {
             // §6.8-0010(a): a determined-NaN op (a move / bit-transform) compares
             // exact-byte, payload+sign — so a wrong moved NaN payload fails even at
-            // 0 ULP. A computed-NaN op stays payload-blind (the metric's any-NaN=0),
-            // because arithmetic re-mints the payload per device (the module witness).
-            Tolerance::Exact => {
-                if determined {
-                    e.to_bits() == g.to_bits()
-                } else {
-                    d == 0
-                }
-            }
+            // 0 ULP. A computed-NaN op's payload and sign stay uncompared (arithmetic
+            // re-mints the payload per device — the module witness), but its QUIETNESS
+            // is compared per §6.8-0010; see `exact_conforms_f32`.
+            Tolerance::Exact => exact_conforms_f32(determined, e, g, d),
             Tolerance::Ulp(n) => d <= n,
         };
         if !ok {
@@ -411,7 +473,7 @@ fn key_u16(bits: u16) -> u16 {
 }
 
 macro_rules! narrow_diff {
-    ($t:ty, $ulp:ident, $refr:ident, $diff:ident) => {
+    ($t:ty, $ulp:ident, $refr:ident, $diff:ident, $quiet:expr, $admits_snan:expr) => {
         /// Sign-magnitude ULP distance between two narrow-float values (both-NaN
         /// → 0, one-NaN → `u16::MAX`).
         pub fn $ulp(a: $t, b: $t) -> u16 {
@@ -455,11 +517,22 @@ macro_rules! narrow_diff {
                 }
                 let ok = match tol {
                     // §6.8-0010(a): determined-NaN ops compare exact-byte
-                    // (payload+sign); computed-NaN ops stay payload-blind. See the
-                    // scalar seam above.
+                    // (payload+sign). A computed NaN's payload and sign stay
+                    // uncompared, but its QUIETNESS is compared where THIS dtype's
+                    // encoding admits a signaling NaN — vacuous for `f8e4m3fn`, whose
+                    // single NaN encoding cannot represent the distinction. See the
+                    // scalar seam above and `computed_nan_conforms`.
                     Tolerance::Exact => {
                         if determined {
                             e.to_bits() == g.to_bits()
+                        } else if e.is_nan() || g.is_nan() {
+                            computed_nan_conforms(
+                                e.is_nan(),
+                                g.is_nan(),
+                                $admits_snan,
+                                ($quiet)(e.to_bits()),
+                                ($quiet)(g.to_bits()),
+                            )
                         } else {
                             d == 0
                         }
@@ -478,8 +551,25 @@ macro_rules! narrow_diff {
     };
 }
 
-narrow_diff!(half::f16, ulp_distance_f16, reference_f16, diff_f16);
-narrow_diff!(half::bf16, ulp_distance_bf16, reference_bf16, diff_bf16);
+// The quiet bit is each format's mantissa MSB: f16 has 10 mantissa bits (bit 9),
+// bf16 has 7 (bit 6). Both encodings admit a signaling NaN, so §6.8-0010's quietness
+// comparison is live — not vacuous — on these lanes.
+narrow_diff!(
+    half::f16,
+    ulp_distance_f16,
+    reference_f16,
+    diff_f16,
+    |b: u16| b & 0x0200 != 0,
+    true
+);
+narrow_diff!(
+    half::bf16,
+    ulp_distance_bf16,
+    reference_bf16,
+    diff_bf16,
+    |b: u16| b & 0x0040 != 0,
+    true
+);
 
 // The composed-[`Expr`] seam over the narrow lanes — the multi-node analogue of
 // `reference_f16`/`diff_f16`, reusing the same `ulp_distance_*` narrow metric.
@@ -488,7 +578,7 @@ narrow_diff!(half::bf16, ulp_distance_bf16, reference_bf16, diff_bf16);
 // `eval_expr` engine in the narrow compute lane — numbers are identical to a
 // hand-rolled per-node narrow reference).
 macro_rules! narrow_expr {
-    ($t:ty, $ulp:ident, $refr:ident, $diff:ident) => {
+    ($t:ty, $ulp:ident, $refr:ident, $diff:ident, $quiet:expr, $admits_snan:expr) => {
         /// Reference outputs of a composed [`Expr`] over a batch of narrow-float
         /// input rows — the narrow mirror of [`reference_expr`] (each row through
         /// [`eval_expr`] in the narrow compute lane).
@@ -526,11 +616,22 @@ macro_rules! narrow_expr {
                 }
                 let ok = match tol {
                     // §6.8-0010(a): determined-NaN ops compare exact-byte
-                    // (payload+sign); computed-NaN ops stay payload-blind. See the
-                    // scalar seam above.
+                    // (payload+sign). A computed NaN's payload and sign stay
+                    // uncompared, but its QUIETNESS is compared where THIS dtype's
+                    // encoding admits a signaling NaN — vacuous for `f8e4m3fn`, whose
+                    // single NaN encoding cannot represent the distinction. See the
+                    // scalar seam above and `computed_nan_conforms`.
                     Tolerance::Exact => {
                         if determined {
                             e.to_bits() == g.to_bits()
+                        } else if e.is_nan() || g.is_nan() {
+                            computed_nan_conforms(
+                                e.is_nan(),
+                                g.is_nan(),
+                                $admits_snan,
+                                ($quiet)(e.to_bits()),
+                                ($quiet)(g.to_bits()),
+                            )
                         } else {
                             d == 0
                         }
@@ -553,13 +654,17 @@ narrow_expr!(
     half::f16,
     ulp_distance_f16,
     reference_expr_f16,
-    diff_expr_f16
+    diff_expr_f16,
+    |b: u16| b & 0x0200 != 0,
+    true
 );
 narrow_expr!(
     half::bf16,
     ulp_distance_bf16,
     reference_expr_bf16,
-    diff_expr_bf16
+    diff_expr_bf16,
+    |b: u16| b & 0x0040 != 0,
+    true
 );
 
 // ---- FP8 (e4m3 / e5m2) ------------------------------------------------------
@@ -580,7 +685,7 @@ fn key_u8(bits: u8) -> u8 {
 }
 
 macro_rules! fp8_diff {
-    ($t:ty, $ulp:ident, $refr:ident, $diff:ident) => {
+    ($t:ty, $ulp:ident, $refr:ident, $diff:ident, $quiet:expr, $admits_snan:expr) => {
         /// Sign-magnitude ULP distance between two FP8 values (both-NaN → 0,
         /// one-NaN → `u8::MAX`, `+0` vs `-0` → 1).
         pub fn $ulp(a: $t, b: $t) -> u8 {
@@ -624,11 +729,22 @@ macro_rules! fp8_diff {
                 }
                 let ok = match tol {
                     // §6.8-0010(a): determined-NaN ops compare exact-byte
-                    // (payload+sign); computed-NaN ops stay payload-blind. See the
-                    // scalar seam above.
+                    // (payload+sign). A computed NaN's payload and sign stay
+                    // uncompared, but its QUIETNESS is compared where THIS dtype's
+                    // encoding admits a signaling NaN — vacuous for `f8e4m3fn`, whose
+                    // single NaN encoding cannot represent the distinction. See the
+                    // scalar seam above and `computed_nan_conforms`.
                     Tolerance::Exact => {
                         if determined {
                             e.to_bits() == g.to_bits()
+                        } else if e.is_nan() || g.is_nan() {
+                            computed_nan_conforms(
+                                e.is_nan(),
+                                g.is_nan(),
+                                $admits_snan,
+                                ($quiet)(e.to_bits()),
+                                ($quiet)(g.to_bits()),
+                            )
                         } else {
                             d == 0
                         }
@@ -647,17 +763,28 @@ macro_rules! fp8_diff {
     };
 }
 
+// ⚠️ `f8e4m3fn` admits NO signaling NaN — its only NaN encoding is `S.1111.111`, so there
+// is no quiet bit and no quiet/signaling distinction to compare. §6.8-0010 makes the
+// quietness comparison VACUOUS there, and says a comparator MUST NOT synthesize a
+// distinction the format cannot represent. The two arguments say that twice over, and
+// deliberately: the predicate `|_| false` is "there is no quiet bit to read", and the
+// trailing `false` is `admits_snan` — the flag that actually gates the comparison off.
+// `f8e5m2` is IEEE-shaped with 2 mantissa bits, so its quiet bit is bit 1 and live.
 fp8_diff!(
     crate::fp8::E4m3,
     ulp_distance_e4m3,
     reference_e4m3,
-    diff_e4m3
+    diff_e4m3,
+    |_: u8| false,
+    false
 );
 fp8_diff!(
     crate::fp8::E5m2,
     ulp_distance_e5m2,
     reference_e5m2,
-    diff_e5m2
+    diff_e5m2,
+    |b: u8| b & 0x02 != 0,
+    true
 );
 
 // ---- accumulator-parameterized reduction reference (RFC #92 direction b) ------
@@ -909,59 +1036,55 @@ mod tests {
         );
     }
 
-    /// ⚠️ **THIS TEST PINS A KNOWN GAP, NOT A DESIRED BEHAVIOUR.** It is a detector for a
-    /// deliberate deferral, so the deferral cannot be closed silently or forgotten quietly.
-    ///
-    /// **The obligation:** KISS-CONFORM-6.8-0010 (ratified in KISS #388) requires the
-    /// computed-NaN comparator to match *iff* the observed result "is also NaN and, where
-    /// the result dtype's encoding admits a signaling NaN, agrees in **quietness**" —
-    /// payload and sign are exempt, the **quiet bit is not**: KISS-OPS-6.16-0010 makes
-    /// delivering a *quiet* NaN a MUST for a decomposition containing arithmetic, so
-    /// exempting the whole payload would leave that clause undetectable by any harness.
-    ///
-    /// **The gap:** [`Tolerance::Exact`]'s computed-NaN arm is `d == 0`, and
-    /// `ulp_distance_*` returns `0` for *any* both-NaN pair. So it delivers NaN-ness but
-    /// NOT quietness, and ACCEPTS a candidate returning a signaling NaN where a quiet one
-    /// is required.
-    ///
-    /// **Why it is deferred rather than fixed here:** the check must MIRROR KISS #352's
-    /// `compare_f32` provenance mechanism, not be independently invented — a second
-    /// independent copy of a normative rule is exactly the defect that mechanism exists to
-    /// remove. So this waits for #352 to land.
-    ///
-    /// ⚠️ **WHEN #352 LANDS AND THE QUIETNESS CHECK IS ADDED, THIS TEST GOES RED. That is
-    /// its entire purpose.** The failure is the signal to delete this test and close the
-    /// deferral — do **not** "fix" it by relaxing the new check.
+    /// KISS-CONFORM-6.8-0010's COMPUTED arm, mirroring KISS #352's `compare_nan_output`:
+    /// match iff the observed result is also NaN and, **where the dtype's encoding admits
+    /// a signaling NaN, agrees in QUIETNESS with the expected value**. Payload and sign
+    /// stay uncompared — the quiet bit is carved explicitly OUT of that exemption, because
+    /// KISS-OPS-6.16-0010 makes delivering a quiet NaN a MUST for a decomposition
+    /// containing arithmetic, and exempting the whole payload would leave that clause
+    /// undetectable by any conformant harness.
     #[test]
-    fn tier2_computed_nan_quietness_is_not_yet_compared_kiss_352() {
-        const QUIET_BIT_F32: u32 = 0x0040_0000;
-
+    fn exact_compares_quietness_on_a_computed_nan_but_never_payload_or_sign() {
+        const QUIET: u32 = 0x0040_0000;
         let computed: [&[f32]; 1] = [&[f32::INFINITY, f32::NEG_INFINITY]];
-        let reference = reference_f32(Op::Add, &computed).unwrap()[0];
-        assert!(reference.is_nan(), "add(inf, -inf) mints a NaN");
+        let e = reference_f32(Op::Add, &computed).unwrap()[0];
         assert!(
-            reference.to_bits() & QUIET_BIT_F32 != 0,
-            "the reference's computed NaN is QUIET, so quietness is the axis under test"
+            e.is_nan() && e.to_bits() & QUIET != 0,
+            "add(inf,-inf) mints a QUIET NaN, so quietness is the axis under test"
         );
 
-        // A candidate returning a SIGNALING NaN: exponent all-ones, quiet bit CLEAR,
-        // payload non-zero. KISS-OPS-6.16-0010 forbids this for an arithmetic
-        // decomposition, and f32's encoding admits sNaN, so §6.8-0010's quietness
-        // comparison is NOT vacuous here (it is vacuous only for f8e4m3fn).
-        let signaling = f32::from_bits(0x7F80_0001);
-        assert!(signaling.is_nan(), "0x7F800001 is a NaN");
-        assert!(
-            signaling.to_bits() & QUIET_BIT_F32 == 0,
-            "…and it is SIGNALING"
-        );
-
-        assert!(
-            diff_f32(Op::Add, &computed, &[signaling], Tolerance::Exact)
+        // The architectural-payload carve-out STANDS: a computed NaN's payload and sign
+        // are still not compared (the sm_89-vs-x86 witness in this module's docs).
+        for (bits, why) in [
+            (0x7FC0_ABCDu32, "a different PAYLOAD still conforms"),
+            (0xFFC0_0001, "a different SIGN still conforms"),
+        ] {
+            assert!(
+                diff_f32(
+                    Op::Add,
+                    &computed,
+                    &[f32::from_bits(bits)],
+                    Tolerance::Exact
+                )
                 .unwrap()
                 .conforms(),
-            "KNOWN GAP (KISS #352): Exact currently ACCEPTS a signaling NaN where \
-             §6.8-0010 requires quietness to be compared. When the quietness check \
-             lands, this assertion flips — delete this test and close the deferral."
+                "{why}"
+            );
+        }
+
+        // …but QUIETNESS is compared, and f32's encoding admits a signaling NaN, so the
+        // comparison is NOT vacuous here. A signaling result where quiet is expected is a
+        // detectable §6.16-0010 violation and MUST fail.
+        let signaling = f32::from_bits(0x7F80_0001);
+        assert!(
+            signaling.is_nan() && signaling.to_bits() & QUIET == 0,
+            "0x7F800001 is a SIGNALING NaN"
+        );
+        assert!(
+            !diff_f32(Op::Add, &computed, &[signaling], Tolerance::Exact)
+                .unwrap()
+                .conforms(),
+            "a signaling NaN where §6.16-0010 requires quiet MUST be a mismatch"
         );
     }
 
