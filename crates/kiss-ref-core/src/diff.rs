@@ -139,31 +139,51 @@ fn quiet_f32(x: f32) -> bool {
     x.to_bits() & 0x0040_0000 != 0
 }
 
-/// The whole `Tolerance::Exact` decision for the `f64` lane: §6.8-0010(a) binds a
-/// **determined** (moved) NaN exact-byte, payload and sign included; a **computed** NaN
-/// goes to [`computed_nan_conforms`]. `f64` admits a signaling NaN, so quietness is
-/// compared and never vacuous here.
+/// The whole conformance decision for the `f64` lane.
+///
+/// ⚠️ **The NaN rule is COMPARATOR-INDEPENDENT, and that is not a detail.** §6.8-0010 scopes
+/// the refinement by the NaN's **provenance** "and by nothing else", and applies it "under
+/// **every** KISS-Conform comparator, the exact-byte comparator (§6.8-0001) included". So a
+/// NaN is decided by provenance FIRST; the tolerance governs only the **finite** comparison.
+///
+/// It would be easy to fix only the `Exact` arm — and wrong. The ULP band is where the
+/// **transcendentals** live, and transcendentals are minting ops, so a **computed NaN is
+/// MORE likely under a tolerance than under `Exact`**, not less. A `Tolerance::Ulp` that
+/// accepted any NaN (which it did, because `ulp_distance_*` scores both-NaN as 0) was the
+/// larger half of the same hole.
 #[inline]
-fn exact_conforms_f64(determined: bool, e: f64, g: f64, d: u64) -> bool {
-    if determined {
-        e.to_bits() == g.to_bits()
-    } else if e.is_nan() || g.is_nan() {
-        computed_nan_conforms(e.is_nan(), g.is_nan(), true, quiet_f64(e), quiet_f64(g))
+fn conforms_f64(determined: bool, e: f64, g: f64, d: u64, tol: Tolerance) -> bool {
+    if e.is_nan() || g.is_nan() {
+        if determined {
+            // §6.8-0010(a): the moved bytes — payload and sign included — ARE the
+            // contract, and a tolerance does not make them negotiable.
+            e.to_bits() == g.to_bits()
+        } else {
+            computed_nan_conforms(e.is_nan(), g.is_nan(), true, quiet_f64(e), quiet_f64(g))
+        }
     } else {
-        d == 0
+        match tol {
+            Tolerance::Exact => d == 0,
+            Tolerance::Ulp(n) => d <= n,
+        }
     }
 }
 
-/// The `f32` lane's [`Tolerance::Exact`] decision. Same rule as [`exact_conforms_f64`];
-/// `f32` also admits a signaling NaN.
+/// The `f32` lane's conformance decision. Same rule as [`conforms_f64`], including the
+/// comparator-independence of the NaN arm; `f32` also admits a signaling NaN.
 #[inline]
-fn exact_conforms_f32(determined: bool, e: f32, g: f32, d: u64) -> bool {
-    if determined {
-        e.to_bits() == g.to_bits()
-    } else if e.is_nan() || g.is_nan() {
-        computed_nan_conforms(e.is_nan(), g.is_nan(), true, quiet_f32(e), quiet_f32(g))
+fn conforms_f32(determined: bool, e: f32, g: f32, d: u64, tol: Tolerance) -> bool {
+    if e.is_nan() || g.is_nan() {
+        if determined {
+            e.to_bits() == g.to_bits()
+        } else {
+            computed_nan_conforms(e.is_nan(), g.is_nan(), true, quiet_f32(e), quiet_f32(g))
+        }
     } else {
-        d == 0
+        match tol {
+            Tolerance::Exact => d == 0,
+            Tolerance::Ulp(n) => d <= n,
+        }
     }
 }
 
@@ -247,15 +267,10 @@ pub fn diff_f64(
         if d > report.max_ulp {
             report.max_ulp = d;
         }
-        let ok = match tol {
-            // §6.8-0010(a): a determined-NaN op (a move / bit-transform) compares
-            // exact-byte, payload+sign — so a wrong moved NaN payload fails even at
-            // 0 ULP. A computed-NaN op's payload and sign stay uncompared (arithmetic
-            // re-mints the payload per device — the module witness), but its QUIETNESS
-            // is compared per §6.8-0010; see `exact_conforms_f64`.
-            Tolerance::Exact => exact_conforms_f64(determined, e, g, d),
-            Tolerance::Ulp(n) => d <= n,
-        };
+        // §6.8-0010 decides a NaN by PROVENANCE under EVERY comparator — a moved NaN
+        // exact-byte (payload+sign), a computed NaN by NaN-ness plus quietness — while
+        // the tolerance governs only the FINITE comparison. See `conforms_f64`.
+        let ok = conforms_f64(determined, e, g, d, tol);
         if !ok {
             report.mismatches += 1;
             if report.first_mismatch.is_none() {
@@ -293,15 +308,10 @@ pub fn diff_f32(
         if d > report.max_ulp {
             report.max_ulp = d;
         }
-        let ok = match tol {
-            // §6.8-0010(a): a determined-NaN op (a move / bit-transform) compares
-            // exact-byte, payload+sign — so a wrong moved NaN payload fails even at
-            // 0 ULP. A computed-NaN op's payload and sign stay uncompared (arithmetic
-            // re-mints the payload per device — the module witness), but its QUIETNESS
-            // is compared per §6.8-0010; see `exact_conforms_f32`.
-            Tolerance::Exact => exact_conforms_f32(determined, e, g, d),
-            Tolerance::Ulp(n) => d <= n,
-        };
+        // §6.8-0010 decides a NaN by PROVENANCE under EVERY comparator — a moved NaN
+        // exact-byte (payload+sign), a computed NaN by NaN-ness plus quietness — while
+        // the tolerance governs only the FINITE comparison. See `conforms_f32`.
+        let ok = conforms_f32(determined, e, g, d, tol);
         if !ok {
             report.mismatches += 1;
             if report.first_mismatch.is_none() {
@@ -384,15 +394,10 @@ pub fn diff_expr(
         if d > report.max_ulp {
             report.max_ulp = d;
         }
-        let ok = match tol {
-            // §6.8-0010(a): a determined-NaN op (a move / bit-transform) compares
-            // exact-byte, payload+sign — so a wrong moved NaN payload fails even at
-            // 0 ULP. A computed-NaN op's payload and sign stay uncompared (arithmetic
-            // re-mints the payload per device — the module witness), but its QUIETNESS
-            // is compared per §6.8-0010; see `exact_conforms_f64`.
-            Tolerance::Exact => exact_conforms_f64(determined, e, g, d),
-            Tolerance::Ulp(n) => d <= n,
-        };
+        // §6.8-0010 decides a NaN by PROVENANCE under EVERY comparator — a moved NaN
+        // exact-byte (payload+sign), a computed NaN by NaN-ness plus quietness — while
+        // the tolerance governs only the FINITE comparison. See `conforms_f64`.
+        let ok = conforms_f64(determined, e, g, d, tol);
         if !ok {
             report.mismatches += 1;
             if report.first_mismatch.is_none() {
@@ -438,15 +443,10 @@ pub fn diff_expr_f32(
         if d > report.max_ulp {
             report.max_ulp = d;
         }
-        let ok = match tol {
-            // §6.8-0010(a): a determined-NaN op (a move / bit-transform) compares
-            // exact-byte, payload+sign — so a wrong moved NaN payload fails even at
-            // 0 ULP. A computed-NaN op's payload and sign stay uncompared (arithmetic
-            // re-mints the payload per device — the module witness), but its QUIETNESS
-            // is compared per §6.8-0010; see `exact_conforms_f32`.
-            Tolerance::Exact => exact_conforms_f32(determined, e, g, d),
-            Tolerance::Ulp(n) => d <= n,
-        };
+        // §6.8-0010 decides a NaN by PROVENANCE under EVERY comparator — a moved NaN
+        // exact-byte (payload+sign), a computed NaN by NaN-ness plus quietness — while
+        // the tolerance governs only the FINITE comparison. See `conforms_f32`.
+        let ok = conforms_f32(determined, e, g, d, tol);
         if !ok {
             report.mismatches += 1;
             if report.first_mismatch.is_none() {
@@ -515,29 +515,29 @@ macro_rules! narrow_diff {
                 if d > report.max_ulp {
                     report.max_ulp = d;
                 }
-                let ok = match tol {
-                    // §6.8-0010(a): determined-NaN ops compare exact-byte
-                    // (payload+sign). A computed NaN's payload and sign stay
-                    // uncompared, but its QUIETNESS is compared where THIS dtype's
-                    // encoding admits a signaling NaN — vacuous for `f8e4m3fn`, whose
-                    // single NaN encoding cannot represent the distinction. See the
-                    // scalar seam above and `computed_nan_conforms`.
-                    Tolerance::Exact => {
-                        if determined {
-                            e.to_bits() == g.to_bits()
-                        } else if e.is_nan() || g.is_nan() {
-                            computed_nan_conforms(
-                                e.is_nan(),
-                                g.is_nan(),
-                                $admits_snan,
-                                ($quiet)(e.to_bits()),
-                                ($quiet)(g.to_bits()),
-                            )
-                        } else {
-                            d == 0
-                        }
+                // §6.8-0010 decides a NaN by PROVENANCE under EVERY comparator, so the
+                // NaN arm sits OUTSIDE the tolerance match: a moved NaN compares
+                // exact-byte (payload+sign); a computed NaN by NaN-ness plus QUIETNESS
+                // where THIS dtype's encoding admits a signaling NaN — vacuous for
+                // `f8e4m3fn`, whose single NaN encoding cannot represent the
+                // distinction. The tolerance governs only the FINITE comparison.
+                let ok = if e.is_nan() || g.is_nan() {
+                    if determined {
+                        e.to_bits() == g.to_bits()
+                    } else {
+                        computed_nan_conforms(
+                            e.is_nan(),
+                            g.is_nan(),
+                            $admits_snan,
+                            ($quiet)(e.to_bits()),
+                            ($quiet)(g.to_bits()),
+                        )
                     }
-                    Tolerance::Ulp(n) => d <= n,
+                } else {
+                    match tol {
+                        Tolerance::Exact => d == 0,
+                        Tolerance::Ulp(n) => d <= n,
+                    }
                 };
                 if !ok {
                     report.mismatches += 1;
@@ -614,29 +614,29 @@ macro_rules! narrow_expr {
                 if d > report.max_ulp {
                     report.max_ulp = d;
                 }
-                let ok = match tol {
-                    // §6.8-0010(a): determined-NaN ops compare exact-byte
-                    // (payload+sign). A computed NaN's payload and sign stay
-                    // uncompared, but its QUIETNESS is compared where THIS dtype's
-                    // encoding admits a signaling NaN — vacuous for `f8e4m3fn`, whose
-                    // single NaN encoding cannot represent the distinction. See the
-                    // scalar seam above and `computed_nan_conforms`.
-                    Tolerance::Exact => {
-                        if determined {
-                            e.to_bits() == g.to_bits()
-                        } else if e.is_nan() || g.is_nan() {
-                            computed_nan_conforms(
-                                e.is_nan(),
-                                g.is_nan(),
-                                $admits_snan,
-                                ($quiet)(e.to_bits()),
-                                ($quiet)(g.to_bits()),
-                            )
-                        } else {
-                            d == 0
-                        }
+                // §6.8-0010 decides a NaN by PROVENANCE under EVERY comparator, so the
+                // NaN arm sits OUTSIDE the tolerance match: a moved NaN compares
+                // exact-byte (payload+sign); a computed NaN by NaN-ness plus QUIETNESS
+                // where THIS dtype's encoding admits a signaling NaN — vacuous for
+                // `f8e4m3fn`, whose single NaN encoding cannot represent the
+                // distinction. The tolerance governs only the FINITE comparison.
+                let ok = if e.is_nan() || g.is_nan() {
+                    if determined {
+                        e.to_bits() == g.to_bits()
+                    } else {
+                        computed_nan_conforms(
+                            e.is_nan(),
+                            g.is_nan(),
+                            $admits_snan,
+                            ($quiet)(e.to_bits()),
+                            ($quiet)(g.to_bits()),
+                        )
                     }
-                    Tolerance::Ulp(n) => d <= n,
+                } else {
+                    match tol {
+                        Tolerance::Exact => d == 0,
+                        Tolerance::Ulp(n) => d <= n,
+                    }
                 };
                 if !ok {
                     report.mismatches += 1;
@@ -727,29 +727,29 @@ macro_rules! fp8_diff {
                 if d > report.max_ulp {
                     report.max_ulp = d;
                 }
-                let ok = match tol {
-                    // §6.8-0010(a): determined-NaN ops compare exact-byte
-                    // (payload+sign). A computed NaN's payload and sign stay
-                    // uncompared, but its QUIETNESS is compared where THIS dtype's
-                    // encoding admits a signaling NaN — vacuous for `f8e4m3fn`, whose
-                    // single NaN encoding cannot represent the distinction. See the
-                    // scalar seam above and `computed_nan_conforms`.
-                    Tolerance::Exact => {
-                        if determined {
-                            e.to_bits() == g.to_bits()
-                        } else if e.is_nan() || g.is_nan() {
-                            computed_nan_conforms(
-                                e.is_nan(),
-                                g.is_nan(),
-                                $admits_snan,
-                                ($quiet)(e.to_bits()),
-                                ($quiet)(g.to_bits()),
-                            )
-                        } else {
-                            d == 0
-                        }
+                // §6.8-0010 decides a NaN by PROVENANCE under EVERY comparator, so the
+                // NaN arm sits OUTSIDE the tolerance match: a moved NaN compares
+                // exact-byte (payload+sign); a computed NaN by NaN-ness plus QUIETNESS
+                // where THIS dtype's encoding admits a signaling NaN — vacuous for
+                // `f8e4m3fn`, whose single NaN encoding cannot represent the
+                // distinction. The tolerance governs only the FINITE comparison.
+                let ok = if e.is_nan() || g.is_nan() {
+                    if determined {
+                        e.to_bits() == g.to_bits()
+                    } else {
+                        computed_nan_conforms(
+                            e.is_nan(),
+                            g.is_nan(),
+                            $admits_snan,
+                            ($quiet)(e.to_bits()),
+                            ($quiet)(g.to_bits()),
+                        )
                     }
-                    Tolerance::Ulp(n) => d <= n,
+                } else {
+                    match tol {
+                        Tolerance::Exact => d == 0,
+                        Tolerance::Ulp(n) => d <= n,
+                    }
                 };
                 if !ok {
                     report.mismatches += 1;
@@ -1085,6 +1085,47 @@ mod tests {
                 .unwrap()
                 .conforms(),
             "a signaling NaN where §6.16-0010 requires quiet MUST be a mismatch"
+        );
+    }
+
+    /// ⚠️ **The NaN rule is COMPARATOR-INDEPENDENT.** §6.8-0010 scopes the refinement by the
+    /// NaN's **provenance** "and by nothing else", and says it "applies under **every**
+    /// KISS-Conform comparator, the exact-byte comparator (§6.8-0001) included". A ULP
+    /// tolerance bounds the FINITE comparison; it does not licence a NaN mismatch.
+    ///
+    /// This matters most on exactly this arm: the ULP band is where the **transcendentals**
+    /// live, and transcendentals are minting ops — so a computed NaN is MORE likely under a
+    /// tolerance than under `Exact`, not less.
+    #[test]
+    fn the_nan_rule_holds_under_a_ulp_tolerance_too_not_only_exact() {
+        // COMPUTED: quietness is still compared under a tolerance.
+        let computed: [&[f32]; 1] = [&[f32::INFINITY, f32::NEG_INFINITY]];
+        let signaling = [f32::from_bits(0x7F80_0001)];
+        assert!(
+            !diff_f32(Op::Add, &computed, &signaling, Tolerance::Ulp(4))
+                .unwrap()
+                .conforms(),
+            "a signaling NaN must fail under a ULP tolerance too — the tolerance bounds \
+             the finite comparison, not the NaN rule"
+        );
+        // …and the payload carve-out still stands there: a different payload conforms.
+        let other = [f32::from_bits(0x7FC0_ABCD)];
+        assert!(
+            diff_f32(Op::Add, &computed, &other, Tolerance::Ulp(4))
+                .unwrap()
+                .conforms(),
+            "a computed NaN's payload stays architectural under a tolerance as well"
+        );
+
+        // MOVED: §6.8-0010(a)'s exact-byte contract does not become negotiable because a
+        // tolerance is in force — the moved bytes ARE the contract.
+        let rows: [&[f32]; 1] = [&[f32::from_bits(0x7FC0_1234), f32::from_bits(0x7FC0_5678)]];
+        let wrong = [f32::from_bits(0x7FC0_FFFF)];
+        assert!(
+            !diff_f32(Op::MinProp, &rows, &wrong, Tolerance::Ulp(4))
+                .unwrap()
+                .conforms(),
+            "a moved NaN's payload is the contract and a ULP band does not relax it"
         );
     }
 
