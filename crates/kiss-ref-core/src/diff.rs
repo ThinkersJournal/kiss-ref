@@ -909,6 +909,62 @@ mod tests {
         );
     }
 
+    /// ⚠️ **THIS TEST PINS A KNOWN GAP, NOT A DESIRED BEHAVIOUR.** It is a detector for a
+    /// deliberate deferral, so the deferral cannot be closed silently or forgotten quietly.
+    ///
+    /// **The obligation:** KISS-CONFORM-6.8-0010 (ratified in KISS #388) requires the
+    /// computed-NaN comparator to match *iff* the observed result "is also NaN and, where
+    /// the result dtype's encoding admits a signaling NaN, agrees in **quietness**" —
+    /// payload and sign are exempt, the **quiet bit is not**: KISS-OPS-6.16-0010 makes
+    /// delivering a *quiet* NaN a MUST for a decomposition containing arithmetic, so
+    /// exempting the whole payload would leave that clause undetectable by any harness.
+    ///
+    /// **The gap:** [`Tolerance::Exact`]'s computed-NaN arm is `d == 0`, and
+    /// `ulp_distance_*` returns `0` for *any* both-NaN pair. So it delivers NaN-ness but
+    /// NOT quietness, and ACCEPTS a candidate returning a signaling NaN where a quiet one
+    /// is required.
+    ///
+    /// **Why it is deferred rather than fixed here:** the check must MIRROR KISS #352's
+    /// `compare_f32` provenance mechanism, not be independently invented — a second
+    /// independent copy of a normative rule is exactly the defect that mechanism exists to
+    /// remove. So this waits for #352 to land.
+    ///
+    /// ⚠️ **WHEN #352 LANDS AND THE QUIETNESS CHECK IS ADDED, THIS TEST GOES RED. That is
+    /// its entire purpose.** The failure is the signal to delete this test and close the
+    /// deferral — do **not** "fix" it by relaxing the new check.
+    #[test]
+    fn tier2_computed_nan_quietness_is_not_yet_compared_kiss_352() {
+        const QUIET_BIT_F32: u32 = 0x0040_0000;
+
+        let computed: [&[f32]; 1] = [&[f32::INFINITY, f32::NEG_INFINITY]];
+        let reference = reference_f32(Op::Add, &computed).unwrap()[0];
+        assert!(reference.is_nan(), "add(inf, -inf) mints a NaN");
+        assert!(
+            reference.to_bits() & QUIET_BIT_F32 != 0,
+            "the reference's computed NaN is QUIET, so quietness is the axis under test"
+        );
+
+        // A candidate returning a SIGNALING NaN: exponent all-ones, quiet bit CLEAR,
+        // payload non-zero. KISS-OPS-6.16-0010 forbids this for an arithmetic
+        // decomposition, and f32's encoding admits sNaN, so §6.8-0010's quietness
+        // comparison is NOT vacuous here (it is vacuous only for f8e4m3fn).
+        let signaling = f32::from_bits(0x7F80_0001);
+        assert!(signaling.is_nan(), "0x7F800001 is a NaN");
+        assert!(
+            signaling.to_bits() & QUIET_BIT_F32 == 0,
+            "…and it is SIGNALING"
+        );
+
+        assert!(
+            diff_f32(Op::Add, &computed, &[signaling], Tolerance::Exact)
+                .unwrap()
+                .conforms(),
+            "KNOWN GAP (KISS #352): Exact currently ACCEPTS a signaling NaN where \
+             §6.8-0010 requires quietness to be compared. When the quietness check \
+             lands, this assertion flips — delete this test and close the deferral."
+        );
+    }
+
     #[test]
     fn diff_conforms_within_ulp_tolerance() {
         let rows: [&[f64]; 2] = [&[0.5], &[1.0]];
