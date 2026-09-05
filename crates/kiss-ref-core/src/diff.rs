@@ -1129,6 +1129,105 @@ mod tests {
         );
     }
 
+    /// One lane's worth of the computed-NaN quietness contract: `0/0` mints a quiet NaN,
+    /// a SIGNALING candidate is rejected, a quiet candidate with a different payload
+    /// conforms. `0/0` rather than `inf - inf` because `f8e4m3fn` has no infinity.
+    macro_rules! quietness_case {
+        ($refr:ident, $diff:ident, $t:ty, $zero:expr, $snan:expr, $qnan:expr, $lane:literal) => {{
+            let rows: [&[$t]; 1] = [&[$zero, $zero]];
+            let r = $refr(Op::Div, &rows).unwrap()[0];
+            assert!(r.is_nan(), concat!($lane, ": 0/0 mints a NaN"));
+            assert!(
+                !$diff(Op::Div, &rows, &[$snan], Tolerance::Exact)
+                    .unwrap()
+                    .conforms(),
+                concat!($lane, ": a SIGNALING NaN must be rejected")
+            );
+            assert!(
+                $diff(Op::Div, &rows, &[$qnan], Tolerance::Exact)
+                    .unwrap()
+                    .conforms(),
+                concat!(
+                    $lane,
+                    ": a quiet NaN with a different payload still conforms"
+                )
+            );
+        }};
+    }
+
+    /// The quietness comparison must be live on **every** lane whose encoding admits a
+    /// signaling NaN — not only the `f32` lane the first test covered. The macro-generated
+    /// lanes were unverified, which is the same build-at-N-sites / verify-at-one shape as
+    /// the rest of this change's history.
+    #[test]
+    fn computed_nan_quietness_is_compared_on_every_snan_admitting_lane() {
+        use half::{bf16, f16};
+        quietness_case!(
+            reference_f64,
+            diff_f64,
+            f64,
+            0.0f64,
+            f64::from_bits(0x7FF0_0000_0000_0001),
+            f64::from_bits(0x7FF8_0000_0000_ABCD),
+            "f64"
+        );
+        quietness_case!(
+            reference_f16,
+            diff_f16,
+            f16,
+            f16::from_bits(0),
+            f16::from_bits(0x7C01),
+            f16::from_bits(0x7E01),
+            "f16"
+        );
+        quietness_case!(
+            reference_bf16,
+            diff_bf16,
+            bf16,
+            bf16::from_bits(0),
+            bf16::from_bits(0x7F81),
+            bf16::from_bits(0x7FC1),
+            "bf16"
+        );
+        quietness_case!(
+            reference_e5m2,
+            diff_e5m2,
+            crate::fp8::E5m2,
+            crate::fp8::E5m2::from_bits(0),
+            crate::fp8::E5m2::from_bits(0x7D),
+            crate::fp8::E5m2::from_bits(0x7E),
+            "f8e5m2"
+        );
+    }
+
+    /// ⚠️ `f8e4m3fn` is the VACUOUS lane — §6.8-0010 forbids synthesizing a quietness
+    /// distinction its single NaN encoding cannot represent.
+    #[test]
+    fn computed_nan_quietness_is_vacuous_on_f8e4m3fn() {
+        use crate::fp8::E4m3;
+        let rows: [&[E4m3]; 1] = [&[E4m3::from_bits(0), E4m3::from_bits(0)]];
+        assert!(
+            reference_e4m3(Op::Div, &rows).unwrap()[0].is_nan(),
+            "0/0 mints f8e4m3fn's single NaN"
+        );
+        // Its only NaN encodings are S.1111.111 — 0x7F and 0xFF. Both must conform: a
+        // computed NaN's sign is not compared, and there is no quietness to compare.
+        for bits in [0x7Fu8, 0xFF] {
+            assert!(
+                diff_e4m3(Op::Div, &rows, &[E4m3::from_bits(bits)], Tolerance::Exact)
+                    .unwrap()
+                    .conforms(),
+                "f8e4m3fn: {bits:#04x} must conform — no quietness distinction exists to fail on"
+            );
+        }
+        // ⚠️ HONEST LIMIT, stated rather than implied: this pins the OBSERVABLE behaviour
+        // but cannot falsify the vacuity FLAG itself. Both of f8e4m3fn's NaNs have every
+        // mantissa bit set, so even a spurious quiet-bit mask would read both as "quiet"
+        // and the comparison would pass anyway. The flag's value is structural — it stops a
+        // quiet bit being read from a format that has none — and that is not black-box
+        // observable here. A test that cannot fail for the reason it names should say so.
+    }
+
     #[test]
     fn diff_conforms_within_ulp_tolerance() {
         let rows: [&[f64]; 2] = [&[0.5], &[1.0]];
