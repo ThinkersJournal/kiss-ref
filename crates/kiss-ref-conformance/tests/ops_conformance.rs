@@ -74,6 +74,103 @@ fn test_ops_abs_raw_bit() {
     assert!(ev(Op::Abs, &[f64::NAN]).is_nan());
 }
 
+// The narrow-float sign ops `neg`/`abs`/`copysign` are RAW-BIT sign transforms, so a NaN
+// operand's payload is preserved (result is a NaN with the same payload, sign
+// flipped/cleared/copied): KISS-OPS-6.4-0003 / -6.4-0004 / -6.9-0002. For bf16/f16/f8e5m2,
+// KISS-OPS-6.2-0001 routes to §6.16, where KISS-OPS-6.16-0009 names a
+// promote-to-`f32`-and-round-back implementation NON-CONFORMING because it quiets a moved
+// signaling NaN. (KISS #399 leaves the §6.4-vs-§6.16 scope citation open; the obligation
+// holds under either reading.) These drive `eval_op` at the narrow *storage* dtype so the
+// sign op's own body runs, not the `f64` path the atom tests above use. Teeth: the previous
+// `from_f32(-self.to_f32())` body ran bf16 through `half`'s quieting widening, so
+// `neg(0x7F81)` returned `0xFFC1` (payload `0x01` -> `0x41`), not `0xFF81`.
+//
+// sNaN / -1.0 bit patterns: bf16 0x7F81 / 0xBF80, f16 0x7C01 / 0xBC00, f8e5m2 0x7D / 0xBC.
+
+#[test]
+fn test_ops_neg_raw_bit_narrow() {
+    // KISS-OPS-6.4-0003 (+ -6.16-0009 for narrow): flip the sign bit, keep the sNaN payload.
+    use half::{bf16, f16};
+    use kiss_ref_core::E5m2;
+    assert_eq!(
+        eval_op(Op::Neg, &[bf16::from_bits(0x7F81)])
+            .unwrap()
+            .to_bits(),
+        0xFF81
+    );
+    assert_eq!(
+        eval_op(Op::Neg, &[f16::from_bits(0x7C01)])
+            .unwrap()
+            .to_bits(),
+        0xFC01
+    );
+    assert_eq!(
+        eval_op(Op::Neg, &[E5m2::from_bits(0x7D)])
+            .unwrap()
+            .to_bits(),
+        0xFD
+    );
+}
+
+#[test]
+fn test_ops_abs_raw_bit_narrow() {
+    // KISS-OPS-6.4-0004 (+ -6.16-0009 for narrow): clear the sign bit, keep the sNaN payload.
+    use half::{bf16, f16};
+    use kiss_ref_core::E5m2;
+    assert_eq!(
+        eval_op(Op::Abs, &[bf16::from_bits(0xFF81)])
+            .unwrap()
+            .to_bits(),
+        0x7F81
+    );
+    assert_eq!(
+        eval_op(Op::Abs, &[f16::from_bits(0xFC01)])
+            .unwrap()
+            .to_bits(),
+        0x7C01
+    );
+    assert_eq!(
+        eval_op(Op::Abs, &[E5m2::from_bits(0xFD)])
+            .unwrap()
+            .to_bits(),
+        0x7D
+    );
+}
+
+#[test]
+fn test_ops_copysign_raw_bit_narrow() {
+    // KISS-OPS-6.9-0002 (+ -6.16-0009 for narrow): magnitude of a, sign of b, keep sNaN payload.
+    use half::{bf16, f16};
+    use kiss_ref_core::E5m2;
+    assert_eq!(
+        eval_op(
+            Op::Copysign,
+            &[bf16::from_bits(0x7F81), bf16::from_bits(0xBF80)]
+        )
+        .unwrap()
+        .to_bits(),
+        0xFF81
+    );
+    assert_eq!(
+        eval_op(
+            Op::Copysign,
+            &[f16::from_bits(0x7C01), f16::from_bits(0xBC00)]
+        )
+        .unwrap()
+        .to_bits(),
+        0xFC01
+    );
+    assert_eq!(
+        eval_op(
+            Op::Copysign,
+            &[E5m2::from_bits(0x7D), E5m2::from_bits(0xBC)]
+        )
+        .unwrap()
+        .to_bits(),
+        0xFD
+    );
+}
+
 // ---- §6.5 raw-bit select ----------------------------------------------------
 
 #[test]
