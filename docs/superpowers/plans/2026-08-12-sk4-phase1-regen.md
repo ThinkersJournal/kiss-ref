@@ -1,6 +1,22 @@
 # kiss-ref sk4 Phase-1 Regen — Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> ## ✅ STATUS: COMPLETE AND SUPERSEDED — THIS IS AN ARCHIVED RECORD, NOT A WORK QUEUE. DO NOT EXECUTE.
+>
+> Every step below shipped in **0.3.0** (published to crates.io 2026-08-13), since superseded by
+> 0.3.3 and **0.3.4**. All 18 boxes are ticked because the work is done, not as bookkeeping:
+> verified 2026-09-05 against the tree, not from recall — the 10 named `classify_*` tests all
+> exist and pass (`classify_dtype_set_has_exactly_twenty_four`,
+> `classify_reserved_and_mx_recognized_but_decline_compute`, `classify_sk3_spellings_are_no_longer_dtypes`,
+> …), `declines_compute`/`is_reserved`/`is_mx_scale` exist, `Error::ReservedOrScaleDtype` exists,
+> `coverage_reserved_and_mx_dtypes_not_applicable` exists, and the workspace is at 0.3.4.
+> The two "out of this plan's execution" items also happened: the Architect's spec-currency
+> statement was received (anchor `19c3ad7`) and Eric authorised the 0.3.0 publish.
+>
+> ⚠️ The instruction line below is retained for provenance and is **inert**. A completed plan whose
+> boxes stay unticked under an executable header reads as a full unstarted work queue to any agent
+> or auditor that finds it — the defect this header now prevents.
+>
+> **[historical] For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Rebind kiss-ref's op+dtype vocabulary and semantic/coverage layer to the merged **sk4 Phase-0** KISS spec (`ThinkersJournal/KISS@f4cc3ad`, main tip `19c3ad7`), landing as the breaking **0.3.0**.
 
@@ -66,10 +82,10 @@ Current kiss-classify-vocab = **20** tokens (sk3, and already missing the 2 sk3 
 - `pub const fn declines_compute(self) -> bool` — `is_reserved() || is_mx_scale()` (recognized token with no element-value compute semantics at sk4).
 - `component_dtype`: `C64→Some(F32)`, `C128→Some(F64)`.
 
-- [ ] **Step 1 — failing tests first.** Update/add in the `tests` module: `classify_dtype_set_has_exactly_twenty` → `...twenty_four` (assert `ALL.len()==24`); `classify_tokens_round_trip_and_are_unique` (24 distinct); rename spelling test to assert `I8.token()=="i8"`, `I16=="i16"`, `I4=="i4"`, `F8e4m3fn.token()=="f8e4m3fn"`, `F8e5m2.token()=="f8e5m2"`; `component_dtype`: `C64→F32`, `C128→F64`; bit widths: `C64==64`, `C128==128`, `F8e8m0==8`, `F8e6m2==8`; unknown-token set now excludes the sk4 tokens but still rejects `s8`,`e4m3`,`c32` (the *sk3* spellings are now unknown); NEW: `classify_reserved_and_mx_recognized_but_decline` (from_token Some for all 4, `declines_compute()` true, `is_reserved`/`is_mx_scale` partition them), `classify_fnuz_and_mx_tokens` (exact spellings). Run: `cargo test -p kiss-classify-vocab` → expect FAIL (variants/tokens don't exist yet).
-- [ ] **Step 2 — respell the enum + impls.** Rewrite `Dtype` (rename S8/S16/S4→I8/I16/I4, E4m3/E5m2→F8e4m3fn/F8e5m2, C32/C64→C64/C128; add F8e4m3fnuz, F8e5m2fnuz, F8e8m0, F8e6m2 in §6.1 table order). Update `ALL` (24, table order), `token()`, `numeric_kind()` (MX scales = Float; complex = C64/C128), `bits()`, `component_dtype()`, and add `is_reserved`/`is_mx_scale`/`declines_compute`. Update crate + variant docs (drop the "must ride sk4" caveat — it's now done; NumericKind doc examples to sk4 spellings; "exactly 20"→"exactly 24").
-- [ ] **Step 3 — green.** Run: `cargo test -p kiss-classify-vocab` → PASS. Then `cargo fmt` + `cargo clippy -p kiss-classify-vocab --all-targets -- -D warnings`.
-- [ ] **Step 4 — commit.** `git add -A && git commit` — `feat(sk4)!: respell kiss-classify-vocab to the sk4 24-dtype set (§6.1)`.
+- [x] **Step 1 — failing tests first.** Update/add in the `tests` module: `classify_dtype_set_has_exactly_twenty` → `...twenty_four` (assert `ALL.len()==24`); `classify_tokens_round_trip_and_are_unique` (24 distinct); rename spelling test to assert `I8.token()=="i8"`, `I16=="i16"`, `I4=="i4"`, `F8e4m3fn.token()=="f8e4m3fn"`, `F8e5m2.token()=="f8e5m2"`; `component_dtype`: `C64→F32`, `C128→F64`; bit widths: `C64==64`, `C128==128`, `F8e8m0==8`, `F8e6m2==8`; unknown-token set now excludes the sk4 tokens but still rejects `s8`,`e4m3`,`c32` (the *sk3* spellings are now unknown); NEW: `classify_reserved_and_mx_recognized_but_decline` (from_token Some for all 4, `declines_compute()` true, `is_reserved`/`is_mx_scale` partition them), `classify_fnuz_and_mx_tokens` (exact spellings). Run: `cargo test -p kiss-classify-vocab` → expect FAIL (variants/tokens don't exist yet).
+- [x] **Step 2 — respell the enum + impls.** Rewrite `Dtype` (rename S8/S16/S4→I8/I16/I4, E4m3/E5m2→F8e4m3fn/F8e5m2, C32/C64→C64/C128; add F8e4m3fnuz, F8e5m2fnuz, F8e8m0, F8e6m2 in §6.1 table order). Update `ALL` (24, table order), `token()`, `numeric_kind()` (MX scales = Float; complex = C64/C128), `bits()`, `component_dtype()`, and add `is_reserved`/`is_mx_scale`/`declines_compute`. Update crate + variant docs (drop the "must ride sk4" caveat — it's now done; NumericKind doc examples to sk4 spellings; "exactly 20"→"exactly 24").
+- [x] **Step 3 — green.** Run: `cargo test -p kiss-classify-vocab` → PASS. Then `cargo fmt` + `cargo clippy -p kiss-classify-vocab --all-targets -- -D warnings`.
+- [x] **Step 4 — commit.** `git add -A && git commit` — `feat(sk4)!: respell kiss-classify-vocab to the sk4 24-dtype set (§6.1)`.
 
 ### Task 2: kiss-ref-core Dtype-variant rename ripple (compiler-guided)
 
@@ -77,10 +93,10 @@ Current kiss-classify-vocab = **20** tokens (sk3, and already missing the 2 sk3 
 
 **Note — Rust FP8 *type* vs Dtype variant:** the Rust structs `E4m3`/`E5m2` in `fp8.rs` (re-exported as `kiss_ref_core::E4m3`) are compute/storage types, **not** tokens — KEEP their Rust names (renaming is churn with no conformance value). Only the `Dtype` *variant* + token respell. Document the `Dtype::F8e4m3fn ↔ E4m3`(type) mapping where it's non-obvious.
 
-- [ ] **Step 1 — compile as the test.** `cargo build -p kiss-ref-core` → expect a bounded set of E0599 "no variant" errors listing every rename site.
-- [ ] **Step 2 — mechanical rename**, respecting the complex-flip ordering hazard (update `C64`→`C128` occurrences that mean pair-f64 first, then `C32`→`C64`; verify by the bits()/component_dtype() semantics, not blind text). Sites known: `component_dtype` consumers, `complex.rs` (c32/c64 component), `fp8.rs`, `resolve.rs` (legality/support/implemented_on match arms), coverage.
-- [ ] **Step 3 — green.** `cargo test -p kiss-ref-core` → PASS; then workspace `cargo test --workspace` (conformance tests reference `Dtype::` too). Fix ripple in `crates/kiss-ref-conformance/tests/*.rs` (e.g. `coverage.rs` INT_DTYPES `S8,S16,S4` → `I8,I16,I4`; the `[E4m3,E5m2]` lists → `[F8e4m3fn,F8e5m2]`).
-- [ ] **Step 4 — commit.** `refactor(sk4)!: ripple the §6.1 dtype-variant respell through kiss-ref-core + conformance`.
+- [x] **Step 1 — compile as the test.** `cargo build -p kiss-ref-core` → expect a bounded set of E0599 "no variant" errors listing every rename site.
+- [x] **Step 2 — mechanical rename**, respecting the complex-flip ordering hazard (update `C64`→`C128` occurrences that mean pair-f64 first, then `C32`→`C64`; verify by the bits()/component_dtype() semantics, not blind text). Sites known: `component_dtype` consumers, `complex.rs` (c32/c64 component), `fp8.rs`, `resolve.rs` (legality/support/implemented_on match arms), coverage.
+- [x] **Step 3 — green.** `cargo test -p kiss-ref-core` → PASS; then workspace `cargo test --workspace` (conformance tests reference `Dtype::` too). Fix ripple in `crates/kiss-ref-conformance/tests/*.rs` (e.g. `coverage.rs` INT_DTYPES `S8,S16,S4` → `I8,I16,I4`; the `[E4m3,E5m2]` lists → `[F8e4m3fn,F8e5m2]`).
+- [x] **Step 4 — commit.** `refactor(sk4)!: ripple the §6.1 dtype-variant respell through kiss-ref-core + conformance`.
 
 ### Task 3: reserved + MX dtypes decline compute (typed, distinct from unknown)
 
@@ -88,11 +104,11 @@ Current kiss-classify-vocab = **20** tokens (sk3, and already missing the 2 sk3 
 
 **Design:** recognized-vs-unknown already splits at `from_token` (Some vs None). For compute: a reserved/MX dtype is **compute-illegal** → `legality(op, d)==false` → `support==NotApplicable` for every op; and the eval path returns a typed `Error::ReservedOrScaleDtype(Dtype)` distinct from an unknown-dtype path. The op×dtype matrix grows to 24 dtypes; the 4 new columns are entirely NotApplicable.
 
-- [ ] **Step 1 — failing tests.** In `coverage.rs`: `for op in Op::ALL { for d in [F8e4m3fnuz,F8e5m2fnuz,F8e8m0,F8e6m2] { assert_eq!(support(op,d), NotApplicable) } }`; assert `Dtype::from_token("f8e4m3fnuz").is_some()` (recognized) while these decline. Add an eval-path test asserting a reserved dtype yields the typed decline. Run → FAIL.
-- [ ] **Step 2 — implement.** `legality`: early-return false for `d.declines_compute()`. Add `Error::ReservedOrScaleDtype(Dtype)` and return it on the eval entry when a value operand's dtype `declines_compute()`. Update the `coverage_support_consistency` `expect` match to map the 4 new dtypes → not-Done.
-- [ ] **Step 3 — green.** `cargo test --workspace` → PASS.
-- [ ] **Step 4 — commit.** `feat(sk4): reserved-fnuz + MX-scale dtypes are recognized but decline compute (typed)`.
-- [ ] **⚠ CONFIRM WITH ARCHITECT:** is `NotApplicable` the intended ledger verdict for reserved/MX (vs. a distinct "reserved-at-this-schema" state)? My read: NotApplicable + a typed decline error + recognized-`from_token` captures the spec's recognize-vs-unknown split honestly. Adjust if the Architect wants a 5th state.
+- [x] **Step 1 — failing tests.** In `coverage.rs`: `for op in Op::ALL { for d in [F8e4m3fnuz,F8e5m2fnuz,F8e8m0,F8e6m2] { assert_eq!(support(op,d), NotApplicable) } }`; assert `Dtype::from_token("f8e4m3fnuz").is_some()` (recognized) while these decline. Add an eval-path test asserting a reserved dtype yields the typed decline. Run → FAIL.
+- [x] **Step 2 — implement.** `legality`: early-return false for `d.declines_compute()`. Add `Error::ReservedOrScaleDtype(Dtype)` and return it on the eval entry when a value operand's dtype `declines_compute()`. Update the `coverage_support_consistency` `expect` match to map the 4 new dtypes → not-Done.
+- [x] **Step 3 — green.** `cargo test --workspace` → PASS.
+- [x] **Step 4 — commit.** `feat(sk4): reserved-fnuz + MX-scale dtypes are recognized but decline compute (typed)`.
+- [x] **⚠ CONFIRM WITH ARCHITECT:** is `NotApplicable` the intended ledger verdict for reserved/MX (vs. a distinct "reserved-at-this-schema" state)? My read: NotApplicable + a typed decline error + recognized-`from_token` captures the spec's recognize-vs-unknown split honestly. Adjust if the Architect wants a 5th state.
 
 ### Task 4: visible Provisional cell state + SortNetwork #133 pin  ⚠ PENDING ARCHITECT MODELING CONFIRM
 
@@ -110,11 +126,11 @@ Only if the Architect says kiss-ref grows a structure_key emitter this phase. Cu
 
 **Files:** `Cargo.toml` + each crate manifest (version + inter-crate dep versions).
 
-- [ ] **Step 1** — bump workspace + all 4 crates + inter-crate deps `0.2.4` → `0.3.0`.
-- [ ] **Step 2** — run all gates (fmt, clippy -D, `cargo test --workspace`, no_std thumbv7em, `cargo package --workspace --allow-dirty`). All green.
-- [ ] **Step 3 — byte-match leg.** Derive the 24 dtype tokens + 121 op tokens; state the EXACT command+flags used; report **3-of-4** (KISS reference, Fuel, kiss-ref) with unpopped-vocab@sk4 **unpublished** (sk4 respell `7d2c5d7`, unpushed, crate 0.1.0) explicitly excluded. Re-verify the vocab against `f4cc3ad`.
-- [ ] **Step 4 — commit + PR** — `chore(sk4)!: bump workspace to 0.3.0 (breaking sk4 regen)`; open PR; watch CI + reviewer comments.
-- [ ] **Step 5** — request Architect spec-currency statement (by commit) → then Eric authorizes the publish. (Both out of this plan's execution.)
+- [x] **Step 1** — bump workspace + all 4 crates + inter-crate deps `0.2.4` → `0.3.0`.
+- [x] **Step 2** — run all gates (fmt, clippy -D, `cargo test --workspace`, no_std thumbv7em, `cargo package --workspace --allow-dirty`). All green.
+- [x] **Step 3 — byte-match leg.** Derive the 24 dtype tokens + 121 op tokens; state the EXACT command+flags used; report **3-of-4** (KISS reference, Fuel, kiss-ref) with unpopped-vocab@sk4 **unpublished** (sk4 respell `7d2c5d7`, unpushed, crate 0.1.0) explicitly excluded. Re-verify the vocab against `f4cc3ad`.
+- [x] **Step 4 — commit + PR** — `chore(sk4)!: bump workspace to 0.3.0 (breaking sk4 regen)`; open PR; watch CI + reviewer comments.
+- [x] **Step 5** — request Architect spec-currency statement (by commit) → then Eric authorizes the publish. (Both out of this plan's execution.)
 
 ---
 
