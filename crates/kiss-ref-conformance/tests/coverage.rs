@@ -245,6 +245,54 @@ fn coverage_illegal_cells_are_not_applicable() {
     assert_eq!(support(Op::LogicalAnd, Dtype::Bool), Support::Done);
 }
 
+/// ⚠️ `Error::UnsupportedDtype` must keep meaning exactly ONE thing.
+///
+/// Its doc once claimed two: "an integer op on a float dtype" (**spec-illegal**, permanent)
+/// and "a dtype with no reference path yet" (**incompleteness**, transient). A caller must
+/// respond to those oppositely — *this will never work* versus *this does not work yet* —
+/// and one code cannot say which. Measured 2026-09-06: every emission site is the first
+/// kind (`int_spec` refusing a non-integer dtype in `scalar_int.rs` / `tensor_int.rs`, and
+/// the bool guard in `boolean.rs`), so the second meaning is emitted nowhere.
+///
+/// The coverage ledger keeps the distinction the error type erases: `NotApplicable` is the
+/// permanent typed compute-decline, `Pending` is the backlog. **While `pending` is EMPTY the
+/// ambiguity is latent rather than live** — there is no cell in the incompleteness state for
+/// the code to have to describe.
+///
+/// ⚠️ This pins that, and it is deliberately **independent of KISS #420**. The KISS-side
+/// decline-code VOCABULARY is deferred to that ruling (mirroring a ruled set beats inventing
+/// a private one), but the detector is not: the day a `Pending` cell appears, one code starts
+/// meaning two things, and this test goes RED under any #420 outcome. **The fix then is to
+/// SPLIT the variant — the enum is `#[non_exhaustive]`, so that is additive — never to relax
+/// this assertion.**
+#[test]
+fn unsupported_dtype_is_unambiguously_spec_illegal_while_pending_is_empty() {
+    let l = ledger();
+    assert!(
+        l.pending.is_empty(),
+        "a Pending cell now exists, so Error::UnsupportedDtype can mean BOTH spec-illegal \
+         and not-yet-implemented. SPLIT the variant (see KISS #420) — do not relax this: {:?}",
+        l.pending_tokens()
+    );
+
+    // Both surfaces on one cell, so the linkage is pinned rather than incidental: a bitwise
+    // atom on a float is spec-illegal (KISS-OPS-6.10-0001), the ledger calls it
+    // NotApplicable, and the integer path's own predicate refuses the dtype — which is
+    // precisely what raises UnsupportedDtype there.
+    assert_eq!(support(Op::BitAnd, Dtype::F32), Support::NotApplicable);
+    assert!(
+        int_spec(Dtype::F32).is_none(),
+        "int_spec is the predicate behind the decline; if it accepted a float the error \
+         would no longer mean what this test says it means"
+    );
+    // Control: the same predicate ACCEPTS a legal integer dtype, so the assertion above is
+    // discriminating rather than true of everything.
+    assert!(
+        int_spec(Dtype::I32).is_some(),
+        "control: i32 is an integer dtype"
+    );
+}
+
 #[test]
 fn coverage_bool_truth_cells_done() {
     // The truth-valued bool ops (logical / eq / select / min-max / {0,1}-preserving

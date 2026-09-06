@@ -110,8 +110,17 @@ pub enum Error {
     /// A stored §6.13 decomposition string failed to parse (a vocab bug — the
     /// conformance suite guards against this).
     BadDecomposition { op: Op, pos: usize },
-    /// The op is not defined on this dtype in this seed (e.g. an integer op on a
-    /// float dtype, or a dtype with no reference path yet).
+    /// A dtype outside the legal dtype class of the path that was entered (e.g. an
+    /// integer path given a non-integer dtype). This is the **spec-illegal** decline —
+    /// the dtype is never legal there.
+    ///
+    /// ⚠️ Permanent, not transient: this means *the standard forbids this*, never *this
+    /// is not implemented yet*. A caller must be able to tell those apart, so an
+    /// incompleteness decline would get its **own** variant rather than reusing this one
+    /// (this enum is `#[non_exhaustive]`, so adding one is non-breaking). The coverage
+    /// ledger draws the same line — [`Support::NotApplicable`] versus [`Support::Pending`]
+    /// — and this variant corresponds to the former. Naming to follow KISS #420's
+    /// op-evaluation decline-code set.
     UnsupportedDtype(Dtype),
     /// A differential candidate slice length did not match the reference length.
     LengthMismatch { expected: usize, got: usize },
