@@ -1068,21 +1068,20 @@ fn test_decomp_tensor_coverage_is_declared_not_assumed() {
     assert_eq!(NOT_COVERED.len(), 4);
 }
 
-#[test]
-fn test_decomp_tensor_matmul_equals_element_map_then_reduce() {
-    // §6.13 `matmul`: "reduce(sum, axis=K) of element_map(mul(input(0), input(1)))",
-    // input(0) read at [m,k] broadcast over N and input(1) at [k,n] broadcast over M
-    // (KISS-OPS-6.11-0001). This is a REAL differential: `tensor_ops::matmul` is a
-    // hand-written accumulation loop, while the right-hand side is built here from
-    // the two structural atoms over the explicit (m,n,k) iteration space. Both fold
-    // K ascending from the sum identity, so the §6.13 form is reproduced BIT-EXACTLY
-    // (not merely within the KISS-OPS-6.0-0004 nondeterminism the op declares).
-    let (m, k, n) = (3usize, 4usize, 2usize);
-    let a: Vec<f64> = (1..=(m * k)).map(|i| i as f64 * 0.5 - 3.0).collect();
-    let b: Vec<f64> = (1..=(k * n)).map(|i| i as f64 * 0.25 - 1.0).collect();
-    let direct = tops::matmul(&t(&a, &[m, k]).view(), &t(&b, &[k, n]).view()).unwrap();
-
-    // materialize the (m,n,k) iteration space with the KISS-OPS-6.11-0001 broadcast reads
+/// The §6.13 `matmul` form, built from the two structural atoms over the explicit
+/// `(m,n,k)` iteration space: `reduce(sum, axis=K)` of `element_map(mul(input(0), input(1)))`,
+/// with `input(0)` read at `[m,k]` broadcast over N and `input(1)` at `[k,n]` broadcast over M
+/// (KISS-OPS-6.11-0001).
+///
+/// Shared by the two matmul differentials below so the reference model cannot DRIFT between
+/// them — they differ in which REGION they sample (exact dyadic values versus
+/// order-sensitive ones), not in what the decomposition is. If §6.13's form changes, this is
+/// the single edit; two copies could otherwise diverge and leave one test validating a form
+/// the spec no longer has.
+///
+/// ⚠️ It is deliberately built here from the atoms and NOT from `tensor_ops::matmul`, which
+/// is the thing under test — extracting it changes nothing about that independence.
+fn decomposed_matmul(a: &[f64], b: &[f64], m: usize, k: usize, n: usize) -> Tensor<f64> {
     let mut a3 = Vec::with_capacity(m * n * k);
     let mut b3 = Vec::with_capacity(m * n * k);
     for i in 0..m {
@@ -1099,7 +1098,31 @@ fn test_decomp_tensor_matmul_equals_element_map_then_reduce() {
         &[m, n, k],
     )
     .unwrap();
-    let recomposed = reduce(&prod.view(), Monoid::Sum, &[2]).unwrap();
+    reduce(&prod.view(), Monoid::Sum, &[2]).unwrap()
+}
+
+#[test]
+fn test_decomp_tensor_matmul_equals_element_map_then_reduce() {
+    // §6.13 `matmul`: "reduce(sum, axis=K) of element_map(mul(input(0), input(1)))",
+    // input(0) read at [m,k] broadcast over N and input(1) at [k,n] broadcast over M
+    // (KISS-OPS-6.11-0001). This is a REAL differential: `tensor_ops::matmul` is a
+    // hand-written accumulation loop, while the right-hand side is built here from
+    // the two structural atoms over the explicit (m,n,k) iteration space.
+    //
+    // ⚠️ SCOPE OF WHAT THIS PROVES: the inputs below are exact dyadic values (multiples
+    // of 0.5 and 0.25, small magnitudes), so every partial sum is exact and reassociation
+    // CANNOT change the result. The bit-equality therefore tests the VALUE semantics —
+    // the decomposition computes the same products and sums them over the right axis —
+    // and it does NOT test that the two sides use the same K-fold SCHEDULE: it would hold
+    // under any pair of schedules. The schedule claim is tested separately, on inputs
+    // where reassociation is observable, by
+    // `test_decomp_matmul_schedule_agreement_where_reassociation_is_observable`.
+    let (m, k, n) = (3usize, 4usize, 2usize);
+    let a: Vec<f64> = (1..=(m * k)).map(|i| i as f64 * 0.5 - 3.0).collect();
+    let b: Vec<f64> = (1..=(k * n)).map(|i| i as f64 * 0.25 - 1.0).collect();
+    let direct = tops::matmul(&t(&a, &[m, k]).view(), &t(&b, &[k, n]).view()).unwrap();
+
+    let recomposed = decomposed_matmul(&a, &b, m, k, n);
 
     assert_eq!(direct.shape(), &[m, n]);
     assert_eq!(recomposed.shape(), &[m, n, 1]); // keepdim on the contracted axis
@@ -1115,6 +1138,62 @@ fn test_decomp_tensor_matmul_equals_element_map_then_reduce() {
     // b = [[-0.75,-0.5],[-0.25,0],[0.25,0.5],[0.75,1]]
     // row0·col0 = 1.875 + 0.5 - 0.375 - 0.75 = 1.25
     assert_eq!(direct.as_slice()[0], 1.25);
+}
+
+/// ⚠️ The schedule half of the matmul differential, on inputs where reassociation is
+/// OBSERVABLE.
+///
+/// The sibling test above asserts `matmul` == its §6.13 decomposition bit-exactly. Its
+/// inputs are exact dyadic values, so every partial sum is exact: reassociation cannot
+/// change the result and that assertion holds under ANY pair of K-fold schedules. It is a
+/// real test that passes for a real reason, and it cannot fail for the schedule reason —
+/// so the schedule agreement needs its own vectors, drawn from the region where the two
+/// readings DIVERGE rather than where they agree.
+///
+/// KISS-OPS-6.0-0004 leaves the reduction order unpinned, so "both fold K ascending" is a
+/// property of THIS implementation that a consumer of the differential seam relies on; if
+/// it ever stopped holding, only a test like this one would notice.
+#[test]
+fn test_decomp_matmul_schedule_agreement_where_reassociation_is_observable() {
+    let (m, k, n) = (1usize, 4usize, 1usize);
+    // Products a·b = [1e16, 1, -1e16, 1] — a magnitude spread wide enough that the sum
+    // depends on the order it is taken in.
+    let a: Vec<f64> = vec![1e16, 1.0, 1e16, 1.0];
+    let b: Vec<f64> = vec![1.0, 1.0, -1.0, 1.0];
+
+    // BUILT-IN CONTROL: the same four products, summed in a different order, give a
+    // DIFFERENT answer. Without this the vectors could quietly become exact — the very
+    // defect this test exists to fix — and nothing would say so.
+    let ascending = (((0.0f64 + 1e16) + 1.0) + -1e16) + 1.0;
+    let regrouped = (((0.0f64 + 1.0) + 1.0) + 1e16) + -1e16;
+    assert_ne!(
+        ascending.to_bits(),
+        regrouped.to_bits(),
+        "control: these products must be order-SENSITIVE or this test proves nothing \
+         (ascending={ascending:e}, regrouped={regrouped:e})"
+    );
+
+    let direct = tops::matmul(&t(&a, &[m, k]).view(), &t(&b, &[k, n]).view()).unwrap();
+
+    let recomposed = decomposed_matmul(&a, &b, m, k, n);
+
+    // Now bit-equality is load-bearing: on these inputs it can only hold if both sides
+    // fold K in the same order.
+    assert_eq!(
+        direct.as_slice()[0].to_bits(),
+        recomposed.as_slice()[0].to_bits(),
+        "matmul and its decomposition disagree where reassociation is observable — they \
+         are folding K differently ({:e} vs {:e})",
+        direct.as_slice()[0],
+        recomposed.as_slice()[0]
+    );
+    // …and names WHICH schedule, so a future change to either side is a red rather than a
+    // silently different-but-still-equal pair.
+    assert_eq!(
+        direct.as_slice()[0].to_bits(),
+        ascending.to_bits(),
+        "both sides must fold K ASCENDING from the sum identity"
+    );
 }
 
 #[test]
