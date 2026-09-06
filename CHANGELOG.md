@@ -5,6 +5,23 @@ All notable changes to the published crates (`kiss-classify-vocab`, `kiss-ops-vo
 conformance crate is unpublished. Format follows [Keep a Changelog]; versions are
 [SemVer].
 
+## [Unreleased]
+
+### Changed
+
+- **MIT copyright holder is now `Thinker's Journal`** (was `Eric Evans`), in the root
+  `LICENSE-MIT` and the three published crate copies. Ruled by the copyright owner:
+  Thinker's Journal is the non-profit that should hold the rights to code written for
+  it, and it is expected to gain members beyond its current sole member.
+
+  - **Not a licence change.** The licence remains `MIT OR Apache-2.0` — a dual licence
+    under which a consumer may take *either*. No manifest, no SPDX header, and no
+    `LICENSE-APACHE` file changes; only the MIT holder line moves.
+  - **No consumer action.** Both attributions were authorized by the same owner, so
+    the already-published 0.3.4 (which carries `Eric Evans`) is valid as shipped. This
+    is a go-forward convention, not a defect fix, and rides the next release rather
+    than triggering one.
+
 ## [0.3.4] — 2026-09-05
 
 ### Fixed
