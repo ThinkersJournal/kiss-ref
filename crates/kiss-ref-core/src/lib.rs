@@ -110,8 +110,23 @@ pub enum Error {
     /// A stored §6.13 decomposition string failed to parse (a vocab bug — the
     /// conformance suite guards against this).
     BadDecomposition { op: Op, pos: usize },
-    /// The op is not defined on this dtype in this seed (e.g. an integer op on a
-    /// float dtype, or a dtype with no reference path yet).
+    /// A dtype outside the legal dtype class of the path that was entered: an integer
+    /// path given a non-integer dtype (`int_spec` refuses it — `scalar_int.rs`,
+    /// `tensor_int.rs`) or the bool path given a non-bool dtype (`boolean.rs`). This is
+    /// the **spec-illegal** decline — the dtype is never legal there.
+    ///
+    /// ⚠️ It is **not** the "not implemented yet" decline, though this doc previously
+    /// claimed both. Those are opposite claims — *this will never work* versus *this does
+    /// not work yet* — and a caller must respond to them differently. Measured: no
+    /// emission site produces the second meaning, so the doc asserted a behaviour the code
+    /// does not have.
+    ///
+    /// The coverage ledger keeps the two apart (`Support::NotApplicable` versus
+    /// `Support::Pending`) and this variant must not be made to carry both. If an
+    /// incompleteness decline is ever needed it gets its OWN variant — the enum is
+    /// `#[non_exhaustive]`, so that is additive — named per KISS #420's op-evaluation
+    /// decline-code set once that lands. Pinned by
+    /// `coverage::unsupported_dtype_is_unambiguously_spec_illegal_while_pending_is_empty`.
     UnsupportedDtype(Dtype),
     /// A differential candidate slice length did not match the reference length.
     LengthMismatch { expected: usize, got: usize },
