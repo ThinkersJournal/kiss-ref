@@ -1068,6 +1068,39 @@ fn test_decomp_tensor_coverage_is_declared_not_assumed() {
     assert_eq!(NOT_COVERED.len(), 4);
 }
 
+/// The §6.13 `matmul` form, built from the two structural atoms over the explicit
+/// `(m,n,k)` iteration space: `reduce(sum, axis=K)` of `element_map(mul(input(0), input(1)))`,
+/// with `input(0)` read at `[m,k]` broadcast over N and `input(1)` at `[k,n]` broadcast over M
+/// (KISS-OPS-6.11-0001).
+///
+/// Shared by the two matmul differentials below so the reference model cannot DRIFT between
+/// them — they differ in which REGION they sample (exact dyadic values versus
+/// order-sensitive ones), not in what the decomposition is. If §6.13's form changes, this is
+/// the single edit; two copies could otherwise diverge and leave one test validating a form
+/// the spec no longer has.
+///
+/// ⚠️ It is deliberately built here from the atoms and NOT from `tensor_ops::matmul`, which
+/// is the thing under test — extracting it changes nothing about that independence.
+fn decomposed_matmul(a: &[f64], b: &[f64], m: usize, k: usize, n: usize) -> Tensor<f64> {
+    let mut a3 = Vec::with_capacity(m * n * k);
+    let mut b3 = Vec::with_capacity(m * n * k);
+    for i in 0..m {
+        for j in 0..n {
+            for p in 0..k {
+                a3.push(a[i * k + p]); // input(0)[m,k], stride 0 on N
+                b3.push(b[p * n + j]); // input(1)[k,n], stride 0 on M
+            }
+        }
+    }
+    let prod = element_map(
+        &parse("mul(a, b)").unwrap(),
+        &[t(&a3, &[m, n, k]).view(), t(&b3, &[m, n, k]).view()],
+        &[m, n, k],
+    )
+    .unwrap();
+    reduce(&prod.view(), Monoid::Sum, &[2]).unwrap()
+}
+
 #[test]
 fn test_decomp_tensor_matmul_equals_element_map_then_reduce() {
     // §6.13 `matmul`: "reduce(sum, axis=K) of element_map(mul(input(0), input(1)))",
@@ -1089,24 +1122,7 @@ fn test_decomp_tensor_matmul_equals_element_map_then_reduce() {
     let b: Vec<f64> = (1..=(k * n)).map(|i| i as f64 * 0.25 - 1.0).collect();
     let direct = tops::matmul(&t(&a, &[m, k]).view(), &t(&b, &[k, n]).view()).unwrap();
 
-    // materialize the (m,n,k) iteration space with the KISS-OPS-6.11-0001 broadcast reads
-    let mut a3 = Vec::with_capacity(m * n * k);
-    let mut b3 = Vec::with_capacity(m * n * k);
-    for i in 0..m {
-        for j in 0..n {
-            for p in 0..k {
-                a3.push(a[i * k + p]); // input(0)[m,k], stride 0 on N
-                b3.push(b[p * n + j]); // input(1)[k,n], stride 0 on M
-            }
-        }
-    }
-    let prod = element_map(
-        &parse("mul(a, b)").unwrap(),
-        &[t(&a3, &[m, n, k]).view(), t(&b3, &[m, n, k]).view()],
-        &[m, n, k],
-    )
-    .unwrap();
-    let recomposed = reduce(&prod.view(), Monoid::Sum, &[2]).unwrap();
+    let recomposed = decomposed_matmul(&a, &b, m, k, n);
 
     assert_eq!(direct.shape(), &[m, n]);
     assert_eq!(recomposed.shape(), &[m, n, 1]); // keepdim on the contracted axis
@@ -1159,24 +1175,7 @@ fn test_decomp_matmul_schedule_agreement_where_reassociation_is_observable() {
 
     let direct = tops::matmul(&t(&a, &[m, k]).view(), &t(&b, &[k, n]).view()).unwrap();
 
-    // The §6.13 form over the explicit (m,n,k) space, as in the sibling test.
-    let mut a3 = Vec::with_capacity(m * n * k);
-    let mut b3 = Vec::with_capacity(m * n * k);
-    for i in 0..m {
-        for j in 0..n {
-            for p in 0..k {
-                a3.push(a[i * k + p]);
-                b3.push(b[p * n + j]);
-            }
-        }
-    }
-    let prod = element_map(
-        &parse("mul(a, b)").unwrap(),
-        &[t(&a3, &[m, n, k]).view(), t(&b3, &[m, n, k]).view()],
-        &[m, n, k],
-    )
-    .unwrap();
-    let recomposed = reduce(&prod.view(), Monoid::Sum, &[2]).unwrap();
+    let recomposed = decomposed_matmul(&a, &b, m, k, n);
 
     // Now bit-equality is load-bearing: on these inputs it can only hold if both sides
     // fold K in the same order.
