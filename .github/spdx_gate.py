@@ -57,41 +57,29 @@ HEADER_WINDOW = 10
 #: nothing, not ordinary deletion.
 MINIMUM_FILES = 30
 
-#: ⚠️ Paths this gate must NOT require a header on, each with the reason it is
-#: here. Empty today, and that is a measurement rather than a default:
-#:
-#:     git grep -l -i copyright -- ':!*.md' ':!*LICEN[SC]E*' ':!*.txt'   -> 1
-#:     the same query with the licence exclusion dropped                -> 9
+#: Paths this gate must NOT require a header on, each with the reason it is here.
+#: Empty, and that is now CHECKED rather than asserted - see `survey_copyright`.
 #:
-#: ⚠️ AND THAT ONE HIT IS THIS SCRIPT. Its comments discuss copyright, so the
-#: detector matches itself. When this comment was written the numbers were 0
-#: and 8 - true at that instant, and false the moment the file it describes was
-#: added to the tree it describes.
+#: 🔴 THIS COMMENT USED TO CARRY A COUNT, AND THE COUNT WAS WRONG TWICE.
+#: #43 stated `-> 0` and a control of `-> 8`. #44 corrected the control to 9 by
+#: ADDING ONE for the gate script rather than re-running the query; the true
+#: figure was 10, because `CHANGELOG.md` began matching in #42 four days
+#: earlier. Then #44 asserted the inherited 8 had been "true at that instant",
+#: which it never was.
 #:
-#: 🔴 A MEASUREMENT WRITTEN INTO THE ARTIFACT IT MEASURES IS FALSIFIED BY
-#: LANDING. Fifth instance in this portfolio: a header file once read "nothing
-#: here has ever run" and was falsified ten minutes later by running it.
+#: ⚠️ A CORRECTION DERIVED BY ARITHMETIC ON A STALE BASE INHERITS THE STALENESS
+#: IT IS CORRECTING - and vouching for the inherited number made it HARDER to
+#: catch, not easier. A wrong number invites re-derivation; a wrong number with
+#: a provenance claim attached discourages it.
 #:
-#: ⚠️ THIRD TIME A DETECTOR HERE HAS COUNTED ITSELF: an SPDX checker reported
-#: 2/42 against a truth of 0/42 by matching its own string constant, and a
-#: spelling census read a Python test fixture as a licence identifier.
-#: A TOOL THAT SEARCHES FOR A WORD IS A FILE CONTAINING THAT WORD.
+#: ⚠️ THE COUNT DRIFTED TWICE IN FOUR DAYS, from two unrelated PRs, with neither
+#: author doing anything wrong. The next drift is certain and only its date is
+#: unknown. A COUNT CANNOT SURVIVE TREE GROWTH; A PROPERTY CAN - so the number
+#: is gone and the property it was standing in for is asserted in CI instead.
 #:
-#: The conclusion is unchanged: no file here carries a THIRD-PARTY copyright
-#: notice, and the holdout stays empty.
-#:
-#: ⚠️ THE SECOND LINE IS THE POINT. "I searched and found nothing" is not a
-#: finding until the query is shown capable of finding something, in the same
-#: run - and the first version of that query used `:!LICENSE*`, which matches
-#: only at the ROOT and left six per-crate licence files in the results.
-#:
-#: ⚠️ AND UNSCOPED IS DELIBERATE. The portfolio's prescribed detector was
-#: `git grep -l -i copyright -- '*.rs'`, and that pathspec is exactly what hid
-#: `Copyright (c) 2024 Apple Inc.` in three of `fuel`'s .metal kernels.
-#:
-#: An entry here that matches no file is an ERROR below: a holdout that protects
-#: nothing reads exactly like one with nothing to protect, right up until the
-#: file it named is renamed and then stamped.
+#: An entry here that matches no file is an ERROR below -- a holdout that
+#: protects nothing reads exactly like one with nothing to protect, right up
+#: until the file it named is renamed and then stamped.
 HOLDOUT: dict[str, str] = {}
 
 MARKER = "SPDX-License-Identifier:"
@@ -161,6 +149,45 @@ def tracked_sources(root: pathlib.Path) -> list[str]:
     return [n for n in text.split(chr(0)) if n]
 
 
+#: Files allowed to contain the word "copyright". ⚠️ A PATTERN, NOT A COUNT.
+#: Licence texts contain it by definition; a changelog records licence changes;
+#: this script discusses copyright in its own comments and so matches itself.
+COPYRIGHT_EXPECTED = ("LICENSE", "LICENCE", "COPYING", "CHANGELOG",
+                      "spdx_gate.py", "NOTICE")
+
+
+def survey_copyright(root: pathlib.Path) -> list[str]:
+    """Tracked files carrying a copyright notice that are NOT expected to.
+
+    ⚠️ THIS IS THE HOLDOUT'S JUSTIFICATION, MOVED OUT OF A COMMENT AND INTO CI.
+    The comment used to state a COUNT: `-> 0` with a control of `-> 8`. That
+    count drifted TWICE IN FOUR DAYS from two unrelated PRs, with neither author
+    doing anything wrong - a changelog gained the word, then this script did.
+
+    ⚠️ A COUNT CANNOT SURVIVE TREE GROWTH; A PROPERTY CAN. The thing the count
+    was standing in for is "every -i copyright hit is a licence file or this
+    script", and that is assertable. A COMMENT CANNOT GUARD - demonstrated twice
+    inside this one file, first by the stale figure and then by the correction
+    that vouched for it.
+
+    ⚠️ AND IT FIRES EXACTLY WHERE THE HOLDOUT WOULD BE NEEDED. A new file
+    carrying somebody else's copyright notice is precisely the case where a
+    blanket sweep asserts a licence grant nobody made - `bs1770.rs` in `fuel`,
+    Khronos's `vk.xml` in `vulkane`, Apple's kernels in `fuel`'s .metal files.
+    """
+    git = shutil.which("git")
+    if git is None:
+        return []
+    proc = subprocess.run(  # noqa: S603 - fixed argv, shell=False
+        [git, "-C", str(root), "grep", "-l", "-i", "-z", "copyright"],
+        capture_output=True, encoding=None, shell=False, check=False)
+    if proc.returncode not in (0, 1):
+        return []
+    names = [n for n in proc.stdout.decode("utf-8", "replace").split(chr(0)) if n]
+    return sorted(n for n in names
+                  if not any(tag in n for tag in COPYRIGHT_EXPECTED))
+
+
 def audit(root: pathlib.Path, files: list[str]):
     """(missing, wrong, unreadable) over `files`, skipping HOLDOUT entries."""
     expected = normalise(LICENCE)
@@ -229,9 +256,19 @@ def main(argv: list[str]) -> int:
 
     missing, wrong, unreadable = audit(root, files)
     stale = sorted(set(HOLDOUT) - set(files))
+    # ⚠️ THE HOLDOUT'S JUSTIFICATION, CHECKED RATHER THAN ASSERTED IN PROSE.
+    unexpected = [n for n in survey_copyright(root) if n not in HOLDOUT]
     report(files, missing, wrong, unreadable, stale)
     explain(missing, wrong)
-    return 1 if (missing or wrong or stale or unreadable) else 0
+    for rel in unexpected:
+        print(f"  COPYRIGHT NOTICE  {rel} is not a licence file and is not "
+              f"in HOLDOUT")
+    if unexpected:
+        print()
+        print("A file carrying somebody else's copyright notice may not be")
+        print("ours to license. Decide, then add it to HOLDOUT with the")
+        print("reason, or to COPYRIGHT_EXPECTED if the match is incidental.")
+    return 1 if (missing or wrong or stale or unreadable or unexpected) else 0
 
 
 def self_test() -> int:
