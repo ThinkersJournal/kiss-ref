@@ -60,8 +60,25 @@ MINIMUM_FILES = 30
 #: ⚠️ Paths this gate must NOT require a header on, each with the reason it is
 #: here. Empty today, and that is a measurement rather than a default:
 #:
-#:     git grep -l -i copyright -- ':!*.md' ':!*LICEN[SC]E*' ':!*.txt'   -> 0
-#:     the same query with the licence exclusion dropped                -> 8
+#:     git grep -l -i copyright -- ':!*.md' ':!*LICEN[SC]E*' ':!*.txt'   -> 1
+#:     the same query with the licence exclusion dropped                -> 9
+#:
+#: ⚠️ AND THAT ONE HIT IS THIS SCRIPT. Its comments discuss copyright, so the
+#: detector matches itself. When this comment was written the numbers were 0
+#: and 8 - true at that instant, and false the moment the file it describes was
+#: added to the tree it describes.
+#:
+#: 🔴 A MEASUREMENT WRITTEN INTO THE ARTIFACT IT MEASURES IS FALSIFIED BY
+#: LANDING. Fifth instance in this portfolio: a header file once read "nothing
+#: here has ever run" and was falsified ten minutes later by running it.
+#:
+#: ⚠️ THIRD TIME A DETECTOR HERE HAS COUNTED ITSELF: an SPDX checker reported
+#: 2/42 against a truth of 0/42 by matching its own string constant, and a
+#: spelling census read a Python test fixture as a licence identifier.
+#: A TOOL THAT SEARCHES FOR A WORD IS A FILE CONTAINING THAT WORD.
+#:
+#: The conclusion is unchanged: no file here carries a THIRD-PARTY copyright
+#: notice, and the holdout stays empty.
 #:
 #: ⚠️ THE SECOND LINE IS THE POINT. "I searched and found nothing" is not a
 #: finding until the query is shown capable of finding something, in the same
