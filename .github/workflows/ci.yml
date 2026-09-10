@@ -45,6 +45,46 @@ env:
   NOSTD_TARGET: thumbv7em-none-eabi
 
 jobs:
+  # A SEVENTH HARD GATE, and the only one that needs no Rust toolchain at all.
+  #
+  # This workspace is ALREADY 39/39 on SPDX headers, so there is nothing to fix
+  # here and that is exactly why this job exists. A SWEEP DOES NOT FIX A
+  # PROPERTY THAT REGROWS: `fuel` stamped 795 files on 2026-08-19 and had
+  # drifted to 823/833 by 2026-09-10 - nothing was undone, ten files were added
+  # afterwards and nothing was watching. This repo is currently correct and has
+  # no mechanism keeping it that way; the 40th file is the one at risk.
+  #
+  # A SEPARATE JOB RATHER THAN A SEVENTH STEP IN `gates`, DELIBERATELY. A job
+  # that dies in an earlier step asserts nothing about the steps below it while
+  # its name goes on claiming otherwise, and `gates` installs a toolchain and a
+  # bare-metal target first. This needs neither, runs in seconds, and stays
+  # informative on a run where the toolchain install itself fails.
+  #
+  # Verified against the DEFECT rather than against the fix. Each introduced in
+  # turn on this tree:
+  #
+  #   a new .rs file with no header       -> exit 1, 39/40, names the file
+  #   a file declaring `CC0-1.0`          -> exit 1, reports, never rewrites
+  #   a file declaring `Apache-2.0 OR MIT`-> exit 0, the SAME grant
+  #   the extension glob matching nothing -> exit 1, NOT 100% of zero
+  #   a holdout entry naming a gone file  -> exit 1, it protected nothing
+  spdx:
+    name: Every source file declares the licence
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # The gate's own controls run FIRST. A checker nobody has watched fail is
+      # a checker nobody has evidence works, and a gate whose parser silently
+      # broke would report a clean tree rather than an error.
+      - name: Self-test the SPDX gate
+        run: python3 .github/spdx_gate.py --self-test
+
+      - name: Every tracked source file declares the workspace licence
+        run: python3 .github/spdx_gate.py
+
   gates:
     name: test / clippy / fmt / no_std
     runs-on: ubuntu-latest
