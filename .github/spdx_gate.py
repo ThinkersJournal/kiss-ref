@@ -152,12 +152,30 @@ def tracked_sources(root: pathlib.Path) -> list[str]:
 #: Files allowed to contain the word "copyright". ⚠️ A PATTERN, NOT A COUNT.
 #: Licence texts contain it by definition; a changelog records licence changes;
 #: this script discusses copyright in its own comments and so matches itself.
+#: ⚠️ MATCHED ON THE BASENAME, NOT THE PATH. A substring test over the whole
+#: path exempts anything beneath a directory whose name contains one of these -
+#: `vendor/LICENSE-deps/foo.rs` would pass unexamined. Contrived here, where
+#: nothing is vendored; not contrived in the three repos this gate also runs in,
+#: two of which vendor third-party source.
 COPYRIGHT_EXPECTED = ("LICENSE", "LICENCE", "COPYING", "CHANGELOG",
                       "spdx_gate.py", "NOTICE")
 
 
+def _expected(path: str) -> bool:
+    base = path.rsplit("/", 1)[-1]
+    return any(tag in base for tag in COPYRIGHT_EXPECTED)
+
+
 def survey_copyright(root: pathlib.Path) -> list[str]:
-    """Tracked files carrying a copyright notice that are NOT expected to.
+    """Tracked files carrying a copyright notice that are NOT expected to, or
+    None if the survey COULD NOT RUN.
+
+    ⚠️ `None` AND `[]` ARE DIFFERENT ANSWERS AND THE DIFFERENCE IS THE POINT.
+    An empty list is the PASS condition here, so a survey that failed to run
+    returning `[]` would be indistinguishable from a clean tree - and this
+    gate's entire justification is that the holdout is CHECKED rather than
+    asserted. A CHECK THAT SILENTLY NO-OPS ON FAILURE IS AN ASSERTION WITH A
+    FUNCTION WRAPPED AROUND IT.
 
     ⚠️ THIS IS THE HOLDOUT'S JUSTIFICATION, MOVED OUT OF A COMMENT AND INTO CI.
     The comment used to state a COUNT: `-> 0` with a control of `-> 8`. That
@@ -177,15 +195,24 @@ def survey_copyright(root: pathlib.Path) -> list[str]:
     """
     git = shutil.which("git")
     if git is None:
-        return []
+        print("FAIL: no `git` on PATH; the copyright survey could not run.",
+              file=sys.stderr)
+        return None
     proc = subprocess.run(  # noqa: S603 - fixed argv, shell=False
         [git, "-C", str(root), "grep", "-l", "-i", "-z", "copyright"],
         capture_output=True, encoding=None, shell=False, check=False)
     if proc.returncode not in (0, 1):
-        return []
+        # ⚠️ REPORTED AND REFUSED, NOT SWALLOWED. `git grep` exits 1 for "no
+        # matches" and 128 for "not a repository", and an empty list cannot tell
+        # them apart - see `tracked_sources` fifteen lines above, whose comment
+        # says exactly this about `ls-files`. I wrote that comment and then
+        # shipped this defect beneath it.
+        print("FAIL: the copyright survey could not run: "
+              + proc.stderr.decode("utf-8", "replace").strip()[:200],
+              file=sys.stderr)
+        return None
     names = [n for n in proc.stdout.decode("utf-8", "replace").split(chr(0)) if n]
-    return sorted(n for n in names
-                  if not any(tag in n for tag in COPYRIGHT_EXPECTED))
+    return sorted(n for n in names if not _expected(n))
 
 
 def audit(root: pathlib.Path, files: list[str]):
@@ -257,7 +284,12 @@ def main(argv: list[str]) -> int:
     missing, wrong, unreadable = audit(root, files)
     stale = sorted(set(HOLDOUT) - set(files))
     # ⚠️ THE HOLDOUT'S JUSTIFICATION, CHECKED RATHER THAN ASSERTED IN PROSE.
-    unexpected = [n for n in survey_copyright(root) if n not in HOLDOUT]
+    surveyed = survey_copyright(root)
+    if surveyed is None:
+        # ⚠️ The survey could not run. Refusing is the only honest outcome: a
+        # clean report here would be a claim nobody measured.
+        return 1
+    unexpected = [n for n in surveyed if n not in HOLDOUT]
     report(files, missing, wrong, unreadable, stale)
     explain(missing, wrong)
     for rel in unexpected:
@@ -296,6 +328,30 @@ def self_test() -> int:
         print(f"  {'ok  ' if ok else 'FAIL'}  {name}: {got!r}"
               + ("" if ok else f"  expected {expected!r}"))
 
+    # ⚠️ CONTROLS FOR THE COPYRIGHT SURVEY'S CLASSIFIER. Needs no git: the part
+    # that can silently rot is the PREDICATE, and `COPYRIGHT_EXPECTED` is a list
+    # somebody will extend. A manual both-arms run proves the checker worked
+    # that afternoon; nothing re-runs it when the list gains an entry.
+    classifications = [
+        ("LICENSE-MIT", True),
+        ("crates/kiss-ref-core/LICENSE-APACHE", True),
+        ("CHANGELOG.md", True),
+        (".github/spdx_gate.py", True),
+        ("src/lib.rs", False),
+        ("crates/kiss-ops-vocab/src/lib.rs", False),
+        # ⚠️ THE ONE THAT MATTERS, and it failed before basename anchoring: a
+        # substring test over the whole PATH exempts everything beneath a
+        # directory whose name contains a tag.
+        ("vendor/LICENSE-deps/foo.rs", False),
+        ("third_party/NOTICE-files/kernel.cu", False),
+    ]
+    for path, expected in classifications:
+        got = _expected(path)
+        ok = got == expected
+        failures += not ok
+        verb = "exempt" if expected else "examined"
+        print(f"  {'ok  ' if ok else 'FAIL'}  {path} is {verb}")
+
     equivalences = [("MIT OR Apache-2.0", "Apache-2.0 OR MIT", True),
                     ("Apache-2.0", "MIT OR Apache-2.0", False),
                     ("MIT", "MIT OR Apache-2.0", False)]
@@ -304,8 +360,12 @@ def self_test() -> int:
         failures += not ok
         print(f"  {'ok  ' if ok else 'FAIL'}  {a!r} {'==' if same else '!='} {b!r}")
 
-    print(f"\n{'PASS' if not failures else 'FAIL'}: {len(cases) + len(equivalences)} "
-          f"controls, {failures} failed")
+    # ⚠️ SUMMED, NOT WRITTEN DOWN. This line said "10 controls" while 18 ran,
+    # for one commit - a stale count inside the run whose entire purpose is to
+    # kill stale counts. A COUNT CANNOT SURVIVE ITS OWN LIST GROWING.
+    total = len(cases) + len(equivalences) + len(classifications)
+    print(f"{chr(10)}{'PASS' if not failures else 'FAIL'}: {total} controls, "
+          f"{failures} failed")
     return 1 if failures else 0
 
 
