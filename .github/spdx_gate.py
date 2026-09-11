@@ -57,24 +57,29 @@ HEADER_WINDOW = 10
 #: nothing, not ordinary deletion.
 MINIMUM_FILES = 30
 
-#: ⚠️ Paths this gate must NOT require a header on, each with the reason it is
-#: here. Empty today, and that is a measurement rather than a default:
-#:
-#:     git grep -l -i copyright -- ':!*.md' ':!*LICEN[SC]E*' ':!*.txt'   -> 0
-#:     the same query with the licence exclusion dropped                -> 8
-#:
-#: ⚠️ THE SECOND LINE IS THE POINT. "I searched and found nothing" is not a
-#: finding until the query is shown capable of finding something, in the same
-#: run - and the first version of that query used `:!LICENSE*`, which matches
-#: only at the ROOT and left six per-crate licence files in the results.
-#:
-#: ⚠️ AND UNSCOPED IS DELIBERATE. The portfolio's prescribed detector was
-#: `git grep -l -i copyright -- '*.rs'`, and that pathspec is exactly what hid
-#: `Copyright (c) 2024 Apple Inc.` in three of `fuel`'s .metal kernels.
-#:
-#: An entry here that matches no file is an ERROR below: a holdout that protects
-#: nothing reads exactly like one with nothing to protect, right up until the
-#: file it named is renamed and then stamped.
+#: Paths this gate must NOT require a header on, each with the reason it is here.
+#: Empty, and that is now CHECKED rather than asserted - see `survey_copyright`.
+#:
+#: 🔴 THIS COMMENT USED TO CARRY A COUNT, AND THE COUNT WAS WRONG TWICE.
+#: #43 stated `-> 0` and a control of `-> 8`. #44 corrected the control to 9 by
+#: ADDING ONE for the gate script rather than re-running the query; the true
+#: figure was 10, because `CHANGELOG.md` began matching in #42 four days
+#: earlier. Then #44 asserted the inherited 8 had been "true at that instant",
+#: which it never was.
+#:
+#: ⚠️ A CORRECTION DERIVED BY ARITHMETIC ON A STALE BASE INHERITS THE STALENESS
+#: IT IS CORRECTING - and vouching for the inherited number made it HARDER to
+#: catch, not easier. A wrong number invites re-derivation; a wrong number with
+#: a provenance claim attached discourages it.
+#:
+#: ⚠️ THE COUNT DRIFTED TWICE IN FOUR DAYS, from two unrelated PRs, with neither
+#: author doing anything wrong. The next drift is certain and only its date is
+#: unknown. A COUNT CANNOT SURVIVE TREE GROWTH; A PROPERTY CAN - so the number
+#: is gone and the property it was standing in for is asserted in CI instead.
+#:
+#: An entry here that matches no file is an ERROR below -- a holdout that
+#: protects nothing reads exactly like one with nothing to protect, right up
+#: until the file it named is renamed and then stamped.
 HOLDOUT: dict[str, str] = {}
 
 MARKER = "SPDX-License-Identifier:"
@@ -144,6 +149,72 @@ def tracked_sources(root: pathlib.Path) -> list[str]:
     return [n for n in text.split(chr(0)) if n]
 
 
+#: Files allowed to contain the word "copyright". ⚠️ A PATTERN, NOT A COUNT.
+#: Licence texts contain it by definition; a changelog records licence changes;
+#: this script discusses copyright in its own comments and so matches itself.
+#: ⚠️ MATCHED ON THE BASENAME, NOT THE PATH. A substring test over the whole
+#: path exempts anything beneath a directory whose name contains one of these -
+#: `vendor/LICENSE-deps/foo.rs` would pass unexamined. Contrived here, where
+#: nothing is vendored; not contrived in the three repos this gate also runs in,
+#: two of which vendor third-party source.
+COPYRIGHT_EXPECTED = ("LICENSE", "LICENCE", "COPYING", "CHANGELOG",
+                      "spdx_gate.py", "NOTICE")
+
+
+def _expected(path: str) -> bool:
+    base = path.rsplit("/", 1)[-1]
+    return any(tag in base for tag in COPYRIGHT_EXPECTED)
+
+
+def survey_copyright(root: pathlib.Path) -> list[str]:
+    """Tracked files carrying a copyright notice that are NOT expected to, or
+    None if the survey COULD NOT RUN.
+
+    ⚠️ `None` AND `[]` ARE DIFFERENT ANSWERS AND THE DIFFERENCE IS THE POINT.
+    An empty list is the PASS condition here, so a survey that failed to run
+    returning `[]` would be indistinguishable from a clean tree - and this
+    gate's entire justification is that the holdout is CHECKED rather than
+    asserted. A CHECK THAT SILENTLY NO-OPS ON FAILURE IS AN ASSERTION WITH A
+    FUNCTION WRAPPED AROUND IT.
+
+    ⚠️ THIS IS THE HOLDOUT'S JUSTIFICATION, MOVED OUT OF A COMMENT AND INTO CI.
+    The comment used to state a COUNT: `-> 0` with a control of `-> 8`. That
+    count drifted TWICE IN FOUR DAYS from two unrelated PRs, with neither author
+    doing anything wrong - a changelog gained the word, then this script did.
+
+    ⚠️ A COUNT CANNOT SURVIVE TREE GROWTH; A PROPERTY CAN. The thing the count
+    was standing in for is "every -i copyright hit is a licence file or this
+    script", and that is assertable. A COMMENT CANNOT GUARD - demonstrated twice
+    inside this one file, first by the stale figure and then by the correction
+    that vouched for it.
+
+    ⚠️ AND IT FIRES EXACTLY WHERE THE HOLDOUT WOULD BE NEEDED. A new file
+    carrying somebody else's copyright notice is precisely the case where a
+    blanket sweep asserts a licence grant nobody made - `bs1770.rs` in `fuel`,
+    Khronos's `vk.xml` in `vulkane`, Apple's kernels in `fuel`'s .metal files.
+    """
+    git = shutil.which("git")
+    if git is None:
+        print("FAIL: no `git` on PATH; the copyright survey could not run.",
+              file=sys.stderr)
+        return None
+    proc = subprocess.run(  # noqa: S603 - fixed argv, shell=False
+        [git, "-C", str(root), "grep", "-l", "-i", "-z", "copyright"],
+        capture_output=True, encoding=None, shell=False, check=False)
+    if proc.returncode not in (0, 1):
+        # ⚠️ REPORTED AND REFUSED, NOT SWALLOWED. `git grep` exits 1 for "no
+        # matches" and 128 for "not a repository", and an empty list cannot tell
+        # them apart - see `tracked_sources` fifteen lines above, whose comment
+        # says exactly this about `ls-files`. I wrote that comment and then
+        # shipped this defect beneath it.
+        print("FAIL: the copyright survey could not run: "
+              + proc.stderr.decode("utf-8", "replace").strip()[:200],
+              file=sys.stderr)
+        return None
+    names = [n for n in proc.stdout.decode("utf-8", "replace").split(chr(0)) if n]
+    return sorted(n for n in names if not _expected(n))
+
+
 def audit(root: pathlib.Path, files: list[str]):
     """(missing, wrong, unreadable) over `files`, skipping HOLDOUT entries."""
     expected = normalise(LICENCE)
@@ -212,9 +283,24 @@ def main(argv: list[str]) -> int:
 
     missing, wrong, unreadable = audit(root, files)
     stale = sorted(set(HOLDOUT) - set(files))
+    # ⚠️ THE HOLDOUT'S JUSTIFICATION, CHECKED RATHER THAN ASSERTED IN PROSE.
+    surveyed = survey_copyright(root)
+    if surveyed is None:
+        # ⚠️ The survey could not run. Refusing is the only honest outcome: a
+        # clean report here would be a claim nobody measured.
+        return 1
+    unexpected = [n for n in surveyed if n not in HOLDOUT]
     report(files, missing, wrong, unreadable, stale)
     explain(missing, wrong)
-    return 1 if (missing or wrong or stale or unreadable) else 0
+    for rel in unexpected:
+        print(f"  COPYRIGHT NOTICE  {rel} is not a licence file and is not "
+              f"in HOLDOUT")
+    if unexpected:
+        print()
+        print("A file carrying somebody else's copyright notice may not be")
+        print("ours to license. Decide, then add it to HOLDOUT with the")
+        print("reason, or to COPYRIGHT_EXPECTED if the match is incidental.")
+    return 1 if (missing or wrong or stale or unreadable or unexpected) else 0
 
 
 def self_test() -> int:
@@ -242,6 +328,30 @@ def self_test() -> int:
         print(f"  {'ok  ' if ok else 'FAIL'}  {name}: {got!r}"
               + ("" if ok else f"  expected {expected!r}"))
 
+    # ⚠️ CONTROLS FOR THE COPYRIGHT SURVEY'S CLASSIFIER. Needs no git: the part
+    # that can silently rot is the PREDICATE, and `COPYRIGHT_EXPECTED` is a list
+    # somebody will extend. A manual both-arms run proves the checker worked
+    # that afternoon; nothing re-runs it when the list gains an entry.
+    classifications = [
+        ("LICENSE-MIT", True),
+        ("crates/kiss-ref-core/LICENSE-APACHE", True),
+        ("CHANGELOG.md", True),
+        (".github/spdx_gate.py", True),
+        ("src/lib.rs", False),
+        ("crates/kiss-ops-vocab/src/lib.rs", False),
+        # ⚠️ THE ONE THAT MATTERS, and it failed before basename anchoring: a
+        # substring test over the whole PATH exempts everything beneath a
+        # directory whose name contains a tag.
+        ("vendor/LICENSE-deps/foo.rs", False),
+        ("third_party/NOTICE-files/kernel.cu", False),
+    ]
+    for path, expected in classifications:
+        got = _expected(path)
+        ok = got == expected
+        failures += not ok
+        verb = "exempt" if expected else "examined"
+        print(f"  {'ok  ' if ok else 'FAIL'}  {path} is {verb}")
+
     equivalences = [("MIT OR Apache-2.0", "Apache-2.0 OR MIT", True),
                     ("Apache-2.0", "MIT OR Apache-2.0", False),
                     ("MIT", "MIT OR Apache-2.0", False)]
@@ -250,8 +360,12 @@ def self_test() -> int:
         failures += not ok
         print(f"  {'ok  ' if ok else 'FAIL'}  {a!r} {'==' if same else '!='} {b!r}")
 
-    print(f"\n{'PASS' if not failures else 'FAIL'}: {len(cases) + len(equivalences)} "
-          f"controls, {failures} failed")
+    # ⚠️ SUMMED, NOT WRITTEN DOWN. This line said "10 controls" while 18 ran,
+    # for one commit - a stale count inside the run whose entire purpose is to
+    # kill stale counts. A COUNT CANNOT SURVIVE ITS OWN LIST GROWING.
+    total = len(cases) + len(equivalences) + len(classifications)
+    print(f"{chr(10)}{'PASS' if not failures else 'FAIL'}: {total} controls, "
+          f"{failures} failed")
     return 1 if failures else 0
 
 
