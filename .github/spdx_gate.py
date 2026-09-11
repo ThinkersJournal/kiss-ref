@@ -82,6 +82,37 @@ MINIMUM_FILES = 30
 #: until the file it named is renamed and then stamped.
 HOLDOUT: dict[str, str] = {}
 
+#: 🔴 EXTENSIONS IS ITSELF A POPULATION CLAIM, AND NOTHING USED TO CHECK IT.
+#: Measured at `fuel` d37e446e: its ratchet enumerates `*.rs` and reports
+#: 834/834 forever while 203 tracked source files - 147 `.slang`, 20 `.glsl`,
+#: 19 `.py`, 16 `.metal` - sit outside its population entirely, three of them
+#: carrying Apple and third-party copyright with no SPDX at all.
+#:
+#: ⚠️ A PROPERTY ASSERTED OVER THE WRONG POPULATION IS STILL THE WRONG
+#: POPULATION, and a scoped ratchet's number goes UP as the blind spot grows.
+#:
+#: This repo had the same shape at smaller scale: `.ts` x2 and `.sh` x1 sat
+#: outside a `.py`-only list. So the list is now CHECKED: any tracked extension
+#: that is source must be in EXTENSIONS or declined below, by name, with a
+#: reason.
+#:
+#: ⚠️ IT DOES NOT FULLY CLOSE - `SOURCE_EXTENSIONS` is itself a hand-written
+#: list, which is the defect class this whole gate keeps finding. What it does
+#: is turn a SILENT omission into a LOUD one, which is the whole of the win.
+SOURCE_EXTENSIONS = frozenset({
+    ".rs", ".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".go", ".java",
+    ".c", ".h", ".cc", ".cpp", ".hpp", ".cs", ".swift", ".kt", ".scala", ".php",
+    ".rb", ".pl", ".sh", ".bash", ".ps1", ".sql", ".lua", ".zig", ".dart",
+    ".cu", ".cuh", ".cl", ".comp", ".vert", ".frag", ".geom", ".glsl", ".wgsl",
+    ".hlsl", ".metal", ".slang",
+})
+
+#: Source extensions present in the tree and deliberately NOT stamped, each with
+#: the reason. ⚠️ A DECISION ON THE RECORD, not an omission - and an entry here
+#: naming an extension the tree does not have reds, like every other stale list
+#: in this file.
+NOT_STAMPED: dict[str, str] = {}
+
 MARKER = "SPDX-License-Identifier:"
 
 
@@ -159,6 +190,41 @@ def tracked_sources(root: pathlib.Path) -> list[str]:
 #: two of which vendor third-party source.
 COPYRIGHT_EXPECTED = ("LICENSE", "LICENCE", "COPYING", "CHANGELOG",
                       "spdx_gate.py", "NOTICE")
+
+
+def uncovered_extensions(root: pathlib.Path):
+    """Tracked SOURCE extensions that EXTENSIONS does not cover, and stale
+    NOT_STAMPED entries.
+
+    ⚠️ THE RATCHET'S OWN POPULATION, CHECKED. Without this, adding `.wgsl`
+    tomorrow escapes the gate silently and the pass rate goes UP - because the
+    denominator never learns about the new files. That is how `fuel` reports
+    834/834 while 203 tracked source files sit outside its scan.
+    """
+    ok, names = _git_z_all(root)
+    if not ok:
+        return None, None
+    present = {("." + n.rsplit(".", 1)[-1]).lower() for n in names if "." in n}
+    source_present = present & SOURCE_EXTENSIONS
+    uncovered = sorted(source_present - set(EXTENSIONS) - set(NOT_STAMPED))
+    stale = sorted(set(NOT_STAMPED) - source_present)
+    return uncovered, stale
+
+
+def _git_z_all(root: pathlib.Path):
+    """Every tracked path. Separate from `tracked_sources`, which is scoped."""
+    git = shutil.which("git")
+    if git is None:
+        print("FAIL: no `git` on PATH.", file=sys.stderr)
+        return False, []
+    proc = subprocess.run(  # noqa: S603 - fixed argv, shell=False
+        [git, "-C", str(root), "ls-files", "-z"],
+        capture_output=True, encoding=None, shell=False, check=False)
+    if proc.returncode not in (0, 1):
+        print("FAIL: git ls-files: "
+              + proc.stderr.decode("utf-8", "replace").strip()[:200], file=sys.stderr)
+        return False, []
+    return True, [n for n in proc.stdout.decode("utf-8", "replace").split(chr(0)) if n]
 
 
 def _expected(path: str) -> bool:
@@ -284,6 +350,22 @@ def main(argv: list[str]) -> int:
     missing, wrong, unreadable = audit(root, files)
     stale = sorted(set(HOLDOUT) - set(files))
     # ⚠️ THE HOLDOUT'S JUSTIFICATION, CHECKED RATHER THAN ASSERTED IN PROSE.
+    uncovered, stale_ns = uncovered_extensions(root)
+    if uncovered is None:
+        print("FAIL: could not enumerate the tree to check EXTENSIONS.",
+              file=sys.stderr)
+        return 1
+    for ext in uncovered:
+        print(f"  UNCOVERED EXTENSION  {ext} is tracked source and is not in "
+              f"EXTENSIONS or NOT_STAMPED")
+    for ext in stale_ns:
+        print(f"  STALE NOT_STAMPED  {ext} is declined but no longer present")
+    if uncovered:
+        print()
+        print("A source extension outside EXTENSIONS is invisible to this gate,")
+        print("and the pass rate RISES as the blind spot grows. Add it to")
+        print("EXTENSIONS, or to NOT_STAMPED with the reason it is excluded.")
+
     surveyed = survey_copyright(root)
     if surveyed is None:
         # ⚠️ The survey could not run. Refusing is the only honest outcome: a
@@ -300,7 +382,8 @@ def main(argv: list[str]) -> int:
         print("A file carrying somebody else's copyright notice may not be")
         print("ours to license. Decide, then add it to HOLDOUT with the")
         print("reason, or to COPYRIGHT_EXPECTED if the match is incidental.")
-    return 1 if (missing or wrong or stale or unreadable or unexpected) else 0
+    return 1 if (missing or wrong or stale or unreadable or unexpected
+                 or uncovered or stale_ns) else 0
 
 
 def self_test() -> int:

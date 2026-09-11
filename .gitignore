@@ -2,3 +2,7 @@
 **/*.rs.bk
 Cargo.lock
 supertool
+
+# Python bytecode from `.github/spdx_gate.py`, which CI runs directly.
+__pycache__/
+*.pyc
