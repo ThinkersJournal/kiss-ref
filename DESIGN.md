@@ -151,6 +151,16 @@ a new commit in a new release**, not by tracking drafts — a differential resul
 against the commit it was measured on, so each release cites its pin. (0.3.1/0.3.2 are docs/metadata
 only and bind the same `19c3ad7` as 0.3.0.)
 
+**The 0.4.x line binds KISS `904a4b4`** (2026-10-09; still `sk4`, KISS-Contract `contract_version` 2; the spec files
+`ops.md` and `classify.md` are unchanged on KISS `main` after `819731a`, so any later `main` commit up to the
+release is the same spec). It binds exactly the surfaces kiss-ref models: the op set (122 ops, checked both ways
+against KISS's `op_manifest.json`), the dtype set (24 tokens, checked against `dtype_manifest.json`, `f8e6m2` now
+reserved), the scalar and tensor semantics of KISS-Ops §6.2–§6.17 as rewritten by KISS #516–#518, and the
+precision-class vocabulary (§6.8-0007..0009). It models **no** OpAttrs bytes (§6.19), no KISS-Contract document
+and no `structure_key`; "binds `904a4b4`" says nothing about those. What was measured, rather than assumed, is
+in `CHANGELOG.md` `[Unreleased]` and in `crates/kiss-ref-conformance/tests/`: the KISS oracle-vector corpus
+(159 vectors) is run against kiss-ref, and the two manifests are compared in both directions.
+
 ### Consumers adapt to the core (core/adapter split)
 
 `kiss-ref-core` speaks only KISS vocabulary and has zero consumer dependencies. Each consumer wraps it
