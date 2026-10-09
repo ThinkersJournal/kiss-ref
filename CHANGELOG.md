@@ -41,6 +41,10 @@ conformance crate is unpublished. Format follows [Keep a Changelog]; versions ar
 - `kiss-ref-conformance`: `kiss-classify-vocab`'s dtype set and `kiss-ops-vocab`'s op set are now checked
   against KISS's `dtype_manifest.json` / `op_manifest.json` in both directions
   (`tests/dtype_manifest_agreement.rs`, `tests/op_manifest_agreement.rs`).
+- `kiss-ops-vocab::precision` (KISS #518, KISS-OPS-6.8-0007..0009): the closed five-token `PrecisionClass`
+  set (`strict`, `correctly-rounded`, `bounded-ulp`, `bounded-tolerance`, `unbounded`), `TierKind`,
+  `BitStability`, and `derive_precision_class` (all 12 cells of the derivation table). Vocabulary and rule
+  only; kiss-ref reads and writes no KISS-Contract document.
 - `ScalarFloat::quiet_nan`.
 - `kiss-ref-conformance`: the KISS oracle-vector corpus (six files, 159 vectors, KISS `904a4b4`,
   vendored under `fixtures/kiss-corpus/`) is now run against kiss-ref (`tests/kiss_corpus_vectors.rs`).

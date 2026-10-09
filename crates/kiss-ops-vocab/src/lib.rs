@@ -22,6 +22,9 @@
 #![cfg_attr(not(test), no_std)]
 
 pub mod decomp;
+pub mod precision;
+
+pub use precision::{derive_precision_class, BitStability, PrecisionClass, TierKind};
 
 /// The op-family tag each op carries (KISS-Ops §2.7). An op MUST NOT be
 /// re-classified into a different family (KISS-OPS-6.1-0003).
