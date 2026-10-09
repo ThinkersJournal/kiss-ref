@@ -7,7 +7,8 @@ conformance crate is unpublished. Format follows [Keep a Changelog]; versions ar
 
 ## [Unreleased]
 
-> The next release is a **breaking** one (0.4.0, allocated by the portfolio PM): it rebinds the
+> The workspace version is already **0.4.0** (allocated by the portfolio PM; `cargo package --workspace` cannot
+> verify a vocab change against the published 0.3.4) but nothing is published. The next release is a **breaking** one: it rebinds the
 > crates from the KISS spec commit `19c3ad7` to current KISS `main` in slices. This section lists
 > what is on `main` and unreleased; entries are added slice by slice, not at release time.
 

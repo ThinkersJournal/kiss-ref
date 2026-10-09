@@ -26,6 +26,39 @@ fn kind_name(k: NumericKind) -> &'static str {
     }
 }
 
+/// Every way one manifest row disagrees with the vocabulary's `Dtype` of the same token.
+fn row_disagreements(r: &Value) -> Vec<String> {
+    let tok = r["token"].as_str().unwrap();
+    let Some(d) = Dtype::from_token(tok) else {
+        return vec![format!(
+            "`{tok}`: in KISS's manifest, not in kiss-classify-vocab"
+        )];
+    };
+    let mut out = Vec::new();
+    if kind_name(d.numeric_kind()) != r["kind"] {
+        out.push(format!(
+            "`{tok}`: kind {} vs manifest {}",
+            kind_name(d.numeric_kind()),
+            r["kind"]
+        ));
+    }
+    if u64::from(d.bits()) != r["storage_bits"].as_u64().unwrap() {
+        out.push(format!(
+            "`{tok}`: bits {} vs manifest {}",
+            d.bits(),
+            r["storage_bits"]
+        ));
+    }
+    if d.is_reserved() != r["reserved"].as_bool().unwrap() {
+        out.push(format!(
+            "`{tok}`: reserved {} vs manifest {}",
+            d.is_reserved(),
+            r["reserved"]
+        ));
+    }
+    out
+}
+
 #[test]
 fn dtype_vocab_equals_the_kiss_dtype_manifest() {
     let m = manifest();
@@ -37,37 +70,7 @@ fn dtype_vocab_equals_the_kiss_dtype_manifest() {
         "manifest size moved: re-vendor deliberately"
     );
     assert_eq!(Dtype::ALL.len(), 24);
-    let mut disagreements = Vec::new();
-    for r in rows {
-        let tok = r["token"].as_str().unwrap();
-        let Some(d) = Dtype::from_token(tok) else {
-            disagreements.push(format!(
-                "`{tok}`: in KISS's manifest, not in kiss-classify-vocab"
-            ));
-            continue;
-        };
-        if kind_name(d.numeric_kind()) != r["kind"] {
-            disagreements.push(format!(
-                "`{tok}`: kind {} vs manifest {}",
-                kind_name(d.numeric_kind()),
-                r["kind"]
-            ));
-        }
-        if u64::from(d.bits()) != r["storage_bits"].as_u64().unwrap() {
-            disagreements.push(format!(
-                "`{tok}`: bits {} vs manifest {}",
-                d.bits(),
-                r["storage_bits"]
-            ));
-        }
-        if d.is_reserved() != r["reserved"].as_bool().unwrap() {
-            disagreements.push(format!(
-                "`{tok}`: reserved {} vs manifest {}",
-                d.is_reserved(),
-                r["reserved"]
-            ));
-        }
-    }
+    let mut disagreements: Vec<String> = rows.iter().flat_map(row_disagreements).collect();
     for d in Dtype::ALL {
         if !rows.iter().any(|r| r["token"] == d.token()) {
             disagreements.push(format!(
@@ -76,7 +79,14 @@ fn dtype_vocab_equals_the_kiss_dtype_manifest() {
             ));
         }
     }
-    assert!(disagreements.is_empty(), "{}", disagreements.join("\n"));
+    assert!(
+        disagreements.is_empty(),
+        "{}",
+        disagreements.join(
+            "
+"
+        )
+    );
 }
 
 /// The comparison can fail: a vocabulary row that differs from its manifest row is reported.
