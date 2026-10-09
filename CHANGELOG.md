@@ -63,6 +63,10 @@ conformance crate is unpublished. Format follows [Keep a Changelog]; versions ar
   set (`strict`, `correctly-rounded`, `bounded-ulp`, `bounded-tolerance`, `unbounded`), `TierKind`,
   `BitStability`, and `derive_precision_class` (all 12 cells of the derivation table). Vocabulary and rule
   only; kiss-ref reads and writes no KISS-Contract document.
+- `kiss-ref-conformance`: where the move obligation attaches (KISS-OPS-6.16-0009/-0010/-0011) is checked on the
+  recipe path on four lanes (`tests/move_attaches_to_output.rs`): a max-reduction preserves a signaling NaN
+  bit-for-bit, a sum-reduction quiets it, a max-reduction under an arithmetic epilogue quiets it, and a
+  sum-reduction under a pure-move epilogue still quiets it. kiss-ref already conformed; no code change.
 - `ScalarFloat::quiet_nan`.
 - `kiss-ref-conformance`: the KISS oracle-vector corpus (six files, 159 vectors, KISS `904a4b4`,
   vendored under `fixtures/kiss-corpus/`) is now run against kiss-ref (`tests/kiss_corpus_vectors.rs`).
