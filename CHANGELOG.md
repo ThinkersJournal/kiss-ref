@@ -7,6 +7,32 @@ conformance crate is unpublished. Format follows [Keep a Changelog]; versions ar
 
 ## [Unreleased]
 
+> The next release is a **breaking** one (0.4.0, allocated by the portfolio PM): it rebinds the
+> crates from the KISS spec commit `19c3ad7` to current KISS `main` in slices. This section lists
+> what is on `main` and unreleased; entries are added slice by slice, not at release time.
+
+### Changed — behaviour that can turn a passing comparison into a failing one
+
+- **`diff`: a computed NaN's QUIETNESS is now compared at `Tolerance::Exact`** (#39, KISS #352,
+  KISS-CONFORM-6.8-0010). Before, the computed-NaN arm was `distance == 0`, and the ULP distance
+  between ANY two NaNs is `0`, so a candidate that returned a *signaling* NaN where a quiet one
+  is required was silently accepted. Now such a candidate is rejected. Payload and sign remain
+  uncompared; `f8e4m3fn` (single NaN, no quiet bit) is vacuous. **A consumer whose differential
+  passed on 0.3.x with a signaling NaN in a computed result will fail on this release.** This is
+  the main reason the next release is not a patch.
+- **`eval_op`: the computing atoms deliver a QUIET NaN for a signaling-NaN operand**
+  (KISS-OPS-6.16-0010). `libm` returns a NaN argument unchanged, so `exp`/`log` of a signaling
+  `f32`/`f64` NaN used to return that signaling NaN; they now return the quiet one (found by
+  running the KISS `ops-transcendental-nan` vectors, 3 of 12 failed). The move ops (`neg`, `abs`,
+  `copysign`, `select`, minmax) are unchanged, and so are the rounding atoms, whose NaN KISS has not
+  pinned (KISS #396).
+
+### Added
+
+- `ScalarFloat::quiet_nan`.
+- `kiss-ref-conformance`: the KISS oracle-vector corpus (six files, 159 vectors, KISS `904a4b4`,
+  vendored under `fixtures/kiss-corpus/`) is now run against kiss-ref (`tests/kiss_corpus_vectors.rs`).
+
 ### Changed
 
 - **MIT copyright holder is now `Thinker's Journal`** (was `Eric Evans`), in the root

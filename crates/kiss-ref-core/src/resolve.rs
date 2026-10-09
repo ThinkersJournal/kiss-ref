@@ -45,6 +45,41 @@ fn bin<T: ScalarFloat>(op: Op, args: &[T], f: impl Fn(T, T) -> T) -> Result<T, E
 /// through their §6.13 decomposition. Never panics — every failure is an
 /// [`Error`].
 pub fn eval_op<T: ScalarFloat>(op: Op, args: &[T]) -> Result<T, Error> {
+    let r = eval_op_raw(op, args)?;
+    // KISS-OPS-6.16-0010: an op that COMPUTES delivers a quiet NaN for a signaling operand. The
+    // `libm` transcendentals return a NaN argument unchanged, so quiet the result here. The move
+    // ops (`neg`, `abs`, `copysign`, `select`, minmax) are deliberately absent (§6.16-0009), and so
+    // are the rounding atoms, whose NaN is not pinned (KISS #396).
+    Ok(match op {
+        Op::Add
+        | Op::Sub
+        | Op::Mul
+        | Op::Div
+        | Op::Exp
+        | Op::Log
+        | Op::Sin
+        | Op::Cos
+        | Op::Sqrt
+        | Op::Erf
+        | Op::Atan
+        | Op::Lgamma
+        | Op::Atan2
+        | Op::Tanh
+        | Op::Sinh
+        | Op::Cosh
+        | Op::Expm1
+        | Op::Log1p
+        | Op::Softplus
+        | Op::Silu
+        | Op::Mish
+        | Op::Pow
+        | Op::Hypot
+        | Op::Ldexp => r.quiet_nan(),
+        _ => r,
+    })
+}
+
+fn eval_op_raw<T: ScalarFloat>(op: Op, args: &[T]) -> Result<T, Error> {
     match op {
         // arithmetic atoms (§6.4)
         Op::Add => bin(op, args, |a, b| a.add(b)),
@@ -434,6 +469,82 @@ fn implemented_on(op: Op, dtype: Dtype) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// KISS-OPS-6.16-0010 (corpus: `ops-transcendental-nan`): an op that COMPUTES delivers a QUIET
+    /// NaN for a signaling-NaN operand. `libm::expf`/`logf`/`exp`/`log` return their NaN argument
+    /// unchanged, so each computing atom is checked on every lane that admits a signaling NaN.
+    #[test]
+    fn computing_atoms_quiet_a_signaling_nan_operand() {
+        use crate::fp8::E5m2;
+        use half::{bf16, f16};
+        const UNARY: [Op; 16] = [
+            Op::Exp,
+            Op::Log,
+            Op::Sin,
+            Op::Cos,
+            Op::Sqrt,
+            Op::Erf,
+            Op::Atan,
+            Op::Lgamma,
+            Op::Tanh,
+            Op::Sinh,
+            Op::Cosh,
+            Op::Expm1,
+            Op::Log1p,
+            Op::Softplus,
+            Op::Silu,
+            Op::Mish,
+        ];
+        const BINARY: [Op; 8] = [
+            Op::Add,
+            Op::Sub,
+            Op::Mul,
+            Op::Div,
+            Op::Atan2,
+            Op::Pow,
+            Op::Hypot,
+            Op::Ldexp,
+        ];
+        macro_rules! lane {
+            ($T:ty, $snan:expr, $qbit:expr, $name:expr) => {{
+                let s = <$T>::from_bits($snan);
+                let one = <$T>::ONE;
+                let quiet = |r: $T| (r.to_bits() as u64) & $qbit != 0;
+                for op in UNARY {
+                    let r = eval_op::<$T>(op, &[s]).unwrap();
+                    assert!(
+                        r.is_nan() && quiet(r),
+                        "{} {:?}(sNaN) = {:#x}, not a quiet NaN",
+                        $name,
+                        op,
+                        r.to_bits()
+                    );
+                }
+                for op in BINARY {
+                    for args in [[s, one], [one, s]] {
+                        let r = eval_op::<$T>(op, &args).unwrap();
+                        // pow(sNaN, 0) and pow(1, sNaN) are +1 by IEEE 754 9.2.1 (not a NaN): skip.
+                        if !r.is_nan() {
+                            continue;
+                        }
+                        assert!(
+                            quiet(r),
+                            "{} {:?}{:?} = {:#x}, not a quiet NaN",
+                            $name,
+                            op,
+                            args.map(|a| a.to_bits()),
+                            r.to_bits()
+                        );
+                    }
+                }
+            }};
+        }
+        lane!(f32, 0x7F80_0001, 1u64 << 22, "f32");
+        lane!(f64, 0x7FF0_0000_0000_0001, 1u64 << 51, "f64");
+        lane!(f16, 0x7C01, 1u64 << 9, "f16");
+        lane!(bf16, 0x7F81, 1u64 << 6, "bf16");
+        lane!(E5m2, 0x7D, 1u64 << 1, "e5m2");
+    }
 
     #[test]
     fn add_f32() {
