@@ -80,6 +80,7 @@ pub use tensor_int::int_tensor_supported;
 
 pub use attrs::{Combine, Direction, Monoid, OobPolicy};
 pub use boolean::{bool_supported, eval_bool_op};
+pub use bridge::mask_bytes;
 pub use bridge::{DetClass, Evaluated};
 pub use complex::{eval_complex_op, Cplx, CplxOut};
 pub use fp8::{E4m3, E5m2};
@@ -88,7 +89,27 @@ pub use recipe_int::eval_recipe_int;
 pub use tensor::{IndexTensor, Tensor, View, MAX_OPERANDS, MAX_RANK};
 
 use kiss_classify_vocab::Dtype;
-use kiss_ops_vocab::Op;
+use kiss_ops_vocab::{Family, Op};
+
+/// The dtype of an op's RESULT when its operands compute in `compute` (KISS-OPS-6.2-0005).
+///
+/// A comparison op (`cmp_eq` … `cmp_ge`) produces a **`bool` mask**: dtype `bool`, one byte per element,
+/// byte `1` or `0`, whatever the operands' compute dtype. It is *not* encoded in the compute dtype, so
+/// an `f32` comparison yields a one-byte mask, not a 4-byte `1.0`/`0.0`. Every other op returns the
+/// compute dtype.
+///
+/// [`eval_op`] and the recipe evaluator hold every value in the compute lane (so a mask can compose into
+/// `select`/`mul` — a mask feeding arithmetic is read as the unsigned byte `0`/`1`) and return the mask
+/// as a value of the compute type holding exactly `1`/`0`; this function and
+/// [`FlatDag::output_dtypes`] say what the result's observable dtype is, and [`mask_bytes`] gives the
+/// byte form.
+pub fn result_dtype(op: Op, compute: Dtype) -> Dtype {
+    if op.family() == Family::Comparison {
+        Dtype::Bool
+    } else {
+        compute
+    }
+}
 
 /// A reference-evaluation failure. The reference never panics; every problem is
 /// one of these (honoring the never-panic discipline of a consumer's execution

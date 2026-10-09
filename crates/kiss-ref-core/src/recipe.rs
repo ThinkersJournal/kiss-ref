@@ -34,6 +34,7 @@
 extern crate alloc;
 use alloc::vec::Vec;
 
+use kiss_classify_vocab::Dtype;
 use kiss_ops_vocab::{Family, Op};
 
 use crate::attrs::{Combine, Direction, Monoid, OobPolicy};
@@ -167,6 +168,41 @@ pub struct FlatDag {
 }
 
 impl FlatDag {
+    /// The observable dtype of each value-lane output, given the lane's `compute` dtype
+    /// (KISS-OPS-6.2-0005): a comparison root is a `bool` mask; a pure move (`flip`, `gather`, `scatter`
+    /// into a mask destination, `sort_network` of a mask) keeps its source's dtype; `select` returns the
+    /// dtype of its value arms; every other node — including arithmetic or a fold that READS a mask as the
+    /// unsigned byte `0`/`1` — is a compute-dtype value.
+    pub fn output_dtypes(&self, compute: Dtype) -> Vec<Dtype> {
+        self.outputs
+            .iter()
+            .map(|&o| self.node_dtype(o, compute, self.nodes.len()))
+            .collect()
+    }
+
+    /// `fuel` bounds the recursion so a cyclic DAG (which the evaluator rejects with its own error)
+    /// cannot overflow the stack here; an exhausted budget reports the compute dtype.
+    fn node_dtype(&self, i: usize, compute: Dtype, fuel: usize) -> Dtype {
+        let (Some(node), Some(fuel)) = (self.nodes.get(i), fuel.checked_sub(1)) else {
+            return compute;
+        };
+        match node {
+            Node::Apply { op, children } if op.family() == Family::Comparison => {
+                let _ = children;
+                Dtype::Bool
+            }
+            Node::Apply {
+                op: Op::Select,
+                children,
+            } if children.len() == 3 => self.node_dtype(children[1], compute, fuel),
+            Node::Flip { child, .. } => self.node_dtype(*child, compute, fuel),
+            Node::Gather { data, .. } => self.node_dtype(*data, compute, fuel),
+            Node::Scatter { dest, .. } => self.node_dtype(*dest, compute, fuel),
+            Node::SortNetwork { keys, .. } => self.node_dtype(*keys, compute, fuel),
+            _ => compute,
+        }
+    }
+
     /// A value-lane-only DAG — `index_outputs` defaults to empty (the pre-
     /// index-lane constructor shape).
     pub fn new(nodes: Vec<Node>, outputs: Vec<usize>) -> Self {

@@ -33,8 +33,25 @@ conformance crate is unpublished. Format follows [Keep a Changelog]; versions ar
   a reserved spelling (recognized on parse, no pinned encoding, no compute). Behaviour for callers that
   only use `declines_compute()` is unchanged; callers that branch on `is_mx_scale()` for `f8e6m2` change.
 
+- **`reduce_var` / `reduce_std` now use the deviations-about-the-mean form** (KISS #516, §6.13-0004).
+  They used to transcribe `E[x²] − E[x]²`, which the standard now FORBIDS: it cancels catastrophically
+  (2.0 against a true 1.25 at a 1e8 offset) and can go negative, making `reduce_std` NaN. The result is now
+  `mean(sqr(x − mean(x)))`, exact at that offset and `>= +0`. **Numbers change for any consumer that
+  compared against the old one-pass values**; `layer_norm` inherits the change. The previous behaviour was
+  pinned by a test as "the honest limit of the §6.13 form"; that test is reversed.
+- **A comparison's result dtype is `bool`** (KISS #516, KISS-OPS-6.2-0005): one byte per element, not the
+  compute dtype. `eval_op` and the recipe evaluator still carry the mask as a compute-lane value holding exactly
+  `1`/`0` (so it can compose into `select`/`mul`); what changed is the documented observable dtype, exposed by
+  the new `result_dtype`, `FlatDag::output_dtypes` and `mask_bytes`. A consumer comparing a kernel's one-byte
+  mask against kiss-ref's output should compare `mask_bytes`, not a `T`-width value.
+
 ### Added
 
+- `tensor_ops::reduce_var_bessel`: `reduce_var` with the `bessel_correction` attribute (§6.19-0030); divisor
+  `reduced_count − 1`, plain IEEE division (a count of 1 yields NaN).
+- `result_dtype`, `FlatDag::output_dtypes`, `mask_bytes` (see above).
+- `kiss-ref-conformance`: `pow` checked rule by rule against the IEEE 754 9.2.1 table of KISS-OPS-6.13-0005
+  on four lanes (`tests/pow_full_domain.rs`). `libm::pow` already conformed; no code change was needed.
 - `Op::Argmin` (KISS #516): `argmin` joins the closed op set (122 ops, was 121), with `tensor_ops::argmin`
   and the integer-lane `tensor_int::argmin`. NaN orders greatest, so `argmin` skips a NaN unless every
   element is NaN (then index 0), whereas `argmax` returns the first NaN; ties go to the lower original

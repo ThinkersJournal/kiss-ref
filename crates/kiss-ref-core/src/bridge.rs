@@ -16,6 +16,9 @@
 //! the per-`(op × dtype)` gaps the resolver declines — FP8/`bool` for some ops, and
 //! `nextafter` on the narrow floats (§6.9-0003) — not a whole lane.
 
+extern crate alloc;
+use alloc::vec::Vec;
+
 use kiss_ops_vocab::Op;
 
 use crate::attrs::Monoid;
@@ -50,6 +53,16 @@ impl DetClass {
             (ExactByte, ExactByte) => ExactByte,
         }
     }
+}
+
+/// The one-byte-per-element form of a comparison-mask tensor (KISS-OPS-6.2-0005): `1` where the
+/// element is non-zero, `0` where it is zero. A comparison's values are exactly `1`/`0` in the compute
+/// lane, so this is the `bool` mask the standard specifies.
+pub fn mask_bytes<T: ScalarFloat>(t: &Tensor<T>) -> Vec<u8> {
+    t.as_slice()
+        .iter()
+        .map(|v| u8::from(v.is_truthy()))
+        .collect()
 }
 
 /// A tensor result paired with its declared determinism class.

@@ -1264,24 +1264,47 @@ fn test_decomp_tensor_reduce_var_equals_the_centered_form_and_where_it_stops() {
         "std {:e}",
         sd.as_slice()[0]
     );
+}
 
-    // AND the honest limit of the §6.13 form: at a 1e8 offset the pinned textbook
-    // decomposition cancels — 2.0 against a true 1.25. That is a property of the
-    // SPEC's decomposition (which kiss-ref transcribes faithfully), not a kiss-ref
-    // bug; pinned here so consumers see the cell rather than discovering it on
-    // device. KISS-OPS-6.13-0004 lets an implementation declare a Bessel correction as an
-    // attribute, but NOT change the decomposition silently — so this stays.
+#[test]
+fn test_decomp_tensor_reduce_var_is_the_deviations_form_exact_at_a_large_offset() {
+    // KISS #516 REVERSED the earlier pin here. `reduce_var` MUST be computed from deviations about
+    // the mean (two-pass, or Welford/Chan) and MUST NOT be `E[x²] − E[x]²` (KISS-OPS-6.13 /
+    // §6.13-0004 as amended): at a 1e8 offset the one-pass form cancelled to 2.0 against a true
+    // 1.25. The centered form is exact here, a non-NaN result is >= +0, and `reduce_std` is never
+    // NaN merely through cancellation.
     let big = vec![1e8, 1e8 + 1.0, 1e8 + 2.0, 1e8 + 3.0];
     let v = tops::reduce_var(&t(&big, &[4]).view(), &[0]).unwrap();
     assert_eq!(
         v.as_slice(),
-        &[2.0],
-        "the textbook form's cancellation, pinned"
+        &[1.25],
+        "deviations form: exact at a 1e8 offset"
     );
-    let mu: f64 = big.iter().sum::<f64>() / 4.0;
-    let centered: Vec<f64> = big.iter().map(|q| (q - mu) * (q - mu)).collect();
-    let cv = tops::reduce_mean(&t(&centered, &[4]).view(), &[0]).unwrap();
-    assert_eq!(cv.as_slice(), &[1.25], "the centered form is exact here");
+    let constant = tops::reduce_var(&t(&[1e8; 4], &[4]).view(), &[0]).unwrap();
+    assert_eq!(constant.as_slice(), &[0.0], "constant data has variance +0");
+    let sd = tops::reduce_std(&t(&[1e8 + 0.1; 5], &[5]).view(), &[0]).unwrap();
+    assert!(
+        !sd.as_slice()[0].is_nan(),
+        "std must not be NaN through cancellation"
+    );
+}
+
+#[test]
+fn test_decomp_tensor_reduce_var_bessel_divisor_is_count_minus_one() {
+    // KISS-OPS-6.13-0004 / §6.19-0030: with `bessel_correction` the divisor of the final mean is
+    // `reduced_count − 1`, evaluated as ordinary IEEE division with no special case.
+    let x = t(&[1.0, 2.0, 3.0, 4.0], &[4]);
+    let pop = tops::reduce_var(&x.view(), &[0]).unwrap();
+    let bes = tops::reduce_var_bessel(&x.view(), &[0]).unwrap();
+    assert_eq!(pop.as_slice(), &[1.25]);
+    assert_eq!(
+        bes.as_slice()[0],
+        5.0 / 3.0,
+        "sum of squared deviations 5.0 / (4 - 1)"
+    );
+    // count 1: 0 / 0 is NaN by plain IEEE division — the clause forbids a special case.
+    let one = tops::reduce_var_bessel(&t(&[7.0], &[1]).view(), &[0]).unwrap();
+    assert!(one.as_slice()[0].is_nan(), "count 1 divides 0 by 0");
 }
 
 #[test]
