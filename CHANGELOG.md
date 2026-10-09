@@ -12,6 +12,17 @@ conformance crate is unpublished. Format follows [Keep a Changelog]; versions ar
 > crates from the KISS spec commit `19c3ad7` to current KISS `main` in slices. This section lists
 > what is on `main` and unreleased; entries are added slice by slice, not at release time.
 
+### What 0.4.0 does NOT model (so nobody reads it as full coverage of KISS main)
+
+- **OpAttrs bytes** (KISS-OPS §6.19): kiss-ref evaluates ops, it does not encode or decode their attribute
+  records. `bessel_correction` exists as `reduce_var_bessel`, not as a wire attribute.
+- **The `MathFidelity` attribute type** (§6.17): neither that name nor the old `MathPrecision` is modelled
+  by kiss-ref; only the precision-class vocabulary (§6.8-0007..0009) was added.
+- **A native `Bool` tensor lane**: a comparison's `bool` result dtype is exposed additively (`result_dtype`,
+  `FlatDag::output_dtypes`, `mask_bytes`); values are still held in the compute lane as exactly `1`/`0`.
+- **Any KISS-Contract document, the `structure_key`, or the Announce/Synth/Consume/Emit wire formats.**
+- It binds KISS `904a4b4` for the surfaces it does model (see `DESIGN.md` "Spec pin").
+
 ### Changed — behaviour that can turn a passing comparison into a failing one
 
 - **`diff`: a computed NaN's QUIETNESS is now compared at `Tolerance::Exact`** (#39, KISS #352,
