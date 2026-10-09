@@ -80,6 +80,17 @@ pub trait ScalarFloat: sealed::Sealed + Copy + PartialEq + PartialOrd {
     /// IEEE `isnan` (`x != x`).
     fn is_nan(self) -> bool;
 
+    /// A NaN with its QUIET bit set (payload and sign kept); any other value unchanged.
+    /// KISS-OPS-6.16-0010: an op that computes delivers a quiet NaN for a signaling operand.
+    /// Default is the identity, which is correct for the lanes that compute through `f32`
+    /// (`f16`, `bf16`, the FP8 lanes: the widening conversion already quiets) and for `E4m3`,
+    /// whose single NaN has no quiet bit; `f32`/`f64` override it because `libm` returns
+    /// a NaN argument unchanged (`expf(sNaN)` is an sNaN).
+    #[inline]
+    fn quiet_nan(self) -> Self {
+        self
+    }
+
     fn add(self, b: Self) -> Self;
     fn sub(self, b: Self) -> Self;
     fn mul(self, b: Self) -> Self;
@@ -169,6 +180,15 @@ macro_rules! impl_scalar_float {
             #[inline]
             fn is_nan(self) -> bool {
                 self != self
+            }
+            #[inline]
+            fn quiet_nan(self) -> $t {
+                if self != self {
+                    // quiet bit = the top mantissa bit: MANTISSA_DIGITS counts the implicit bit.
+                    <$t>::from_bits(self.to_bits() | (1 << (<$t>::MANTISSA_DIGITS - 2)))
+                } else {
+                    self
+                }
             }
 
             #[inline]

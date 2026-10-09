@@ -17,3 +17,6 @@ kiss-classify-vocab = { workspace = true }
 kiss-ops-vocab      = { workspace = true }
 kiss-ref-core       = { workspace = true }
 half                = { version = "2", default-features = false }
+
+[dev-dependencies]
+serde_json = "1.0.151"

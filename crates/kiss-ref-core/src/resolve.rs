@@ -45,6 +45,81 @@ fn bin<T: ScalarFloat>(op: Op, args: &[T], f: impl Fn(T, T) -> T) -> Result<T, E
 /// through their §6.13 decomposition. Never panics — every failure is an
 /// [`Error`].
 pub fn eval_op<T: ScalarFloat>(op: Op, args: &[T]) -> Result<T, Error> {
+    let r = eval_op_raw(op, args)?;
+    // KISS-OPS-6.16-0010: an op that COMPUTES delivers a quiet NaN for a signaling operand. The
+    // `libm` transcendentals return a NaN argument unchanged, so quiet the result here. The move
+    // ops (`neg`, `abs`, `copysign`, `select`, minmax) are deliberately absent (§6.16-0009), and so
+    // are the rounding atoms, whose NaN is not pinned (KISS #396).
+    Ok(match op {
+        Op::Add
+        | Op::Sub
+        | Op::Mul
+        | Op::Div
+        | Op::Exp
+        | Op::Log
+        | Op::Sin
+        | Op::Cos
+        | Op::Sqrt
+        | Op::Erf
+        | Op::Atan
+        | Op::Lgamma
+        | Op::Atan2
+        | Op::Tanh
+        | Op::Sinh
+        | Op::Cosh
+        | Op::Expm1
+        | Op::Log1p
+        | Op::Softplus
+        | Op::Silu
+        | Op::Mish
+        | Op::Pow
+        | Op::Hypot
+        | Op::Ldexp => r.quiet_nan(),
+        _ => r,
+    })
+}
+
+fn eval_op_raw<T: ScalarFloat>(op: Op, args: &[T]) -> Result<T, Error> {
+    match op {
+        Op::Add
+        | Op::Sub
+        | Op::Mul
+        | Op::Div
+        | Op::Neg
+        | Op::Abs
+        | Op::Select
+        | Op::CmpEq
+        | Op::CmpNe
+        | Op::CmpLt
+        | Op::CmpLe
+        | Op::CmpGt
+        | Op::CmpGe => eval_arith_select_cmp(op, args),
+        Op::Floor
+        | Op::Ceil
+        | Op::Trunc
+        | Op::RoundEven
+        | Op::Exp
+        | Op::Log
+        | Op::Sin
+        | Op::Cos
+        | Op::Sqrt
+        | Op::Erf
+        | Op::Atan
+        | Op::Lgamma
+        | Op::Atan2
+        | Op::Copysign
+        | Op::Nextafter => eval_math_atom(op, args),
+
+        // the 11 refine-marked non-primitives (§6.13-0003) are computed directly.
+        _ if is_refined(op) => eval_refined(op, args),
+
+        // everything else: resolve via the §6.13 decomposition (§6.14).
+        other => resolve_nonprimitive(other, args),
+    }
+}
+
+/// The arithmetic (§6.4), select (§6.5) and comparison (§6.6) floor atoms.
+fn eval_arith_select_cmp<T: ScalarFloat>(op: Op, args: &[T]) -> Result<T, Error> {
     match op {
         // arithmetic atoms (§6.4)
         Op::Add => bin(op, args, |a, b| a.add(b)),
@@ -75,6 +150,13 @@ pub fn eval_op<T: ScalarFloat>(op: Op, args: &[T]) -> Result<T, Error> {
         Op::CmpGt => bin(op, args, |a, b| T::from_bool(a > b)),
         Op::CmpGe => bin(op, args, |a, b| T::from_bool(a >= b)),
 
+        other => resolve_nonprimitive(other, args),
+    }
+}
+
+/// The rounding (§6.7), transcendental (§6.8) and binary-math (§6.9) floor atoms.
+fn eval_math_atom<T: ScalarFloat>(op: Op, args: &[T]) -> Result<T, Error> {
+    match op {
         // rounding atoms (§6.7)
         Op::Floor => un(op, args, |a| a.floor()),
         Op::Ceil => un(op, args, |a| a.ceil()),
@@ -103,6 +185,15 @@ pub fn eval_op<T: ScalarFloat>(op: Op, args: &[T]) -> Result<T, Error> {
             bin(op, args, |a, b| a.nextafter(b))
         }
 
+        other => resolve_nonprimitive(other, args),
+    }
+}
+
+/// The refined non-primitives (§6.13-0003): computed directly, because the literal decomposition
+/// overflows, catastrophically cancels, or gets a pinned domain edge wrong. Exactly the ops
+/// [`is_refined`] names.
+fn eval_refined<T: ScalarFloat>(op: Op, args: &[T]) -> Result<T, Error> {
+    match op {
         // refined non-primitives (§6.13-0003, all 11 refine-marked ops):
         // computed directly because the literal decomposition overflows,
         // catastrophically cancels, or gets a pinned domain edge wrong.
@@ -145,7 +236,6 @@ pub fn eval_op<T: ScalarFloat>(op: Op, args: &[T]) -> Result<T, Error> {
             }
         }),
 
-        // everything else: resolve via the §6.13 decomposition (§6.14).
         other => resolve_nonprimitive(other, args),
     }
 }
@@ -434,6 +524,86 @@ fn implemented_on(op: Op, dtype: Dtype) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const QUIETED_UNARY: [Op; 16] = [
+        Op::Exp,
+        Op::Log,
+        Op::Sin,
+        Op::Cos,
+        Op::Sqrt,
+        Op::Erf,
+        Op::Atan,
+        Op::Lgamma,
+        Op::Tanh,
+        Op::Sinh,
+        Op::Cosh,
+        Op::Expm1,
+        Op::Log1p,
+        Op::Softplus,
+        Op::Silu,
+        Op::Mish,
+    ];
+    const QUIETED_BINARY: [Op; 8] = [
+        Op::Add,
+        Op::Sub,
+        Op::Mul,
+        Op::Div,
+        Op::Atan2,
+        Op::Pow,
+        Op::Hypot,
+        Op::Ldexp,
+    ];
+
+    /// Every computing atom, fed a signaling NaN in either position, must return a quiet NaN (or,
+    /// where IEEE 754 9.2.1 defines a non-NaN result such as `pow(1, sNaN) = 1`, a non-NaN).
+    fn assert_computing_atoms_quiet<T: ScalarFloat>(
+        name: &str,
+        snan: T,
+        qbit: u64,
+        bits: fn(T) -> u64,
+    ) {
+        let quiet = |r: T| bits(r) & qbit != 0;
+        for op in QUIETED_UNARY {
+            let r = eval_op::<T>(op, &[snan]).unwrap();
+            assert!(
+                r.is_nan() && quiet(r),
+                "{name} {op:?}(sNaN) = {:#x}, not a quiet NaN",
+                bits(r)
+            );
+        }
+        for op in QUIETED_BINARY {
+            for args in [[snan, T::ONE], [T::ONE, snan]] {
+                let r = eval_op::<T>(op, &args).unwrap();
+                if r.is_nan() {
+                    assert!(quiet(r), "{name} {op:?} = {:#x}, not a quiet NaN", bits(r));
+                }
+            }
+        }
+    }
+
+    /// KISS-OPS-6.16-0010 (corpus: `ops-transcendental-nan`): an op that COMPUTES delivers a QUIET
+    /// NaN for a signaling-NaN operand. `libm::expf`/`logf`/`exp`/`log` return their NaN argument
+    /// unchanged, so each computing atom is checked on every lane that admits a signaling NaN.
+    #[test]
+    fn computing_atoms_quiet_a_signaling_nan_operand() {
+        use crate::fp8::E5m2;
+        use half::{bf16, f16};
+        assert_computing_atoms_quiet("f32", f32::from_bits(0x7F80_0001), 1 << 22, |x| {
+            x.to_bits() as u64
+        });
+        assert_computing_atoms_quiet("f64", f64::from_bits(0x7FF0_0000_0000_0001), 1 << 51, |x| {
+            x.to_bits()
+        });
+        assert_computing_atoms_quiet("f16", f16::from_bits(0x7C01), 1 << 9, |x| {
+            x.to_bits() as u64
+        });
+        assert_computing_atoms_quiet("bf16", bf16::from_bits(0x7F81), 1 << 6, |x| {
+            x.to_bits() as u64
+        });
+        assert_computing_atoms_quiet("e5m2", E5m2::from_bits(0x7D), 1 << 1, |x| {
+            x.to_bits() as u64
+        });
+    }
 
     #[test]
     fn add_f32() {
