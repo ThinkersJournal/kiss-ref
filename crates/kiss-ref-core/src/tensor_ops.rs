@@ -122,11 +122,25 @@ pub fn all<T: ScalarFloat>(x: &View<T>, axes: &[usize]) -> Result<Tensor<T>, Err
 /// `argmax` — §6.13: the original-index at rank 0 of `sort_network(desc, keys=x)`
 /// along `axis`. Returns an index tensor with `axis` kept as extent 1.
 pub fn argmax<T: ScalarFloat>(x: &View<T>, axis: usize) -> Result<IndexTensor, Error> {
+    arg_extreme(x, axis, Direction::Desc)
+}
+
+/// `argmin` — §6.13: the original-index at rank 0 of `sort_network(asc, keys=x)` along `axis`.
+/// NaN orders greatest, so a NaN is skipped unless every element is NaN (then index 0).
+pub fn argmin<T: ScalarFloat>(x: &View<T>, axis: usize) -> Result<IndexTensor, Error> {
+    arg_extreme(x, axis, Direction::Asc)
+}
+
+fn arg_extreme<T: ScalarFloat>(
+    x: &View<T>,
+    axis: usize,
+    dir: Direction,
+) -> Result<IndexTensor, Error> {
     let rank = x.rank();
     if axis >= rank {
         return Err(Error::AxisOutOfRange { axis, rank });
     }
-    let (_, idx) = sort_network(x, axis, Direction::Desc)?;
+    let (_, idx) = sort_network(x, axis, dir)?;
     // out shape = x.shape with axis set to 1; value = sorted-rank-0 index. `idx`
     // is contiguous row-major with `idx.shape() == x.shape()`, so read its payload
     // directly at the axis-0 coordinate.
@@ -142,7 +156,7 @@ pub fn argmax<T: ScalarFloat>(x: &View<T>, axis: usize) -> Result<IndexTensor, E
     let mut coord = [0usize; MAX_RANK];
     while let Some(oc) = od.next_coord() {
         coord[..rank].copy_from_slice(oc);
-        coord[axis] = 0; // rank-0 of the descending sort = the argmax
+        coord[axis] = 0; // rank-0 of the sort = the arg-extreme
         let lin = row_major_index(&coord[..rank], in_shape);
         data.push(*isl.get(lin).ok_or(Error::ShapeMismatch {
             expected: isl.len(),
@@ -587,6 +601,39 @@ mod tests {
         let x = t(&[1.0, 9.0, 3.0, 2.0], &[4]);
         let a = argmax(&x.view(), 0).unwrap();
         assert_eq!(a.as_slice(), &[1]);
+    }
+
+    /// KISS-OPS-6.11-0007 / §6.13 `argmin` (#516): the original index at rank 0 of
+    /// `sort_network(asc)`; NaN orders GREATEST, so `argmin` skips a NaN while any element is
+    /// non-NaN and returns index 0 when every element is NaN, while `argmax` returns the FIRST NaN.
+    /// Ties resolve to the lower original index. (NumPy/PyTorch return the NaN index for both.)
+    #[test]
+    fn argmin_and_argmax_follow_the_nan_greatest_total_order() {
+        let n = f64::NAN;
+        let idx = |f: fn(&View<f64>, usize) -> Result<IndexTensor, Error>, d: &[f64]| {
+            f(&t(d, &[d.len()]).view(), 0).unwrap().as_slice().to_vec()
+        };
+        assert_eq!(idx(argmin, &[3.0, 1.0, 2.0]), [1]);
+        assert_eq!(idx(argmin, &[n, 2.0, 1.0]), [2], "argmin skips a NaN");
+        assert_eq!(idx(argmin, &[2.0, n, 1.0, n]), [2]);
+        assert_eq!(idx(argmin, &[n, n, n]), [0], "every element NaN -> index 0");
+        assert_eq!(
+            idx(argmin, &[1.0, 1.0, 5.0]),
+            [0],
+            "tie -> lower original index"
+        );
+        assert_eq!(
+            idx(argmax, &[1.0, n, n]),
+            [1],
+            "argmax selects the lowest-index NaN"
+        );
+        assert_eq!(
+            idx(argmax, &[2.0, 2.0, 1.0]),
+            [0],
+            "tie -> lower original index"
+        );
+        // the two disagree on a NaN-bearing row, which is what makes the test discriminate
+        assert_ne!(idx(argmin, &[n, 1.0]), idx(argmax, &[n, 1.0]));
     }
 
     #[test]

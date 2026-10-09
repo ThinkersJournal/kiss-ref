@@ -229,8 +229,8 @@ so `kiss-ref-core` returns typed errors, never panics.
   (§6.2-0006) over the integer engine, `{0,1}`-normalized; and the **complex** lane (`c64` = pair-`f32`,
   `c128` = pair-`f64`), whose §6.18 arithmetic family is **`Done`** — only a real-only op on a complex
   dtype (and any complex op on a real dtype) is `NotApplicable`.
-- **Recognize-but-decline-compute dtypes:** the reserved `f8e4m3fnuz`/`f8e5m2fnuz` and the MX scales
-  `f8e8m0`/`f8e6m2` parse (distinct from an unknown token) but report `NotApplicable` for every op **by
+- **Recognize-but-decline-compute dtypes:** the reserved `f8e4m3fnuz`/`f8e5m2fnuz`/`f8e6m2` and the MX scale
+  `f8e8m0` parse (distinct from an unknown token) but report `NotApplicable` for every op **by
   design** — a typed compute-decline, not backlog.
 - **Coverage is three-state** — `Done` / `Pending` / `NotApplicable` — driven by a spec-derived
   `legality(op, dtype)` (op family × numeric kind); only legal cells form the denominator, so

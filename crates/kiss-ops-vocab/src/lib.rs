@@ -191,6 +191,7 @@ kiss_ops! {
     ReduceStd => "reduce_std", Reduction, false;
     Logsumexp => "logsumexp", Reduction, false;
     Argmax => "argmax", Reduction, false;
+    Argmin => "argmin", Reduction, false;
     Any => "any", Reduction, false;
     All => "all", Reduction, false;
     Matmul => "matmul", Contraction, false;
@@ -516,11 +517,12 @@ mod tests {
 
     #[test]
     fn ops_full_set_size() {
-        // 43 floor + 78 non-primitive = 121 (incl. the 15-op §6.18 complex family).
-        assert_eq!(Op::ALL.len(), 121);
+        // 43 floor + 79 non-primitive = 122 (incl. the 15-op §6.18 complex family and `argmin`,
+        // KISS #516).
+        assert_eq!(Op::ALL.len(), 122);
         assert_eq!(
             Op::ALL.iter().filter(|o| !o.is_primitive_floor()).count(),
-            78
+            79
         );
     }
 

@@ -1018,6 +1018,7 @@ fn test_decomp_tensor_coverage_is_declared_not_assumed() {
         Op::ReduceStd,
         Op::Logsumexp,
         Op::Argmax,
+        Op::Argmin,
         Op::Any,
         Op::All,
         Op::Cumsum,
@@ -1064,7 +1065,7 @@ fn test_decomp_tensor_coverage_is_declared_not_assumed() {
         declared, nonprimitives,
         "every §6.13 tensor non-primitive must be declared covered or not-covered here"
     );
-    assert_eq!(COVERED.len(), 18);
+    assert_eq!(COVERED.len(), 19);
     assert_eq!(NOT_COVERED.len(), 4);
 }
 
@@ -1530,6 +1531,31 @@ fn test_decomp_tensor_argmax_matches_an_independent_scan() {
             }
         }
         assert_eq!(got.as_slice(), &[best as i64], "argmax {row:?}");
+    }
+}
+
+#[test]
+fn test_decomp_tensor_argmin_matches_an_independent_scan() {
+    // §6.13 `argmin` (KISS #516): "original-index at rank 0 of sort_network(asc, keys=x)". The
+    // differential target is an ordinary linear scan keeping the FIRST minimum (ties -> lower
+    // original index). NaN is covered by the unit test `argmin_and_argmax_follow_the_nan_greatest_
+    // total_order` in kiss-ref-core, where the NaN-greatest rule is the thing under test.
+    for row in [
+        vec![1.0, 9.0, 3.0, 2.0],
+        vec![4.0, 1.0, 3.0, 1.0], // tie -> lowest index
+        vec![-5.0, -5.0, -7.0],
+        vec![0.0, -0.0, 0.0], // signed-zero tie
+        vec![2.5],
+    ] {
+        let n = row.len();
+        let got = tops::argmin(&t(&row, &[n]).view(), 0).unwrap();
+        let mut best = 0usize;
+        for (i, v) in row.iter().enumerate() {
+            if *v < row[best] {
+                best = i;
+            }
+        }
+        assert_eq!(got.as_slice(), &[best as i64], "argmin {row:?}");
     }
 }
 

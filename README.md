@@ -40,8 +40,8 @@ lane (`c64` = pair-of-`f32`, `c128` = pair-of-`f64`), whose §6.18 arithmetic fa
 only the real-only ops are `NotApplicable` on complex dtypes.
 
 Two dtype groups are **recognized but decline to compute**, by design: they parse (distinct from an
-unknown token) yet every op reports `NotApplicable` — the reserved `f8e4m3fnuz`/`f8e5m2fnuz` variants
-and the MX scale types `f8e8m0`/`f8e6m2`. That is a typed compute-decline, not backlog.
+unknown token) yet every op reports `NotApplicable` — the reserved `f8e4m3fnuz`/`f8e5m2fnuz`/`f8e6m2` dtypes
+and the MX scale type `f8e8m0`. That is a typed compute-decline, not backlog.
 
 Cell coverage is three-state (Done / Pending / NotApplicable) driven by a spec-derived
 `legality(op, dtype)`; only legal cells count. `nextafter` is `NotApplicable` on the narrow/FP8

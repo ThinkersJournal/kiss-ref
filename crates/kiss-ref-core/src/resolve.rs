@@ -356,6 +356,7 @@ pub fn tensor_supported(op: Op) -> bool {
             | Op::ReduceStd
             | Op::Logsumexp
             | Op::Argmax
+            | Op::Argmin
             | Op::Any
             | Op::All
         // scans

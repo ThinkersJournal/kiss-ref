@@ -27,8 +27,20 @@ conformance crate is unpublished. Format follows [Keep a Changelog]; versions ar
   `copysign`, `select`, minmax) are unchanged, and so are the rounding atoms, whose NaN KISS has not
   pinned (KISS #396).
 
+- **`f8e6m2` is now RESERVED** (KISS #517, KISS-CLASSIFY-6.1-0013): `Dtype::is_reserved()` is true for it
+  and `Dtype::is_mx_scale()` is no longer. Until now kiss-ref described it as an MX scale; KISS made it
+  a reserved spelling (recognized on parse, no pinned encoding, no compute). Behaviour for callers that
+  only use `declines_compute()` is unchanged; callers that branch on `is_mx_scale()` for `f8e6m2` change.
+
 ### Added
 
+- `Op::Argmin` (KISS #516): `argmin` joins the closed op set (122 ops, was 121), with `tensor_ops::argmin`
+  and the integer-lane `tensor_int::argmin`. NaN orders greatest, so `argmin` skips a NaN unless every
+  element is NaN (then index 0), whereas `argmax` returns the first NaN; ties go to the lower original
+  index. This differs from NumPy/PyTorch, which return the NaN index for both.
+- `kiss-ref-conformance`: `kiss-classify-vocab`'s dtype set and `kiss-ops-vocab`'s op set are now checked
+  against KISS's `dtype_manifest.json` / `op_manifest.json` in both directions
+  (`tests/dtype_manifest_agreement.rs`, `tests/op_manifest_agreement.rs`).
 - `ScalarFloat::quiet_nan`.
 - `kiss-ref-conformance`: the KISS oracle-vector corpus (six files, 159 vectors, KISS `904a4b4`,
   vendored under `fixtures/kiss-corpus/`) is now run against kiss-ref (`tests/kiss_corpus_vectors.rs`).
