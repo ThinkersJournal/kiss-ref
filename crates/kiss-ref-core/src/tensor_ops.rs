@@ -80,15 +80,38 @@ pub fn reduce_norm2<T: ScalarFloat>(x: &View<T>, axes: &[usize]) -> Result<Tenso
     un(Op::Sqrt, &s.view())
 }
 
-/// `reduce_var` — §6.13: `sub(reduce_mean(sqr(x)), sqr(reduce_mean(x)))`.
+/// `reduce_var` — §6.13 as amended by KISS #516: `mu=reduce_mean(x); out=reduce_mean(sqr(sub(x, mu)))`
+/// (two-pass, **population** divisor `reduced_count`).
+///
+/// The mean is formed first and the squared DEVIATIONS from it are averaged. It MUST NOT be computed as
+/// `E[x²] − E[x]²` (the earlier, one-pass form this function used to transcribe): that form cancels
+/// catastrophically (2.0 against a true 1.25 at a 1e8 offset) and can return a negative variance, so
+/// `reduce_std` was NaN merely through cancellation. A non-NaN result here is `>= +0`.
 pub fn reduce_var<T: ScalarFloat>(x: &View<T>, axes: &[usize]) -> Result<Tensor<T>, Error> {
-    let sq = map_views(&[*x], x.shape(), |b| eval_op(Op::Mul, &[b[0], b[0]]))?;
-    let mean_sq = reduce_mean(&sq.view(), axes)?;
-    let mean = reduce_mean(x, axes)?;
-    let mean2 = map_views(&[mean.view()], mean.shape(), |b| {
+    var_about_the_mean(x, axes, false)
+}
+
+/// `reduce_var` with the `bessel_correction` attribute set (§6.19-0030): the divisor of the final
+/// mean is `reduced_count − 1`, evaluated as ordinary IEEE division with no special case (a count of
+/// 1 divides 0 by 0 and yields NaN).
+pub fn reduce_var_bessel<T: ScalarFloat>(x: &View<T>, axes: &[usize]) -> Result<Tensor<T>, Error> {
+    var_about_the_mean(x, axes, true)
+}
+
+fn var_about_the_mean<T: ScalarFloat>(
+    x: &View<T>,
+    axes: &[usize],
+    bessel: bool,
+) -> Result<Tensor<T>, Error> {
+    let mu = reduce_mean(x, axes)?; // keepdim
+    let dev = bin(Op::Sub, x, &mu.view())?;
+    let sq = map_views(&[dev.view()], dev.shape(), |b| {
         eval_op(Op::Mul, &[b[0], b[0]])
     })?;
-    bin(Op::Sub, &mean_sq.view(), &mean2.view())
+    let sum = reduce(&sq.view(), Monoid::Sum, axes)?;
+    let count = reduced_count::<T>(x.shape(), axes)?;
+    let divisor = if bessel { count.sub(T::ONE) } else { count };
+    scalar_rhs(Op::Div, &sum.view(), divisor)
 }
 
 /// `reduce_std` — §6.13: `sqrt(reduce_var(x))`.
