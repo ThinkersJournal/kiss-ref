@@ -108,9 +108,14 @@ fn the_sk5_reservation_scope_is_pinned_and_we_are_still_pre_sk5() {
     // version bump rebuilds this test rather than leaving a stale constant baked in.
     let version = env!("CARGO_PKG_VERSION");
 
+    // 0.4.0 is a breaking release that is NOT sk5: it rebinds kiss-ref from KISS `19c3ad7` to KISS
+    // `main` (`904a4b4`), which is still `sk4` (token prefix `sk4`; the `sk5` collection is KISS #222,
+    // unscheduled). sk5 is the first release that binds a KISS schema whose structure_key prefix is
+    // `sk5`; that release must reserve the enums below and delete this file. (Widened from `0.3.` on
+    // 2026-10-09 per this assertion's own instruction.)
     assert!(
-        version.starts_with("0.3."),
-        "workspace version is {version}, no longer 0.3.x. If this is the sk5 break: add \
+        version.starts_with("0.3.") || version.starts_with("0.4."),
+        "workspace version is {version}, no longer 0.3.x/0.4.x. If this is the sk5 break: add \
          #[non_exhaustive] to the {} enums listed in this file (in their defining \
          crates), then DELETE this file. If it is a breaking release that is NOT sk5, \
          widen this pin and say which release sk5 is.",
