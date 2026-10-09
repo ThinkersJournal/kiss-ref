@@ -59,12 +59,97 @@ fn order_key(bits: u64, width: u32) -> i128 {
     }
 }
 
+/// Layout of one float lane: its width and where its quiet bit and exponent/mantissa sit.
+struct Lane {
+    width: u32,
+    exp_bits: u32,
+    man_bits: u32,
+    /// Quiet bit of a NaN, or 0 where the encoding admits no signaling NaN (`f8e4m3fn`).
+    quiet_bit: u64,
+    /// `f8e4m3fn`'s single NaN is `S.1111.111`, not "exponent all ones, mantissa non-zero".
+    single_nan: bool,
+}
+
+fn lane_of(dtype: &str) -> Result<Lane, String> {
+    let l = |width, exp_bits, man_bits, quiet_bit, single_nan| Lane {
+        width,
+        exp_bits,
+        man_bits,
+        quiet_bit,
+        single_nan,
+    };
+    Ok(match dtype {
+        "f32" => l(32, 8, 23, 1 << 22, false),
+        "f64" => l(64, 11, 52, 1 << 51, false),
+        "bf16" => l(16, 8, 7, 1 << 6, false),
+        "f16" => l(16, 5, 10, 1 << 9, false),
+        "f8e5m2" => l(8, 5, 2, 1 << 1, false),
+        "f8e4m3fn" => l(8, 4, 3, 0, true),
+        other => return Err(format!("dtype `{other}` has no lane in this runner")),
+    })
+}
+
+impl Lane {
+    fn is_nan(&self, bits: u64) -> bool {
+        let exp = (bits >> self.man_bits) & ((1u64 << self.exp_bits) - 1);
+        let man = bits & ((1u64 << self.man_bits) - 1);
+        if self.single_nan {
+            exp == 0xF && man == 0x7
+        } else {
+            exp == (1u64 << self.exp_bits) - 1 && man != 0
+        }
+    }
+}
+
+/// Evaluate `op` on `inputs` (raw bits) in the named lane and return the result's raw bits.
+fn eval_bits(dtype: &str, op: Op, inputs: &[u64]) -> Result<u64, String> {
+    macro_rules! lane {
+        ($T:ty) => {{
+            let args: Vec<$T> = inputs.iter().map(|&b| <$T>::from_bits(b as _)).collect();
+            eval_op::<$T>(op, &args)
+                .map(|r| r.to_bits() as u64)
+                .map_err(|e| format!("eval error: {e:?}"))
+        }};
+    }
+    match dtype {
+        "f32" => lane!(f32),
+        "f64" => lane!(f64),
+        "bf16" => lane!(bf16),
+        "f16" => lane!(f16),
+        "f8e5m2" => lane!(E5m2),
+        "f8e4m3fn" => lane!(E4m3),
+        other => Err(format!("dtype `{other}` has no lane in this runner")),
+    }
+}
+
+/// `ULP` class: a NaN `expected` is a COMPUTED NaN (quietness compared, payload not); otherwise the
+/// integer totalOrder distance must be within `bound`.
+fn compare_ulp(lane: &Lane, got: u64, want: u64, bound: u64) -> Result<(), String> {
+    if lane.is_nan(want) {
+        if !lane.is_nan(got) {
+            return Err(format!("expected a NaN ({want:#x}), got {got:#x}"));
+        }
+        if lane.quiet_bit != 0 && ((got & lane.quiet_bit) != 0) != ((want & lane.quiet_bit) != 0) {
+            return Err(format!(
+                "NaN quietness differs: got {got:#x}, expected {want:#x}"
+            ));
+        }
+        return Ok(());
+    }
+    let d = (order_key(got, lane.width) - order_key(want, lane.width)).unsigned_abs();
+    if d <= bound as u128 {
+        Ok(())
+    } else {
+        Err(format!(
+            "{d} ulp from expected (bound {bound}): got {got:#x}, expected {want:#x}"
+        ))
+    }
+}
+
 /// Run one vector; returns `Err(reason)` on a mismatch.
 fn run_one(v: &Value) -> Result<(), String> {
     let op_name = v["op"].as_str().unwrap();
     let dtype = v["dtype"].as_str().unwrap();
-    let class = v["class"].as_str().unwrap();
-    let ulp = v["ulp_bound"].as_u64().unwrap_or(0);
     let op =
         Op::from_token(op_name).ok_or_else(|| format!("op `{op_name}` not in kiss-ops-vocab"))?;
     let inputs: Vec<u64> = v["inputs"]
@@ -74,74 +159,12 @@ fn run_one(v: &Value) -> Result<(), String> {
         .map(|i| parse_hex(i["bits"].as_str().unwrap()))
         .collect();
     let want = parse_hex(v["expected"]["bits"].as_str().unwrap());
-
-    macro_rules! lane {
-        ($T:ty, $width:expr, $qbit:expr, $has_snan:expr) => {{
-            let args: Vec<$T> = inputs.iter().map(|&b| <$T>::from_bits(b as _)).collect();
-            let got = eval_op::<$T>(op, &args)
-                .map_err(|e| format!("eval error: {e:?}"))?
-                .to_bits() as u64;
-            (got, $width, $qbit, $has_snan)
-        }};
-    }
-    let (got, width, qbit, has_snan): (u64, u32, u64, bool) = match dtype {
-        "f32" => lane!(f32, 32, 1u64 << 22, true),
-        "f64" => lane!(f64, 64, 1u64 << 51, true),
-        "bf16" => lane!(bf16, 16, 1u64 << 6, true),
-        "f16" => lane!(f16, 16, 1u64 << 9, true),
-        "f8e5m2" => lane!(E5m2, 8, 1u64 << 1, true),
-        "f8e4m3fn" => lane!(E4m3, 8, 0, false),
-        other => return Err(format!("dtype `{other}` has no lane in this runner")),
-    };
-
-    let is_nan = |bits: u64| -> bool {
-        let (e_bits, m_bits) = match width {
-            64 => (11, 52),
-            32 => (8, 23),
-            16 if dtype == "bf16" => (8, 7),
-            16 => (5, 10),
-            8 if dtype == "f8e5m2" => (5, 2),
-            _ => (4, 3),
-        };
-        let exp = (bits >> m_bits) & ((1u64 << e_bits) - 1);
-        let man = bits & ((1u64 << m_bits) - 1);
-        if dtype == "f8e4m3fn" {
-            exp == 0xF && man == 0x7
-        } else {
-            exp == (1u64 << e_bits) - 1 && man != 0
-        }
-    };
-
-    match class {
-        "exact-byte" => {
-            if got == want {
-                Ok(())
-            } else {
-                Err(format!("got {got:#x}, expected {want:#x}"))
-            }
-        }
-        "ULP" => {
-            if is_nan(want) {
-                if !is_nan(got) {
-                    return Err(format!("expected a NaN ({want:#x}), got {got:#x}"));
-                }
-                if has_snan && ((got & qbit) != 0) != ((want & qbit) != 0) {
-                    return Err(format!(
-                        "NaN quietness differs: got {got:#x}, expected {want:#x}"
-                    ));
-                }
-                Ok(())
-            } else {
-                let d = (order_key(got, width) - order_key(want, width)).unsigned_abs();
-                if d <= ulp as u128 {
-                    Ok(())
-                } else {
-                    Err(format!(
-                        "{d} ulp from expected (bound {ulp}): got {got:#x}, expected {want:#x}"
-                    ))
-                }
-            }
-        }
+    let lane = lane_of(dtype)?;
+    let got = eval_bits(dtype, op, &inputs)?;
+    match v["class"].as_str().unwrap() {
+        "exact-byte" if got == want => Ok(()),
+        "exact-byte" => Err(format!("got {got:#x}, expected {want:#x}")),
+        "ULP" => compare_ulp(&lane, got, want, v["ulp_bound"].as_u64().unwrap_or(0)),
         other => Err(format!("class `{other}` has no comparator in this runner")),
     }
 }
