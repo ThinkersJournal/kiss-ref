@@ -74,6 +74,7 @@ pub fn int_tensor_supported(op: Op) -> bool {
             | Op::Scatter
             | Op::SortNetwork
             | Op::Argmax
+            | Op::Argmin
             | Op::Any
             | Op::All
             | Op::Cumsum
@@ -462,11 +463,21 @@ pub fn sort_network(
 
 /// `argmax` (integer lane) — rank-0 of `sort_network(desc)` along `axis`.
 pub fn argmax(x: &View<i128>, axis: usize) -> Result<IndexTensor, Error> {
+    arg_extreme(x, axis, Direction::Desc)
+}
+
+/// `argmin` (integer lane) — rank-0 of `sort_network(asc)` along `axis`; ties go to the lower
+/// original index (there is no NaN on the integer lane).
+pub fn argmin(x: &View<i128>, axis: usize) -> Result<IndexTensor, Error> {
+    arg_extreme(x, axis, Direction::Asc)
+}
+
+fn arg_extreme(x: &View<i128>, axis: usize, dir: Direction) -> Result<IndexTensor, Error> {
     let rank = x.rank();
     if axis >= rank {
         return Err(Error::AxisOutOfRange { axis, rank });
     }
-    let (_, idx) = sort_network(x, axis, Direction::Desc)?;
+    let (_, idx) = sort_network(x, axis, dir)?;
     let in_shape = x.shape();
     let mut out_shape = [1usize; MAX_RANK];
     out_shape[..rank].copy_from_slice(in_shape);
@@ -765,6 +776,22 @@ mod tests {
                 .unwrap()
                 .as_slice(),
             &[-5]
+        );
+    }
+
+    #[test]
+    fn int_argmin_picks_min_index_and_breaks_ties_low() {
+        assert_eq!(
+            argmin(&t(&[3, 1, 2], &[3]).view(), 0).unwrap().as_slice(),
+            &[1]
+        );
+        assert_eq!(
+            argmin(&t(&[1, 1, 5], &[3]).view(), 0).unwrap().as_slice(),
+            &[0]
+        );
+        assert_eq!(
+            argmin(&t(&[-5, 9, -5], &[3]).view(), 0).unwrap().as_slice(),
+            &[0]
         );
     }
 

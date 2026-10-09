@@ -7,7 +7,8 @@ conformance crate is unpublished. Format follows [Keep a Changelog]; versions ar
 
 ## [Unreleased]
 
-> The next release is a **breaking** one (0.4.0, allocated by the portfolio PM): it rebinds the
+> The workspace version is already **0.4.0** (allocated by the portfolio PM; `cargo package --workspace` cannot
+> verify a vocab change against the published 0.3.4) but nothing is published. The next release is a **breaking** one: it rebinds the
 > crates from the KISS spec commit `19c3ad7` to current KISS `main` in slices. This section lists
 > what is on `main` and unreleased; entries are added slice by slice, not at release time.
 
@@ -27,8 +28,24 @@ conformance crate is unpublished. Format follows [Keep a Changelog]; versions ar
   `copysign`, `select`, minmax) are unchanged, and so are the rounding atoms, whose NaN KISS has not
   pinned (KISS #396).
 
+- **`f8e6m2` is now RESERVED** (KISS #517, KISS-CLASSIFY-6.1-0013): `Dtype::is_reserved()` is true for it
+  and `Dtype::is_mx_scale()` is no longer. Until now kiss-ref described it as an MX scale; KISS made it
+  a reserved spelling (recognized on parse, no pinned encoding, no compute). Behaviour for callers that
+  only use `declines_compute()` is unchanged; callers that branch on `is_mx_scale()` for `f8e6m2` change.
+
 ### Added
 
+- `Op::Argmin` (KISS #516): `argmin` joins the closed op set (122 ops, was 121), with `tensor_ops::argmin`
+  and the integer-lane `tensor_int::argmin`. NaN orders greatest, so `argmin` skips a NaN unless every
+  element is NaN (then index 0), whereas `argmax` returns the first NaN; ties go to the lower original
+  index. This differs from NumPy/PyTorch, which return the NaN index for both.
+- `kiss-ref-conformance`: `kiss-classify-vocab`'s dtype set and `kiss-ops-vocab`'s op set are now checked
+  against KISS's `dtype_manifest.json` / `op_manifest.json` in both directions
+  (`tests/dtype_manifest_agreement.rs`, `tests/op_manifest_agreement.rs`).
+- `kiss-ops-vocab::precision` (KISS #518, KISS-OPS-6.8-0007..0009): the closed five-token `PrecisionClass`
+  set (`strict`, `correctly-rounded`, `bounded-ulp`, `bounded-tolerance`, `unbounded`), `TierKind`,
+  `BitStability`, and `derive_precision_class` (all 12 cells of the derivation table). Vocabulary and rule
+  only; kiss-ref reads and writes no KISS-Contract document.
 - `ScalarFloat::quiet_nan`.
 - `kiss-ref-conformance`: the KISS oracle-vector corpus (six files, 159 vectors, KISS `904a4b4`,
   vendored under `fixtures/kiss-corpus/`) is now run against kiss-ref (`tests/kiss_corpus_vectors.rs`).

@@ -22,6 +22,9 @@
 #![cfg_attr(not(test), no_std)]
 
 pub mod decomp;
+pub mod precision;
+
+pub use precision::{derive_precision_class, BitStability, PrecisionClass, TierKind};
 
 /// The op-family tag each op carries (KISS-Ops §2.7). An op MUST NOT be
 /// re-classified into a different family (KISS-OPS-6.1-0003).
@@ -191,6 +194,7 @@ kiss_ops! {
     ReduceStd => "reduce_std", Reduction, false;
     Logsumexp => "logsumexp", Reduction, false;
     Argmax => "argmax", Reduction, false;
+    Argmin => "argmin", Reduction, false;
     Any => "any", Reduction, false;
     All => "all", Reduction, false;
     Matmul => "matmul", Contraction, false;
@@ -516,11 +520,12 @@ mod tests {
 
     #[test]
     fn ops_full_set_size() {
-        // 43 floor + 78 non-primitive = 121 (incl. the 15-op §6.18 complex family).
-        assert_eq!(Op::ALL.len(), 121);
+        // 43 floor + 79 non-primitive = 122 (incl. the 15-op §6.18 complex family and `argmin`,
+        // KISS #516).
+        assert_eq!(Op::ALL.len(), 122);
         assert_eq!(
             Op::ALL.iter().filter(|o| !o.is_primitive_floor()).count(),
-            78
+            79
         );
     }
 

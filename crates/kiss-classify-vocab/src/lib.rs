@@ -24,8 +24,9 @@
 //! (`i8`/`i16`/`i4`; `i32`/`i64` unchanged). FP8 is width-prefixed and
 //! variant-explicit (`f8e4m3fn`, `f8e5m2`, with the byte-incompatible `f8e4m3fnuz`
 //! / `f8e5m2fnuz` **reserved** — recognized on parse, no compute semantics at this
-//! schema version). The two OCP-Microscaling **scale** dtypes `f8e8m0`/`f8e6m2` are
-//! additive at sk4 (sibling-operand scales, never element-value dtypes). Complex is
+//! schema version). The OCP-Microscaling **scale** dtype `f8e8m0` is additive at sk4 (a
+//! sibling-operand scale, never an element-value dtype); its 8-bit sibling spelling `f8e6m2` is
+//! **reserved** (KISS #517), like the `fnuz` pair. Complex is
 //! named by **total** width: `c64` = pair-of-`f32` (the sk3 `c32`), `c128` =
 //! pair-of-`f64` (the sk3 `c64`) — the version prefix (§3.4) makes the flip loud.
 
@@ -35,7 +36,7 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum NumericKind {
     /// IEEE-754 or non-IEEE floating-point (`f16 bf16 f32 f64`, the FP8 variants,
-    /// and the MX scale floats `f8e8m0`/`f8e6m2`).
+    /// the MX scale `f8e8m0`, and the reserved 8-bit `f8e6m2`).
     Float,
     /// Signed two's-complement integer (`i8 i16 i32 i64 i4`).
     Int,
@@ -104,8 +105,10 @@ pub enum Dtype {
     /// A per-block scale carried as a *sibling operand*, **never** an element-value
     /// dtype — recognized on parse, declines compute in a value position. New at sk4.
     F8e8m0,
-    /// MX **scale** (unsigned: 0s+6e+2m); finer-granularity sibling of `f8e8m0`
-    /// (§6.1-0013). A scale type, never an element-value dtype. New at sk4.
+    /// 8-bit MX-family scale spelling. **Reserved** at sk4 (KISS #517, §6.1-0013): recognized
+    /// on parse, no encoding is pinned and no op assigns it computation semantics — any use in a
+    /// compute position is a typed decline distinct from an unknown token. (KISS had pinned it as an
+    /// unsigned 6e+2m scale until #517; the 0.3.x line of this crate still described it that way.)
     F8e6m2,
     /// Signed 4-bit `[-8,+7]`; packed-pair storage, sign-extended on read (sk3 `s4`).
     I4,
@@ -185,16 +188,16 @@ impl Dtype {
     /// Parse a dtype from its normative token. Returns `None` for any token
     /// outside the §6.1 set (KISS-CLASSIFY: a token outside the set is not a
     /// dtype of this version — the *unknown-token* verdict). A **reserved** dtype
-    /// (`f8e4m3fnuz`/`f8e5m2fnuz`) and an MX **scale** (`f8e8m0`/`f8e6m2`) DO parse
+    /// (`f8e4m3fnuz`/`f8e5m2fnuz`/`f8e6m2`) and the MX **scale** `f8e8m0` DO parse
     /// here — they are recognized members of the closed vocabulary — but decline
     /// compute in a value position ([`Dtype::declines_compute`]).
     pub fn from_token(tok: &str) -> Option<Dtype> {
         Dtype::ALL.into_iter().find(|d| d.token() == tok)
     }
 
-    /// The numeric kind this dtype belongs to (§6.1-0003 table). The MX scales
-    /// `f8e8m0`/`f8e6m2` are kind `float` (unsigned exponent-scales; unsigned is a
-    /// packing fact of §6.1-0013, not a distinct kind).
+    /// The numeric kind this dtype belongs to (§6.1-0003 table). `f8e8m0`
+    /// (an unsigned exponent scale) and the reserved `f8e6m2` are kind `float`; unsigned is a
+    /// packing fact of §6.1-0013, not a distinct kind.
     pub const fn numeric_kind(self) -> NumericKind {
         match self {
             Dtype::F16
@@ -260,24 +263,25 @@ impl Dtype {
         matches!(self.numeric_kind(), NumericKind::Complex)
     }
 
-    /// True for the **reserved** FP8 variants (`f8e4m3fnuz`/`f8e5m2fnuz`): part of
-    /// the closed sk4 vocabulary (recognized on parse) but with **no computation
-    /// semantics at this schema version** (§6.1-0001). Activating a reserved
-    /// spelling is a future additive schema event.
+    /// True for the **reserved** dtypes (`f8e4m3fnuz`/`f8e5m2fnuz`/`f8e6m2`): part of the
+    /// closed sk4 vocabulary (recognized on parse) but with **no computation semantics at this
+    /// schema version** (§6.1-0001, §6.1-0013). Activating a reserved spelling is a future
+    /// additive schema event. Agrees with KISS's `dtype_manifest.json` `reserved` column.
     pub const fn is_reserved(self) -> bool {
-        matches!(self, Dtype::F8e4m3fnuz | Dtype::F8e5m2fnuz)
+        matches!(self, Dtype::F8e4m3fnuz | Dtype::F8e5m2fnuz | Dtype::F8e6m2)
     }
 
-    /// True for the OCP-Microscaling **scale** dtypes (`f8e8m0`/`f8e6m2`): a
-    /// per-block shared scale carried as a *sibling operand* (§6.1-0013), **never**
-    /// an element-value dtype — so it declines compute in a value position.
+    /// True for the one OCP-Microscaling **scale** dtype with a pinned encoding, `f8e8m0`: a
+    /// per-block shared scale carried as a *sibling operand* (§6.1-0013), **never** an
+    /// element-value dtype — so it declines compute in a value position. (`f8e6m2` was an MX
+    /// scale in the 0.3.x line; KISS #517 made it reserved, see [`Dtype::is_reserved`].)
     pub const fn is_mx_scale(self) -> bool {
-        matches!(self, Dtype::F8e8m0 | Dtype::F8e6m2)
+        matches!(self, Dtype::F8e8m0)
     }
 
     /// True for a dtype that is a **recognized** token of the closed sk4 vocabulary
     /// but has **no element-value compute semantics** at this schema version: the
-    /// reserved FP8 variants and the MX scales. A compute cell over such a dtype is
+    /// reserved dtypes and the MX scale. A compute cell over such a dtype is
     /// a *typed decline* distinct from the unknown-token verdict — the distinction
     /// [`Dtype::from_token`] preserves (`Some` here, `None` for unknown).
     pub const fn declines_compute(self) -> bool {
@@ -386,7 +390,8 @@ mod tests {
             assert!(d.declines_compute(), "{d:?} declines compute");
         }
         assert!(Dtype::F8e4m3fnuz.is_reserved() && Dtype::F8e5m2fnuz.is_reserved());
-        assert!(Dtype::F8e8m0.is_mx_scale() && Dtype::F8e6m2.is_mx_scale());
+        assert!(Dtype::F8e6m2.is_reserved(), "reserved by KISS #517");
+        assert!(Dtype::F8e8m0.is_mx_scale() && !Dtype::F8e6m2.is_mx_scale());
         // reserved and MX-scale partition the declining set (no overlap).
         for d in declining {
             assert_ne!(d.is_reserved(), d.is_mx_scale(), "{d:?} in exactly one");
