@@ -29,6 +29,7 @@ pub use precision::{derive_precision_class, BitStability, PrecisionClass, TierKi
 /// The op-family tag each op carries (KISS-Ops §2.7). An op MUST NOT be
 /// re-classified into a different family (KISS-OPS-6.1-0003).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum Family {
     Arithmetic,
     Select,

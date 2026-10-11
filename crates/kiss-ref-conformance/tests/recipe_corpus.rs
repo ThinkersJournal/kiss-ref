@@ -925,6 +925,9 @@ fn edge_count(node: &Node) -> usize {
         | Node::Flip { .. } => 1,
         Node::Matmul { .. } | Node::Scatter { .. } => 2,
         Node::Gather { base, .. } => 1 + usize::from(base.is_some()),
+        // `Node` is `#[non_exhaustive]` (sk5 reservation): a new variant must be counted here, loudly,
+        // not silently treated as edge-free (which would blunt the mutation harness).
+        other => panic!("edge_count: unmodelled Node variant {other:?}"),
     }
 }
 

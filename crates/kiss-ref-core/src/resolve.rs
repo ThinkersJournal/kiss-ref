@@ -444,6 +444,9 @@ pub fn legality(op: Op, dtype: Dtype) -> bool {
         NumericKind::Int | NumericKind::Uint => int_legal(op),
         NumericKind::Bool => bool_legal(op),
         NumericKind::Complex => false, // handled above
+        // `NumericKind` is `#[non_exhaustive]` (reserved at the sk5 break): a kind this release does
+        // not model is not legal for any op until it is modelled.
+        _ => false,
     }
 }
 

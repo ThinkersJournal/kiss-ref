@@ -3,7 +3,7 @@
 //!
 //! A Rust binding of the **KISS-Classify** pinned scalar dtype set
 //! (`../../KISS/spec/classify.md` §6.1, "The pinned scalar dtype set"), bound to
-//! the **sk4** schema vocabulary (KISS `@f4cc3ad`).
+//! the §6.1 dtype vocabulary introduced at **sk4** and unchanged at **sk5** (KISS `a33282c`).
 //!
 //! KISS-Classify — not this crate — *owns* the dtype set. This crate is one
 //! conformant embodiment of it with **no privilege** (KISS-Classify front-matter).
@@ -34,6 +34,7 @@
 
 /// The five numeric kinds KISS-Classify §6.1 groups dtypes under.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum NumericKind {
     /// IEEE-754 or non-IEEE floating-point (`f16 bf16 f32 f64`, the FP8 variants,
     /// the MX scale `f8e8m0`, and the reserved 8-bit `f8e6m2`).
