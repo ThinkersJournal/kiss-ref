@@ -11,6 +11,7 @@
 /// NaN-propagating; `sum`/`prod` over floats are order-invariant/nondeterministic
 /// (§6.0-0004).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Monoid {
     /// Additive fold; identity `+0.0` / integer `0`.
     Sum,
@@ -25,6 +26,7 @@ pub enum Monoid {
 /// Out-of-bounds policy for a `gather` READ (§6.11-0004). A negative signed index
 /// is always out of bounds (no from-end wrap).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum OobPolicy {
     /// Leave the caller-provided base value at that output position (§6.11
     /// gather-skip semantics, ruled option 1 on KISS PR #75, 2026-07-23; base
@@ -40,6 +42,7 @@ pub enum OobPolicy {
 /// Scatter WRITE combine (§6.11-0005 / §6.19-0016). Out-of-bounds writes are
 /// always skipped (oob is fixed `skip` for scatter).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Combine {
     /// Overwrite; duplicate-index tie-break = highest row-major source wins
     /// (deterministic, §6.11-0006).
@@ -56,6 +59,7 @@ pub enum Combine {
 /// Sort direction (§6.11-0007). NaN orders as the greatest value in either
 /// direction (ascending → last, descending → first).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Direction {
     /// Ascending.
     Asc,

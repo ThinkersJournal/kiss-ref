@@ -835,6 +835,8 @@ fn child_slots(node: &mut Node) -> Vec<&mut usize> {
         Node::SortNetwork { keys, .. } => v.push(keys),
         Node::Iota { like, .. } => v.push(like),
         Node::Flip { child, .. } => v.push(child),
+        // `Node` is `#[non_exhaustive]` (sk5 reservation): a new variant must be modelled here, loudly.
+        other => panic!("child_slots: unmodelled Node variant {other:?}"),
     }
     v
 }
@@ -1124,6 +1126,8 @@ fn apply_mutation(rng: &mut Rng, c: &mut Case, kind: usize) -> bool {
                 _ => match old {
                     IndexRef::Slot(s) => IndexRef::Node(s),
                     IndexRef::Node(m) => IndexRef::Slot(m),
+                    // `IndexRef` is `#[non_exhaustive]` (sk5 reservation).
+                    other => panic!("unmodelled IndexRef variant {other:?}"),
                 },
             };
             match &mut c.dag.nodes[k] {
@@ -1798,6 +1802,7 @@ fn variant_bit(node: &Node) -> u16 {
         Node::SortNetwork { .. } => 10,
         Node::Iota { .. } => 11,
         Node::Flip { .. } => 12,
+        other => panic!("variant_bit: unmodelled Node variant {other:?}"),
     }
 }
 

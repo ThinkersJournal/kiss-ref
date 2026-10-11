@@ -11,6 +11,9 @@ conformance crate is unpublished. Format follows [Keep a Changelog]; versions ar
 > verify a vocab change against the published 0.3.4) but nothing is published. The next release is a **breaking** one: it rebinds the
 > crates from the KISS spec commit `19c3ad7` to current KISS `main` in slices. This section lists
 > what is on `main` and unreleased; entries are added slice by slice, not at release time.
+>
+> **Re-bound 2026-10-11 to KISS `a33282c` (`sk5`).** The earlier slices were bound to `904a4b4` (`sk4`), which this
+> release no longer is; no crate was published at that pin. This is the **sk5 break**: see "Changed — breaking" below.
 
 ### What 0.4.0 does NOT model (so nobody reads it as full coverage of KISS main)
 
@@ -21,7 +24,16 @@ conformance crate is unpublished. Format follows [Keep a Changelog]; versions ar
 - **A native `Bool` tensor lane**: a comparison's `bool` result dtype is exposed additively (`result_dtype`,
   `FlatDag::output_dtypes`, `mask_bytes`); values are still held in the compute lane as exactly `1`/`0`.
 - **Any KISS-Contract document, the `structure_key`, or the Announce/Synth/Consume/Emit wire formats.**
-- It binds KISS `904a4b4` for the surfaces it does model (see `DESIGN.md` "Spec pin").
+- It binds KISS `a33282c` for the surfaces it does model (see `DESIGN.md` "Spec pin"). It models no `structure_key`,
+  so the `sk5` schema change (derived `cell_class`, keyed `dequant_form`) and `contract_version` 3 do not touch it; the
+  vendored `dtype_manifest.json` is re-vendored (`token_prefix` `sk5`), its 24 dtype rows unchanged.
+
+### Changed — breaking (the sk5 break)
+
+- **`#[non_exhaustive]` on the eight schema-growable public enums** that were reserved for this release:
+  `NumericKind` (`kiss-classify-vocab`), `Family` (`kiss-ops-vocab`), `Monoid`, `OobPolicy`, `Combine`,
+  `Direction`, `Node`, `IndexRef` (`kiss-ref-core`). A downstream exhaustive `match` on any of them needs a
+  wildcard arm. `Dtype`, `Op` and `Error` were already reserved.
 
 ### Changed — behaviour that can turn a passing comparison into a failing one
 
@@ -79,7 +91,7 @@ conformance crate is unpublished. Format follows [Keep a Changelog]; versions ar
   bit-for-bit, a sum-reduction quiets it, a max-reduction under an arithmetic epilogue quiets it, and a
   sum-reduction under a pure-move epilogue still quiets it. kiss-ref already conformed; no code change.
 - `ScalarFloat::quiet_nan`.
-- `kiss-ref-conformance`: the KISS oracle-vector corpus (six files, 159 vectors, KISS `904a4b4`,
+- `kiss-ref-conformance`: the KISS oracle-vector corpus (six files, 159 vectors, KISS `a33282c`,
   vendored under `fixtures/kiss-corpus/`) is now run against kiss-ref (`tests/kiss_corpus_vectors.rs`).
 
 ### Changed

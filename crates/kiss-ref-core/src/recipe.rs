@@ -52,6 +52,7 @@ use crate::Error;
 /// node-produced indices numbered above `indices.len()` — was rejected: a slot's
 /// meaning would depend on the runtime `indices.len()`, which the DAG cannot see.)
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum IndexRef {
     /// The external `indices[slot]` input.
     Slot(usize),
@@ -64,6 +65,7 @@ pub enum IndexRef {
 
 /// A node in the canonical flat-DAG (the logical, decoded form).
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub enum Node {
     /// Bind the fused op's `inputs[i]` (§6.4-0009 `Bind`).
     Bind(usize),
