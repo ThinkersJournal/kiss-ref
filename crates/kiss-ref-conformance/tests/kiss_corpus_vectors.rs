@@ -2,7 +2,7 @@
 //! kiss-ref against KISS's own oracle-vector corpus (`kiss-oracle-vectors-v1.json`).
 //!
 //! The reference evaluator is run on every vector of the six op-corpus files vendored under
-//! `fixtures/kiss-corpus/` (KISS `a33282c`, see `PROVENANCE.md`) and must reproduce `expected`:
+//! `fixtures/kiss-corpus/` (KISS `9ea8c05`, see `PROVENANCE.md`) and must reproduce `expected`:
 //!
 //! - `exact-byte`: the result's raw bits equal `expected` — payload and sign of a NaN included
 //!   (KISS-CONFORM-6.8-0010(a): a MOVED value compares exact-byte, and a value compare of
@@ -28,7 +28,9 @@ const FILES: &[(&str, usize)] = &[
     ("ops-minmax-signed-zero", 48),
     ("ops-narrow-move-nan", 30),
     ("ops-narrow-select-nan", 40),
-    ("ops-transcendental-nan", 12),
+    ("ops-transcendental-nan", 13),
+    ("ops-minmax-nan", 44),
+    ("ops-rounding", 72),
 ];
 
 fn load(name: &str) -> Value {
