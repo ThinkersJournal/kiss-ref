@@ -7,6 +7,8 @@ conformance crate is unpublished. Format follows [Keep a Changelog]; versions ar
 
 ## [Unreleased]
 
+## [0.4.2] — 2026-10-14
+
 Tests and fixtures only; no change to the published crates' code.
 
 - Vendored KISS corpus gains `ops-int-wrap` (440 vectors, KISS-OPS-6.2-0002) and `ops-compare-bool` (181, KISS-OPS-6.2-0005/-0006) from KISS `034a4b1`; the first vectors in the corpus that kiss-ref's **integer** (`eval_int_op`) and **`bool`** (`eval_bool_op`) lanes are run against. `kiss_corpus_vectors` routes by operand dtype: integer kinds and `bool` through those lanes (low-`width` bit pattern compared), float comparisons through `eval_op` with the 1.0/0.0 mask read as the one-byte `bool`. **kiss-ref reproduces 621 of 621** (all 8 integer dtypes x add/sub/mul at the wrap boundaries; 181 comparison/logical cells including NaN operands and non-0/1 `bool` bytes). New negative controls prove the int and bool routes can fail. No crate code change; no native `Bool` lane was needed (the mask is read at the wire byte).
