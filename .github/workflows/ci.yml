@@ -74,7 +74,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # The gate's own controls run FIRST. A checker nobody has watched fail is
       # a checker nobody has evidence works, and a gate whose parser silently
@@ -91,7 +91,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust toolchain and the bare-metal target
         run: |
@@ -108,7 +108,7 @@ jobs:
         run: echo "fp=$(rustc -V | md5sum | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
 
       - name: Cache cargo registry and target dir
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry/index/
@@ -175,7 +175,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Read declared MSRV from Cargo.toml
         id: msrv
