@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! kiss-ref against KISS's own oracle-vector corpus (`kiss-oracle-vectors-v1.json`).
 //!
-//! The reference evaluator is run on every vector of the six op-corpus files vendored under
+//! The reference evaluator is run on every vector of the op-corpus files vendored under
 //! `fixtures/kiss-corpus/` (KISS `9ea8c05`, see `PROVENANCE.md`) and must reproduce `expected`:
 //!
 //! - `exact-byte`: the result's raw bits equal `expected` — payload and sign of a NaN included
@@ -17,8 +17,10 @@
 //! pins the vector count of each so a partial re-vendor cannot pass quietly.
 
 use half::{bf16, f16};
+use kiss_classify_vocab::Dtype;
 use kiss_ops_vocab::Op;
-use kiss_ref_core::{eval_op, E4m3, E5m2};
+use kiss_ref_core::scalar_int::{int_spec, wrap_to_dtype};
+use kiss_ref_core::{eval_bool_op, eval_int_op, eval_op, E4m3, E5m2};
 use serde_json::Value;
 use std::path::PathBuf;
 
@@ -31,6 +33,8 @@ const FILES: &[(&str, usize)] = &[
     ("ops-transcendental-nan", 13),
     ("ops-minmax-nan", 44),
     ("ops-rounding", 72),
+    ("ops-int-wrap", 440),
+    ("ops-compare-bool", 181),
 ];
 
 fn load(name: &str) -> Value {
@@ -148,6 +152,48 @@ fn compare_ulp(lane: &Lane, got: u64, want: u64, bound: u64) -> Result<(), Strin
     }
 }
 
+/// Integer and `bool` vectors (KISS-OPS-6.2-0002 / -0005 / -0006): the operands' raw bits are
+/// reinterpreted in the vector's dtype, evaluated by kiss-ref's integer / bool lane, and the result's
+/// low-`width` bit pattern (one byte for a `bool`) must equal `expected` exactly. Returns `None`
+/// when `dtype` is neither an integer kind nor `bool` (the float path handles it).
+fn run_int_or_bool(op: Op, dtype: &str, inputs: &[u64], want: u64) -> Option<Result<(), String>> {
+    let (got, bits) = if dtype == "bool" {
+        let args: Vec<i128> = inputs.iter().map(|&b| b as i128).collect();
+        (
+            eval_bool_op(op, &args).map_err(|e| format!("eval error: {e:?}")),
+            8,
+        )
+    } else {
+        let d = Dtype::from_token(dtype)?;
+        let (bits, _) = int_spec(d)?;
+        let mut args = Vec::new();
+        for &b in inputs {
+            match wrap_to_dtype(b as i128, d) {
+                Ok(v) => args.push(v),
+                Err(e) => return Some(Err(format!("operand: {e:?}"))),
+            }
+        }
+        (
+            eval_int_op(op, d, &args).map_err(|e| format!("eval error: {e:?}")),
+            bits,
+        )
+    };
+    Some(got.and_then(|r| {
+        // A comparison over an integer lane returns a `bool` (one byte, 0/1): the vector's
+        // expected dtype is `bool` even though the lane is i32/u32.
+        let pattern = if bits >= 64 {
+            r as u64
+        } else {
+            (r as u64) & ((1u64 << bits) - 1)
+        };
+        if pattern == want {
+            Ok(())
+        } else {
+            Err(format!("got {pattern:#x}, expected {want:#x}"))
+        }
+    }))
+}
+
 /// Run one vector; returns `Err(reason)` on a mismatch.
 fn run_one(v: &Value) -> Result<(), String> {
     let op_name = v["op"].as_str().unwrap();
@@ -161,8 +207,24 @@ fn run_one(v: &Value) -> Result<(), String> {
         .map(|i| parse_hex(i["bits"].as_str().unwrap()))
         .collect();
     let want = parse_hex(v["expected"]["bits"].as_str().unwrap());
+    let expected_dtype = v["expected"]["dtype"].as_str().unwrap();
+    // A comparison over an integer lane yields a one-byte `bool`, whatever the compute dtype, so
+    // the result's pattern is compared at the expected width: route by the OPERAND dtype first.
+    if let Some(r) = run_int_or_bool(op, dtype, &inputs, want) {
+        return r;
+    }
     let lane = lane_of(dtype)?;
     let got = eval_bits(dtype, op, &inputs)?;
+    if expected_dtype == "bool" {
+        // float comparison: kiss-ref holds the mask in the compute lane as 1.0 / 0.0; the wire
+        // value is one byte, 1 for any truthy result (KISS-OPS-6.2-0005).
+        let byte = u64::from(got != 0);
+        return if byte == want {
+            Ok(())
+        } else {
+            Err(format!("got bool {byte:#x}, expected {want:#x}"))
+        };
+    }
     match v["class"].as_str().unwrap() {
         "exact-byte" if got == want => Ok(()),
         "exact-byte" => Err(format!("got {got:#x}, expected {want:#x}")),
@@ -232,4 +294,42 @@ fn the_runner_detects_a_wrong_expected_value() {
         "00 00 00 01".into()
     });
     assert!(run_one(v).is_err(), "a wrong exact-byte expected must fail");
+}
+
+/// The integer and `bool` routes can fail too: flipping one expected byte of an int-wrap cell, a
+/// float-compare cell and a bool-logic cell must each be reported (a route that returned `Ok` for
+/// everything would otherwise pass all 621 vectors).
+#[test]
+fn the_int_and_bool_routes_detect_a_wrong_expected_value() {
+    for (file, dtype) in [
+        ("ops-int-wrap", "i8"),
+        ("ops-compare-bool", "f32"),
+        ("ops-compare-bool", "bool"),
+    ] {
+        let d = load(file);
+        let mut v = d["vectors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|v| v["dtype"] == dtype)
+            .unwrap_or_else(|| panic!("{file}: no {dtype} vector"))
+            .clone();
+        assert!(
+            run_one(&v).is_ok(),
+            "control: unmodified {file} {dtype} vector passes"
+        );
+        let was = v["expected"]["bits"].as_str().unwrap().to_owned();
+        let flipped = if was == "01" {
+            "00"
+        } else if was == "00" {
+            "01"
+        } else {
+            "FF"
+        };
+        v["expected"]["bits"] = Value::String(flipped.into());
+        assert!(
+            run_one(&v).is_err(),
+            "{file} {dtype}: a wrong expected must fail"
+        );
+    }
 }

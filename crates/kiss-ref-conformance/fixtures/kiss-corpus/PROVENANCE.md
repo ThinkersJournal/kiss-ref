@@ -1,6 +1,6 @@
 # Vendored KISS conformance corpus — provenance
 
-Source: ThinkersJournal/KISS `conformance/corpus/` at `origin/main` `9ea8c05` (2026-10-14; KISS 0.2.14; `sk5` / `contract_version` 3). Copied verbatim; do not edit. Re-vendor by copying again and updating this table.
+Source: ThinkersJournal/KISS `conformance/corpus/` at `origin/main` `9ea8c05` (2026-10-14; KISS 0.2.14; the two integer/bool files below are from `034a4b1`, KISS 0.2.20; `sk5` / `contract_version` 3). Copied verbatim; do not edit. Re-vendor by copying again and updating this table.
 
 | file | KISS blob (`git rev-parse 9ea8c05:conformance/corpus/<file>`) |
 |---|---|
@@ -14,3 +14,5 @@ Source: ThinkersJournal/KISS `conformance/corpus/` at `origin/main` `9ea8c05` (2
 | `ops-transcendental-nan.json` | `d4f8b7486ca2b082252f4d305dff8edff2db5672` (13 vectors: +f64 `log` of an sNaN, tcId 13, KISS #550; was `7e46250` / 12; also gains a `harness_rule` header key) |
 | `ops-minmax-nan.json` | `576d69ab693f6acb835c1c91307dba26bb0390d3` (new at KISS #540: 44 f32/f64 NaN cells for max_prop/min_prop/fmax_ieee/fmin_ieee) |
 | `ops-rounding.json` | `f8f84610bc59bffe4e77c1ea2546482668fe5d77` (new at KISS #539: 72 f32 floor/ceil/trunc/round_even cells) |
+| `ops-int-wrap.json` | `00d16c351833e404bf8ffd80a4b62d778e0f0b84` (new at KISS 0.2.19, vendored from `origin/main` `034a4b1`: 440 exact-byte i8..u64 add/sub/mul wrap cells, KISS-OPS-6.2-0002) |
+| `ops-compare-bool.json` | `761bee795394b60936781a0a569bac0c50f47f2c` (new at KISS 0.2.20, vendored from `origin/main` `034a4b1`: 181 exact-byte cells, `cmp_*` over f32/i32/u32 and `logical_*` over `bool`, expected dtype `bool`, KISS-OPS-6.2-0005/-0006) |
