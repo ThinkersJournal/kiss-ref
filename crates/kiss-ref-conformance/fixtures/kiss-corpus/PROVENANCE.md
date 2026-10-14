@@ -16,3 +16,4 @@ Source: ThinkersJournal/KISS `conformance/corpus/` at `origin/main` `9ea8c05` (2
 | `ops-rounding.json` | `f8f84610bc59bffe4e77c1ea2546482668fe5d77` (new at KISS #539: 72 f32 floor/ceil/trunc/round_even cells) |
 | `ops-int-wrap.json` | `00d16c351833e404bf8ffd80a4b62d778e0f0b84` (new at KISS 0.2.19, vendored from `origin/main` `034a4b1`: 440 exact-byte i8..u64 add/sub/mul wrap cells, KISS-OPS-6.2-0002) |
 | `ops-compare-bool.json` | `761bee795394b60936781a0a569bac0c50f47f2c` (new at KISS 0.2.20, vendored from `origin/main` `034a4b1`: 181 exact-byte cells, `cmp_*` over f32/i32/u32 and `logical_*` over `bool`, expected dtype `bool`, KISS-OPS-6.2-0005/-0006) |
+| `ops-atan2-quadrants.json` | `0c851c27b1702d46b6147a0b0c5b86893a9da95b` (new at KISS 0.2.22 / #558, vendored from `origin/main` `d83d3c0`: 28 f32 class-ULP `atan2` cells, KISS-OPS-6.9-0001; expected is f64 libm `atan2` rounded to f32, not correctly rounded) |

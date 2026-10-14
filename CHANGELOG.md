@@ -7,6 +7,12 @@ conformance crate is unpublished. Format follows [Keep a Changelog]; versions ar
 
 ## [Unreleased]
 
+## [0.4.3] — 2026-10-14
+
+Tests and fixtures only; no change to the published crates' code.
+
+- Vendored KISS corpus gains `ops-atan2-quadrants` (28 f32 class-ULP vectors, KISS-OPS-6.9-0001, KISS #558 at `d83d3c0`): the four quadrants, the signed-zero matrix and the infinity matrix. Run by `kiss_corpus_vectors` through `eval_op`; the oracle value is f64 libm `atan2` rounded once to f32, so the ULP bound (4) is the comparison, not exact-byte.
+
 ## [0.4.2] — 2026-10-14
 
 Tests and fixtures only; no change to the published crates' code.

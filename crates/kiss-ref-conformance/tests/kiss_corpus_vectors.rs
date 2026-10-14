@@ -35,6 +35,7 @@ const FILES: &[(&str, usize)] = &[
     ("ops-rounding", 72),
     ("ops-int-wrap", 440),
     ("ops-compare-bool", 181),
+    ("ops-atan2-quadrants", 28),
 ];
 
 fn load(name: &str) -> Value {
