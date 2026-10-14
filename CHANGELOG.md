@@ -7,6 +7,12 @@ conformance crate is unpublished. Format follows [Keep a Changelog]; versions ar
 
 ## [Unreleased]
 
+## [0.4.4] — 2026-10-14
+
+Tests and fixtures only; no change to the published crates' code.
+
+- Vendored KISS corpus gains `ops-sqrt-rounding` (24 f32 vectors, class ULP with `ulp_bound` 0, KISS-OPS-6.8-0003 first arm, KISS #559): exact squares, one-ulp neighbours, irrational results, subnormals, `+-0`, `+inf`. Run by `kiss_corpus_vectors` through `eval_op`; bound 0 means the result must be the correctly rounded one. The sign of a zero result is not discriminated by the totalOrder ULP comparator.
+
 ## [0.4.3] — 2026-10-14
 
 Tests and fixtures only; no change to the published crates' code.
