@@ -7,6 +7,10 @@ conformance crate is unpublished. Format follows [Keep a Changelog]; versions ar
 
 ## [Unreleased]
 
+## [0.4.1] — 2026-10-14
+
+Tests, fixtures and CI only; no change to the published crates' code. Covers #53 (Actions pinned to SHAs) and #54.
+
 - Vendored KISS corpus re-pinned at KISS `9ea8c05`: `ops-transcendental-nan` 12 → 13 vectors (f64 `log` of an sNaN), plus the two new files `ops-minmax-nan` (44) and `ops-rounding` (72), now run by `kiss_corpus_vectors` (kiss-ref reproduces all of them exact-byte; see the test's `FILES`). Tests/fixtures only; no crate code change.
 
 - CI: GitHub Actions in `ci.yml` pinned to commit SHAs (4 lines; tag kept in a trailing comment), node24 runtimes. No code change.
