@@ -7,6 +7,12 @@ conformance crate is unpublished. Format follows [Keep a Changelog]; versions ar
 
 ## [Unreleased]
 
+## [0.4.5] — 2026-10-14
+
+Tests and fixtures only; no change to the published crates' code.
+
+- Vendored KISS corpus gains `ops-nextafter` (40 exact-byte vectors, f32 and f64, KISS-OPS-6.9-0003 value half, KISS #562): up/down, equal operands (return `b`), zero crossing to the smallest subnormal, `+-inf`, max finite <-> inf, the subnormal/normal boundary. Run by `kiss_corpus_vectors` through `eval_op`. KISS counts 6.9-0003 as PARTIAL (the typed decline for the narrow floats has no vector form).
+
 ## [0.4.4] — 2026-10-14
 
 Tests and fixtures only; no change to the published crates' code.
