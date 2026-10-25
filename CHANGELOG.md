@@ -7,6 +7,10 @@ conformance crate is unpublished. Format follows [Keep a Changelog]; versions ar
 
 ## [Unreleased]
 
+## [0.4.6] — 2026-10-25
+
+Added `.github/CODEOWNERS` (`* @ciresnave`); no change to the published crates' code.
+
 ## [0.4.5] — 2026-10-14
 
 Tests and fixtures only; no change to the published crates' code.
