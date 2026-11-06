@@ -7,6 +7,10 @@ conformance crate is unpublished. Format follows [Keep a Changelog]; versions ar
 
 ## [Unreleased]
 
+## [0.4.7] — 2026-11-05
+
+Corpus fixture only; no change to the published crates' code. `op_manifest.json` re-vendored verbatim from KISS `e786097` (KISS 0.7.11, #772; blob `ccaa50a6bdeeacc19ed40018cc1730573df48cfe`): the only change against the previous pin is its `generated_from` provenance member, which now names `tools/kiss_ops.py` instead of `spec/ops.md`. `dtype_manifest.json` is deliberately NOT re-vendored here and stays at the `9ea8c05` pin (sk5, 24 dtypes): KISS `e786097` carries sk6 and 27 dtypes, which needs the `kiss-classify-vocab` change in its own PR.
+
 ## [0.4.6] — 2026-10-25
 
 Added `.github/CODEOWNERS` (`* @ciresnave`); no change to the published crates' code.
