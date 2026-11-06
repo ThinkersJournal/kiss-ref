@@ -450,7 +450,10 @@ mod tests {
             assert_eq!(Dtype::from_token(tok), Some(d));
             assert_eq!(d.numeric_kind(), NumericKind::Float, "{d:?} kind");
             assert_eq!(d.bits(), bits, "{d:?} logical width");
-            assert!(!d.is_reserved() && !d.is_mx_scale() && !d.declines_compute(), "{d:?}");
+            assert!(
+                !d.is_reserved() && !d.is_mx_scale() && !d.declines_compute(),
+                "{d:?}"
+            );
         }
     }
 
