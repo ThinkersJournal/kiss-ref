@@ -3,7 +3,8 @@
 //!
 //! A Rust binding of the **KISS-Classify** pinned scalar dtype set
 //! (`../../KISS/spec/classify.md` §6.1, "The pinned scalar dtype set"), bound to
-//! the §6.1 dtype vocabulary introduced at **sk4** and unchanged at **sk5** (KISS `a33282c`).
+//! the §6.1 dtype vocabulary introduced at **sk4**, unchanged at **sk5** (KISS `a33282c`), extended at **sk6** by three MX element formats
+//! (`f4e2m1`, `f6e2m3`, `f6e3m2`; KISS `68dc233`) and unchanged at **sk7** (KISS `250663c`).
 //!
 //! KISS-Classify — not this crate — *owns* the dtype set. This crate is one
 //! conformant embodiment of it with **no privilege** (KISS-Classify front-matter).
@@ -49,7 +50,7 @@ pub enum NumericKind {
     Complex,
 }
 
-/// The KISS-Classify §6.1 pinned scalar dtype set — exactly 24 dtypes (sk4).
+/// The KISS-Classify §6.1 pinned scalar dtype set — exactly 27 dtypes (24 at sk4/sk5; the three MX element formats are additive at sk6).
 ///
 /// Token spelling is normative and case-sensitive (KISS-CLASSIFY §6.1 / the same
 /// exact-spelling discipline KISS-OPS-6.1-0002 applies to ops). At sk4 the integer
@@ -124,12 +125,22 @@ pub enum Dtype {
     /// Complex: interleaved (re, im) pair of `f64`, 128 bits total (§6.1-0012). This
     /// is the sk3 `c64`.
     C128,
+    /// MX **element** FP4 E2M1 (sign 1, exponent 2, mantissa 1, bias 1); no infinity, no NaN;
+    /// max finite ±6; packed-pair storage byte-identical to `i4` (low nibble = even index)
+    /// (KISS-Classify §6.1-0014, OCP Microscaling v1.0). Additive at sk6.
+    F4e2m1,
+    /// MX **element** FP6 E2M3 (sign 1, exponent 2, mantissa 3, bias 1); no infinity, no NaN;
+    /// max finite ±7.5; four elements per three bytes, LSB-first (§6.1-0015). Additive at sk6.
+    F6e2m3,
+    /// MX **element** FP6 E3M2 (sign 1, exponent 3, mantissa 2, bias 3); no infinity, no NaN;
+    /// max finite ±28; four elements per three bytes, LSB-first (§6.1-0015). Additive at sk6.
+    F6e3m2,
 }
 
 impl Dtype {
     /// Every dtype in the KISS-Classify §6.1 set, in table order. The coverage
     /// gate iterates this to enumerate the (op × dtype) matrix.
-    pub const ALL: [Dtype; 24] = [
+    pub const ALL: [Dtype; 27] = [
         Dtype::F16,
         Dtype::Bf16,
         Dtype::F32,
@@ -154,6 +165,9 @@ impl Dtype {
         Dtype::B1,
         Dtype::C64,
         Dtype::C128,
+        Dtype::F4e2m1,
+        Dtype::F6e2m3,
+        Dtype::F6e3m2,
     ];
 
     /// The normative, case-sensitive KISS token for this dtype.
@@ -183,6 +197,9 @@ impl Dtype {
             Dtype::B1 => "b1",
             Dtype::C64 => "c64",
             Dtype::C128 => "c128",
+            Dtype::F4e2m1 => "f4e2m1",
+            Dtype::F6e2m3 => "f6e2m3",
+            Dtype::F6e3m2 => "f6e3m2",
         }
     }
 
@@ -210,7 +227,10 @@ impl Dtype {
             | Dtype::F8e5m2
             | Dtype::F8e5m2fnuz
             | Dtype::F8e8m0
-            | Dtype::F8e6m2 => NumericKind::Float,
+            | Dtype::F8e6m2
+            | Dtype::F4e2m1
+            | Dtype::F6e2m3
+            | Dtype::F6e3m2 => NumericKind::Float,
             Dtype::I8 | Dtype::I16 | Dtype::I32 | Dtype::I64 | Dtype::I4 => NumericKind::Int,
             Dtype::U8 | Dtype::U16 | Dtype::U32 | Dtype::U64 | Dtype::U4 | Dtype::B1 => {
                 NumericKind::Uint
@@ -238,7 +258,8 @@ impl Dtype {
             | Dtype::F8e5m2fnuz
             | Dtype::F8e8m0
             | Dtype::F8e6m2 => 8,
-            Dtype::I4 | Dtype::U4 => 4,
+            Dtype::I4 | Dtype::U4 | Dtype::F4e2m1 => 4,
+            Dtype::F6e2m3 | Dtype::F6e3m2 => 6,
             Dtype::B1 => 1,
             Dtype::C64 => 64,
             Dtype::C128 => 128,
@@ -308,9 +329,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn classify_dtype_set_has_exactly_twenty_four() {
-        // KISS-CLASSIFY-6.1-0001 (sk4): the scalar dtype set is exactly 24 tokens.
-        assert_eq!(Dtype::ALL.len(), 24);
+    fn classify_dtype_set_has_exactly_twenty_seven() {
+        // KISS-CLASSIFY-6.1-0001 (sk4): the scalar dtype set is exactly 27 tokens (24 at sk4, +3 MX element formats at sk6).
+        assert_eq!(Dtype::ALL.len(), 27);
     }
 
     #[test]
@@ -329,11 +350,11 @@ mod tests {
         for d in Dtype::ALL {
             assert_eq!(Dtype::from_token(d.token()), Some(d), "round-trip {d:?}");
         }
-        // Uniqueness: 24 distinct tokens.
+        // Uniqueness: 27 distinct tokens.
         let mut toks: Vec<&str> = Dtype::ALL.iter().map(|d| d.token()).collect();
         toks.sort_unstable();
         toks.dedup();
-        assert_eq!(toks.len(), 24, "all 24 tokens must be distinct");
+        assert_eq!(toks.len(), 27, "all 27 tokens must be distinct");
     }
 
     #[test]
@@ -414,6 +435,25 @@ mod tests {
         for d in [Dtype::F8e8m0, Dtype::F8e6m2] {
             assert_eq!(d.numeric_kind(), NumericKind::Float, "{d:?} kind");
             assert_eq!(d.bits(), 8, "{d:?} width (exp+mantissa self-check)");
+        }
+    }
+
+    #[test]
+    fn classify_mx_element_dtypes_are_float_compute_dtypes() {
+        // §6.1-0014/-0015: the three MX element formats are ordinary (non-reserved) float dtypes.
+        for (d, tok, bits) in [
+            (Dtype::F4e2m1, "f4e2m1", 4),
+            (Dtype::F6e2m3, "f6e2m3", 6),
+            (Dtype::F6e3m2, "f6e3m2", 6),
+        ] {
+            assert_eq!(d.token(), tok);
+            assert_eq!(Dtype::from_token(tok), Some(d));
+            assert_eq!(d.numeric_kind(), NumericKind::Float, "{d:?} kind");
+            assert_eq!(d.bits(), bits, "{d:?} logical width");
+            assert!(
+                !d.is_reserved() && !d.is_mx_scale() && !d.declines_compute(),
+                "{d:?}"
+            );
         }
     }
 
