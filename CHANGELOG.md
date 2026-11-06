@@ -7,6 +7,14 @@ conformance crate is unpublished. Format follows [Keep a Changelog]; versions ar
 
 ## [Unreleased]
 
+## [0.4.8] — 2026-11-06
+
+Binds KISS `d47b99e` (0.8.1, `sk7`) for the **dtype set** (R3.17, `docs/kiss-ref-v4-delta.md`). Additive: `Dtype` is `#[non_exhaustive]`.
+
+- `kiss-classify-vocab`: three MX element dtypes, `f4e2m1` (4 bits), `f6e2m3` and `f6e3m2` (6 bits), kind `float`, not reserved (KISS-Classify §6.1-0014..-0016); `Dtype::ALL` 24→27.
+- Fixture: `dtype_manifest.json` re-vendored verbatim (blob `5bd3a9a`); `dtype_manifest_agreement` now compares 27 dtypes.
+- **Not in this release:** the op set stays at 122 ops (`op_manifest.json` `ccaa50a`). KISS `d47b99e` adds `cast` and `concat`; kiss-ref's coverage gate requires every op to be evaluable, so they follow with evaluators, not as bare tokens.
+
 ## [0.4.7] — 2026-11-05
 
 Corpus fixture only; no change to the published crates' code. `op_manifest.json` re-vendored verbatim from KISS `e786097` (KISS 0.7.11, #772; blob `ccaa50a6bdeeacc19ed40018cc1730573df48cfe`): the only change against the previous pin is its `generated_from` provenance member, which now names `tools/kiss_ops.py` instead of `spec/ops.md`. `dtype_manifest.json` is deliberately NOT re-vendored here and stays at the `9ea8c05` pin (sk5, 24 dtypes): KISS `e786097` carries sk6 and 27 dtypes, which needs the `kiss-classify-vocab` change in its own PR.
