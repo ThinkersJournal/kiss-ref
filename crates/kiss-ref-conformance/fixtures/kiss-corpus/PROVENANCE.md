@@ -5,7 +5,7 @@ Source: ThinkersJournal/KISS `conformance/corpus/` at `origin/main` `9ea8c05` (2
 | file | KISS blob (`git rev-parse 9ea8c05:conformance/corpus/<file>`) |
 |---|---|
 | `dtype_manifest.json` | `24ff38f068aa18be723c07d307c86ae572c1333f` (changed from `af851db` at `904a4b4`: only `structure_key_schema_version` 4→5 and `token_prefix` `sk4`→`sk5`; the 24 dtype rows are byte-identical) |
-| `op_manifest.json` | `f656b625ab8e5371c7a4a73df92863d193c31b74` (unchanged from `904a4b4`) |
+| `op_manifest.json` | `ccaa50a6bdeeacc19ed40018cc1730573df48cfe` (re-vendored from KISS `e786097`, 0.7.11 / #772; was `f656b62`; only the `generated_from` member changed, to name `tools/kiss_ops.py`; the rest of this corpus stays at `9ea8c05`) |
 | `ops-arith.json` | `aee2de79a709e722f3c439047bf90c638aec9b24` |
 | `ops-minmax-ordinary.json` | `7bd6cc394bd247f9ca34edfc957d70a37432af97` |
 | `ops-minmax-signed-zero.json` | `d06bdb85c8e626750318b61585b4af3ea5c8d4b4` |
