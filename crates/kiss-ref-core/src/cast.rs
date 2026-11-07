@@ -570,3 +570,79 @@ pub fn concat_dtype(dtypes: &[Dtype]) -> Result<Dtype, Error> {
         None => Ok(first),
     }
 }
+
+/// The output shape of `squeeze` (§6.11-0022): `shape` minus the axes `mask` names. Declines:
+/// an empty mask, a bit at or above the rank, a named axis whose extent is not `1`.
+pub fn squeeze_shape(shape: &[usize], mask: u8) -> Result<Vec<usize>, Error> {
+    let rank = shape.len();
+    if mask == 0 {
+        return Err(Error::AxesMaskEmpty);
+    }
+    let top = 8 - mask.leading_zeros() as usize;
+    if top > rank {
+        return Err(Error::AxesMaskBitOutOfRange { bit: top - 1, rank });
+    }
+    let mut out = Vec::with_capacity(rank);
+    for (k, &e) in shape.iter().enumerate() {
+        if mask >> k & 1 == 0 {
+            out.push(e);
+        } else if e != 1 {
+            return Err(Error::SqueezeExtentNotOne { axis: k, extent: e });
+        }
+    }
+    Ok(out)
+}
+
+/// The output shape of `unsqueeze` (§6.11-0023): extent `1` at each output axis `mask` names,
+/// the operand's axes in order elsewhere. Declines: an empty mask, a bit at or above the output
+/// rank, an output rank above `MAX_RANK`.
+pub fn unsqueeze_shape(shape: &[usize], mask: u8) -> Result<Vec<usize>, Error> {
+    if mask == 0 {
+        return Err(Error::AxesMaskEmpty);
+    }
+    let out_rank = shape.len() + mask.count_ones() as usize;
+    if out_rank > MAX_RANK {
+        return Err(Error::RankExceeded {
+            rank: out_rank,
+            max: MAX_RANK,
+        });
+    }
+    let top = 8 - mask.leading_zeros() as usize;
+    if top > out_rank {
+        return Err(Error::AxesMaskBitOutOfRange {
+            bit: top - 1,
+            rank: out_rank,
+        });
+    }
+    let mut src = shape.iter();
+    let mut out = Vec::with_capacity(out_rank);
+    for k in 0..out_rank {
+        if mask >> k & 1 == 1 {
+            out.push(1);
+        } else {
+            out.push(*src.next().ok_or(Error::ShapeOverflow)?);
+        }
+    }
+    Ok(out)
+}
+
+/// `squeeze` (§6.11-0022): pure shape; every element is copied bit for bit.
+pub fn squeeze<T: Copy>(x: &View<'_, T>, mask: u8) -> Result<Tensor<T>, Error> {
+    reshape_copy(x, &squeeze_shape(x.shape(), mask)?)
+}
+
+/// `unsqueeze` (§6.11-0023): pure shape; every element is copied bit for bit.
+pub fn unsqueeze<T: Copy>(x: &View<'_, T>, mask: u8) -> Result<Tensor<T>, Error> {
+    reshape_copy(x, &unsqueeze_shape(x.shape(), mask)?)
+}
+
+/// Row-major copy of `x` under `out_shape` (same element count, same order).
+fn reshape_copy<T: Copy>(x: &View<'_, T>, out_shape: &[usize]) -> Result<Tensor<T>, Error> {
+    let shape = x.shape();
+    let mut buf: Vec<T> = alloc_exact(numel(shape)?)?;
+    let mut od = Odometer::new(shape)?;
+    while let Some(c) = od.next_coord() {
+        buf.push(x.read(c)?);
+    }
+    Tensor::from_vec(buf, out_shape)
+}

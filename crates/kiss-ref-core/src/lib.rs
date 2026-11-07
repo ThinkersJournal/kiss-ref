@@ -213,6 +213,14 @@ pub enum Error {
     CastUnpinned,
     /// `concat` operands of different dtypes (§6.11-0020).
     DtypeMismatch { expected: Dtype, got: Dtype },
+    // ---- `squeeze` and `unsqueeze` (§6.11-0022, §6.11-0023) -----------------------
+    /// An `axes` mask of `0x00`: reserved, a typed decline, never a silent reshape.
+    AxesMaskEmpty,
+    /// A mask bit at or above the rank it applies to (the operand's for `squeeze`, the
+    /// output's for `unsqueeze`).
+    AxesMaskBitOutOfRange { bit: usize, rank: usize },
+    /// `squeeze` of a named axis whose extent is not `1`.
+    SqueezeExtentNotOne { axis: usize, extent: usize },
 }
 
 /// Coverage of an `(op, dtype)` cell. Three states: a cell is either

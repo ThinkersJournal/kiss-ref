@@ -33,7 +33,7 @@ fn op_vocab_equals_the_kiss_op_manifest_in_both_directions() {
     // Non-vacuity: the sets are not both empty, and the count is the manifest's own header.
     assert_eq!(
         theirs.len(),
-        124,
+        126,
         "manifest size moved: re-vendor deliberately"
     );
 }

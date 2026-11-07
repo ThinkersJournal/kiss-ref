@@ -384,7 +384,7 @@ pub fn tensor_supported(op: Op) -> bool {
 /// The two F1 floor ops evaluated bit-level by [`crate::cast`], on every dtype that is legal
 /// for them (`cast_bits`/`concat` take a bit pattern or any `Copy` element).
 pub(crate) fn is_bit_level(op: Op) -> bool {
-    matches!(op, Op::Cast | Op::Concat)
+    matches!(op, Op::Cast | Op::Concat | Op::Squeeze | Op::Unsqueeze)
 }
 
 /// Whether any reference path evaluates `op` (float scalar, integer scalar, or the
@@ -511,7 +511,7 @@ pub(crate) fn bool_legal(op: Op) -> bool {
         // gather/scatter + shape data movement
             | Op::IndexSelect | Op::Embedding | Op::Im2col
         // data movement and the integer-valued conversion
-            | Op::Concat | Op::Cast
+            | Op::Concat | Op::Cast | Op::Squeeze | Op::Unsqueeze
     )
 }
 
