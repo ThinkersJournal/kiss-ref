@@ -264,7 +264,7 @@ fn next(state: &mut u64) -> u64 {
 }
 
 #[test]
-fn cast_matches_exact_oracles_on_random_inputs() {
+fn cast_f64_to_f32_matches_rust_as_on_random_inputs() {
     let mut st = 0x9E37_79B9_7F4A_7C15u64;
     for _ in 0..200_000 {
         let bits = next(&mut st);
@@ -276,6 +276,11 @@ fn cast_matches_exact_oracles_on_random_inputs() {
         let got = cast_bits(bits, D::F64, D::F32, R::NearestEven, S::None).unwrap();
         assert_eq!(got as u32, (x as f32).to_bits(), "f64->f32 {bits:#x}");
     }
+}
+
+#[test]
+fn cast_f64_to_f16_and_bf16_match_an_exact_oracle() {
+    let mut st = 0x2545_F491_4F6C_DD1Du64;
     // moderate magnitudes, so f16/bf16 normals, subnormals and ties are all exercised. The oracle
     // scales by an exact power of two, rounds ties-to-even in f64 (exact there), and scales back.
     // (The `half` crate, built `default-features = false` as here, is NOT used as the oracle: its
@@ -302,6 +307,11 @@ fn cast_matches_exact_oracles_on_random_inputs() {
             assert_eq!(val.to_bits(), want.to_bits(), "{d:?} {x:e}");
         }
     }
+}
+
+#[test]
+fn cast_integers_to_floats_round_once() {
+    let mut st = 0xD1B5_4A32_D192_ED03u64;
     // integers -> f32 and f64 round once (u64 -> f32 is the double-rounding trap)
     for _ in 0..100_000 {
         let v = next(&mut st);
@@ -320,6 +330,11 @@ fn cast_matches_exact_oracles_on_random_inputs() {
             (s as f32).to_bits()
         );
     }
+}
+
+#[test]
+fn cast_floats_to_integers_match_rust_as() {
+    let mut st = 0x8CB9_2BA7_2F3D_8DD7u64;
     // float -> integer: Rust's `as` truncates and saturates, matching toward-zero + clamp
     for _ in 0..100_000 {
         let x = f64::from_bits(next(&mut st));
