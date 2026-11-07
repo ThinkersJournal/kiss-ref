@@ -278,9 +278,9 @@ fn cast_matches_exact_oracles_on_random_inputs() {
     }
     // moderate magnitudes, so f16/bf16 normals, subnormals and ties are all exercised. The oracle
     // scales by an exact power of two, rounds ties-to-even in f64 (exact there), and scales back.
-    // (The `half` crate is NOT used as the oracle: its `f16::from_f64` rounds
-    // 0xbf235a0069b85960 down to 0x88d6; the exact value is 1238.5004 quanta, so 0x88d7 is right,
-    // and CPython's struct 'e' agrees.)
+    // (The `half` crate, built `default-features = false` as here, is NOT used as the oracle: its
+    // software `f16::from_f64` rounds 0xbf235a0069b85960 down to 0x88d6; the exact value is
+    // 1238.5004 quanta, so 0x88d7 is right, and CPython's struct 'e' agrees. half-rs#151.)
     for _ in 0..200_000 {
         let m = (next(&mut st) >> 11) as f64 / (1u64 << 53) as f64;
         let e = (next(&mut st) % 44) as i32 - 30;
