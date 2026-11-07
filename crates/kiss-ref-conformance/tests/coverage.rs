@@ -182,9 +182,10 @@ fn coverage_support_consistency() {
     // nextafter), on an integer dtype iff int_supported, else never.
     for &op in Op::ALL {
         for &d in Dtype::ALL.iter() {
-            // `cast`/`concat` are bit-level (crate::cast): Done on every dtype legal for them.
-            let bit_level =
-                matches!(op, Op::Cast | Op::Concat) && !d.declines_compute() && !d.is_complex();
+            // `cast`/`concat`/`squeeze`/`unsqueeze` are bit-level (crate::cast): Done on every dtype legal for them.
+            let bit_level = matches!(op, Op::Cast | Op::Concat | Op::Squeeze | Op::Unsqueeze)
+                && !d.declines_compute()
+                && !d.is_complex();
             let expect = bit_level
                 || match d {
                     Dtype::F32 | Dtype::F64 => float_supported(op) || tensor_supported(op),

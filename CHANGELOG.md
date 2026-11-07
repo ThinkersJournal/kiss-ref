@@ -7,6 +7,15 @@ conformance crate is unpublished. Format follows [Keep a Changelog]; versions ar
 
 ## [Unreleased]
 
+## [0.4.10] — 2026-11-07
+
+Binds KISS `6780c09` (0.11.0) for the **op set** and evaluates `squeeze` and `unsqueeze` (KISS board 380; number proposed, the PM allocates). Additive.
+
+- `kiss-ops-vocab`: `squeeze` (§6.11-0022) and `unsqueeze` (§6.11-0023), family `Structural`; floor 45→47, vocabulary 124→126.
+- `kiss-ref-core::cast`: `squeeze`/`unsqueeze` (+ `squeeze_shape`/`unsqueeze_shape`). Pure shape: each element is copied bit for bit. `axes` is the plain `u8` mask of §6.19-0046 (no rank-aware sentinel). Typed declines: `AxesMaskEmpty` (`0x00`), `AxesMaskBitOutOfRange` (a bit at or above the operand rank for `squeeze`, the output rank for `unsqueeze`), `SqueezeExtentNotOne`, `RankExceeded` (`unsqueeze` output above `MAX_RANK`).
+- Coverage: both ops `Done` on every non-reserved real dtype, `NotApplicable` on the complex and reserved dtypes (as `cast`/`concat`); the gate is not relaxed.
+- Fixture: `op_manifest.json` re-vendored verbatim (blob `4660aa3`); `op_manifest_agreement` compares 126 ops.
+
 ## [0.4.9] — 2026-11-07
 
 Binds KISS `d47b99e` (0.8.1, `sk7`) for the **op set** and evaluates the two new floor ops (kiss-ref#61; number proposed, the PM allocates). Additive: `Op`, `Family` and `Error` are `#[non_exhaustive]`.
