@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! `kiss-ops-vocab`'s closed op set against KISS's machine-readable `op_manifest.json`
-//! (vendored under `fixtures/kiss-corpus/`, KISS `a33282c`): the two must name the SAME ops, in
+//! (vendored under `fixtures/kiss-corpus/`, KISS `250663c`, sk7): the two must name the SAME ops, in
 //! both directions. KISS-OPS-6.1-0001 makes the op set closed, so a token on either side only is a
 //! defect on that side — an op the manifest lists that kiss-ref cannot name (missed since the
 //! pin `19c3ad7`: `argmin`) or a token kiss-ref invents.
@@ -33,7 +33,7 @@ fn op_vocab_equals_the_kiss_op_manifest_in_both_directions() {
     // Non-vacuity: the sets are not both empty, and the count is the manifest's own header.
     assert_eq!(
         theirs.len(),
-        122,
+        124,
         "manifest size moved: re-vendor deliberately"
     );
 }

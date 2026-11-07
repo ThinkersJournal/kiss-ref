@@ -5,7 +5,7 @@ Source: ThinkersJournal/KISS `conformance/corpus/` at `origin/main` `9ea8c05` (2
 | file | KISS blob (`git rev-parse 9ea8c05:conformance/corpus/<file>`) |
 |---|---|
 | `dtype_manifest.json` | `5bd3a9a4970395d4acd3b44cdc135be73bc5d23c` (re-vendored from KISS `d47b99e`, 0.8.1 / `sk7`; was `24ff38f`: `structure_key_schema_version` 5→7, `token_prefix` `sk5`→`sk7`, `generated_from` now names `tools/kiss_dtypes.py`, and three rows added: `f4e2m1`, `f6e2m3`, `f6e3m2`, MX element formats, KISS #675 / §6.1-0014..-0016; 24→27 dtypes; the original 24 rows are byte-identical) |
-| `op_manifest.json` | `ccaa50a6bdeeacc19ed40018cc1730573df48cfe` (re-vendored from KISS `e786097`, 0.7.11 / #772; was `f656b62`; only the `generated_from` member changed, to name `tools/kiss_ops.py`). **Deliberately NOT at sk7:** KISS `d47b99e` (blob `1e9f8b8`) adds `cast` and `concat` (124 ops), which need evaluators here first; the rest of this corpus stays at `9ea8c05` |
+| `op_manifest.json` | `1e9f8b8a9c35c0f4b9ff25306ca33de6b4ddee44` (re-vendored from KISS `d47b99e`, 0.8.1 / `sk7`; was `ccaa50a` (0.7.11, `generated_from` only) and `f656b62` before; adds `cast` (§6.21) and `concat` (§6.11-0020), 122→124 ops; the 13 `ops-*.json` vector files are byte-identical to KISS `d47b99e`) |
 | `ops-arith.json` | `aee2de79a709e722f3c439047bf90c638aec9b24` |
 | `ops-minmax-ordinary.json` | `7bd6cc394bd247f9ca34edfc957d70a37432af97` |
 | `ops-minmax-signed-zero.json` | `d06bdb85c8e626750318b61585b4af3ea5c8d4b4` |

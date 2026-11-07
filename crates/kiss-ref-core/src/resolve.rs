@@ -381,9 +381,20 @@ pub fn tensor_supported(op: Op) -> bool {
     )
 }
 
+/// The two F1 floor ops evaluated bit-level by [`crate::cast`], on every dtype that is legal
+/// for them (`cast_bits`/`concat` take a bit pattern or any `Copy` element).
+pub(crate) fn is_bit_level(op: Op) -> bool {
+    matches!(op, Op::Cast | Op::Concat)
+}
+
 /// Whether any reference path evaluates `op` (float scalar, integer scalar, or the
 /// tensor path). Used by the coverage ledger.
 pub fn implemented(op: Op) -> bool {
+    // `cast` (§6.21) and `concat` (§6.11-0020) are evaluated on bit patterns by `crate::cast`,
+    // for every non-reserved real dtype, so they sit outside the per-lane predicates below.
+    if is_bit_level(op) {
+        return true;
+    }
     // Every §6.18 complex op has a reference kernel (`crate::complex`), evaluable on
     // `c64`/`c128` — so a complex op counts as implemented for the per-op ledger.
     float_supported(op) || crate::int_supported(op) || tensor_supported(op) || op.is_complex()
@@ -499,12 +510,18 @@ pub(crate) fn bool_legal(op: Op) -> bool {
             | Op::Any | Op::All | Op::Cummax
         // gather/scatter + shape data movement
             | Op::IndexSelect | Op::Embedding | Op::Im2col
+        // data movement and the integer-valued conversion
+            | Op::Concat | Op::Cast
     )
 }
 
 /// Whether a reference path evaluates `(op, dtype)` in this seed — the concrete
 /// dispatch behind `Done`. (Legality is orthogonal and comes first in [`support`].)
 fn implemented_on(op: Op, dtype: Dtype) -> bool {
+    if is_bit_level(op) {
+        // `legality` has already removed the complex, reserved and scale dtypes.
+        return true;
+    }
     let float_ok = match dtype {
         Dtype::F32 | Dtype::F64 => float_supported(op) || tensor_supported(op),
         // narrow floats + FP8: same coverage as the wide floats, minus nextafter

@@ -182,19 +182,23 @@ fn coverage_support_consistency() {
     // nextafter), on an integer dtype iff int_supported, else never.
     for &op in Op::ALL {
         for &d in Dtype::ALL.iter() {
-            let expect = match d {
-                Dtype::F32 | Dtype::F64 => float_supported(op) || tensor_supported(op),
-                Dtype::F16 | Dtype::Bf16 | Dtype::F8e4m3fn | Dtype::F8e5m2 => {
-                    (float_supported(op) && op != Op::Nextafter) || tensor_supported(op)
-                }
-                Dtype::Bool => bool_supported(op),
-                Dtype::C64 | Dtype::C128 => op.is_complex(),
-                // sk4: reserved FP8 variants + MX scales are recognized but decline
-                // compute — never Done (§6.1-0001).
-                Dtype::F8e4m3fnuz | Dtype::F8e5m2fnuz | Dtype::F8e8m0 | Dtype::F8e6m2 => false,
-                _ if int_spec(d).is_some() => int_supported(op) || int_tensor_supported(op),
-                _ => false,
-            };
+            // `cast`/`concat` are bit-level (crate::cast): Done on every dtype legal for them.
+            let bit_level =
+                matches!(op, Op::Cast | Op::Concat) && !d.declines_compute() && !d.is_complex();
+            let expect = bit_level
+                || match d {
+                    Dtype::F32 | Dtype::F64 => float_supported(op) || tensor_supported(op),
+                    Dtype::F16 | Dtype::Bf16 | Dtype::F8e4m3fn | Dtype::F8e5m2 => {
+                        (float_supported(op) && op != Op::Nextafter) || tensor_supported(op)
+                    }
+                    Dtype::Bool => bool_supported(op),
+                    Dtype::C64 | Dtype::C128 => op.is_complex(),
+                    // sk4: reserved FP8 variants + MX scales are recognized but decline
+                    // compute — never Done (§6.1-0001).
+                    Dtype::F8e4m3fnuz | Dtype::F8e5m2fnuz | Dtype::F8e8m0 | Dtype::F8e6m2 => false,
+                    _ if int_spec(d).is_some() => int_supported(op) || int_tensor_supported(op),
+                    _ => false,
+                };
             assert_eq!(support(op, d) == Support::Done, expect, "{op:?}/{d:?}");
         }
     }
