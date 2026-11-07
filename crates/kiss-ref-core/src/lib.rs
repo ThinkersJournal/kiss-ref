@@ -47,6 +47,7 @@
 pub mod attrs;
 pub mod boolean;
 pub mod bridge;
+pub mod cast;
 pub mod complex;
 pub mod diff;
 pub mod fp8;
@@ -199,6 +200,19 @@ pub enum Error {
     /// distinct from [`Error::NonFloatAccumulator`] (§6.1-0001;
     /// [`kiss_classify_vocab::Dtype::declines_compute`]).
     ReservedOrScaleDtype(Dtype),
+    // ---- `cast` and `concat` (§6.21, §6.11-0020) ---------------------------------
+    /// `cast` to a destination whose own clause pins nearest-even, asked for another
+    /// `rounding` (§6.21-0002): a typed decline.
+    CastRoundingNotDefined(Dtype),
+    /// `cast` to a destination that pins saturation, asked for `saturation = none`
+    /// (§6.21-0003): a typed decline.
+    CastSaturationRequired(Dtype),
+    /// A `cast` whose result §6.21-0004 (Appendix D item 12) leaves unpinned: a NaN into a
+    /// destination with no NaN or into an integer, an out-of-range float into an integer under
+    /// `saturation = none`. Never given a value.
+    CastUnpinned,
+    /// `concat` operands of different dtypes (§6.11-0020).
+    DtypeMismatch { expected: Dtype, got: Dtype },
 }
 
 /// Coverage of an `(op, dtype)` cell. Three states: a cell is either

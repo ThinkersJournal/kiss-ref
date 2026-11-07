@@ -39,6 +39,8 @@ pub enum Family {
     BinaryMath,
     Bitwise,
     Structural,
+    /// The conversion atom `cast` (KISS-Ops §6.21; additive at KISS 0.8.1).
+    Conversion,
     Minmax,
     Activation,
     Logical,
@@ -146,6 +148,9 @@ kiss_ops! {
     Gather => "gather", Structural, true;
     Scatter => "scatter", Structural, true;
     SortNetwork => "sort_network", Structural, true;
+    // ---- floor: F1 ops, KISS 0.8.1 (conversion atom §6.21; concat §6.11-0020) ----
+    Concat => "concat", Structural, true;
+    Cast => "cast", Conversion, true;
 
     // ---- §6.13 non-primitive ops (reference decompositions in `decomp`) ----
     Sqr => "sqr", Arithmetic, false;
@@ -486,6 +491,8 @@ mod tests {
         "gather",
         "scatter",
         "sort_network",
+        "concat",
+        "cast",
     ];
 
     fn floor_tokens() -> Vec<&'static str> {
@@ -504,7 +511,11 @@ mod tests {
         let mut spec: Vec<&str> = FLOOR_SPEC.to_vec();
         spec.sort_unstable();
         assert_eq!(floor_tokens(), spec);
-        assert_eq!(FLOOR_SPEC.len(), 43, "the floor is 43 atoms");
+        assert_eq!(
+            FLOOR_SPEC.len(),
+            45,
+            "the floor is 45 atoms (43 + cast + concat, KISS 0.8.1)"
+        );
     }
 
     #[test]
@@ -521,9 +532,9 @@ mod tests {
 
     #[test]
     fn ops_full_set_size() {
-        // 43 floor + 79 non-primitive = 122 (incl. the 15-op §6.18 complex family and `argmin`,
+        // 45 floor + 79 non-primitive = 124 (incl. the 15-op §6.18 complex family and `argmin`,
         // KISS #516).
-        assert_eq!(Op::ALL.len(), 122);
+        assert_eq!(Op::ALL.len(), 124);
         assert_eq!(
             Op::ALL.iter().filter(|o| !o.is_primitive_floor()).count(),
             79
@@ -554,15 +565,15 @@ mod tests {
     #[test]
     fn ops_complex_no_new_primitive() {
         // KISS-OPS-6.18-0002: every complex op is non-primitive; the §6.3 floor
-        // (43 atoms) is unchanged by the family.
+        // (45 atoms at KISS 0.8.1) is unchanged by the family.
         assert!(Op::ALL
             .iter()
             .filter(|o| o.is_complex())
             .all(|o| !o.is_primitive_floor()));
         assert_eq!(
             Op::ALL.iter().filter(|o| o.is_primitive_floor()).count(),
-            43,
-            "the primitive floor stays at 43 atoms"
+            45,
+            "the primitive floor stays at 45 atoms"
         );
     }
 

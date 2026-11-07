@@ -7,6 +7,17 @@ conformance crate is unpublished. Format follows [Keep a Changelog]; versions ar
 
 ## [Unreleased]
 
+## [0.4.9] — 2026-11-07
+
+Binds KISS `d47b99e` (0.8.1, `sk7`) for the **op set** and evaluates the two new floor ops (kiss-ref#61; number proposed, the PM allocates). Additive: `Op`, `Family` and `Error` are `#[non_exhaustive]`.
+
+- `kiss-ops-vocab`: `concat` (family `Structural`, KISS-Ops §6.11-0020) and `cast` (new family `Conversion`, §6.21); floor 43→45, vocabulary 122→124.
+- `kiss-ref-core::cast` (new): `cast_bits`/`cast_tensor`/`check_cast` over bit patterns. Every source is decoded to an exact `±mant·2^exp` and rounded **once** (§6.21-0002; four rounding modes, `clamp`/`none` saturation per §6.21-0003) across the real dtypes: `f16`, `bf16`, `f32`, `f64`, `f8e4m3fn`, `f8e5m2`, the three MX element types, and the integers including `i4`/`u4`/`b1`. Typed declines: `CastRoundingNotDefined`, `CastSaturationRequired` (destinations that pin them), `UnsupportedDtype` (complex; `bool` as a destination, which no clause states), `ReservedOrScaleDtype`, and `CastUnpinned` for the Appendix D item 12 cases (§6.21-0004), never given a value. `concat`/`concat_dtype`: pure data movement, bits preserved, declines for arity (`2 <= n`, `n + 1 <= MAX_OPERANDS`), rank/extent, axis and dtype disagreement (`DtypeMismatch`).
+- Coverage: `cast` and `concat` are `Done` on every non-reserved real dtype (the MX element dtypes included, which no other op is yet); `NotApplicable` on the complex and reserved dtypes. The coverage gate is not relaxed: every op is evaluable.
+- Fixtures: `op_manifest.json` re-vendored verbatim (blob `1e9f8b8`); `op_manifest_agreement` compares 124 ops.
+- Tests (`cast_concat.rs`): the vectors of KISS's `cast_atom.rs`, plus 400k differential cases against Rust's own casts (`f64→f32`, integers→floats, floats→integers) and an exact power-of-two-scaling oracle for `f16`/`bf16`. The `half` crate (2.7.1, `default-features = false`, i.e. its software path) is not an oracle: `f16::from_f64` rounds `0xbf235a0069b85960` to `0x88d6` where the exact value (1238.5004 quanta) gives `0x88d7`; with default features it returns `0x88d7`. Known upstream as VoidStarKat/half-rs#151 (software f64 conversions misround inputs just above ties).
+- Not done: the squeeze/unsqueeze evaluators (KISS board 380) wait for their clauses.
+
 ## [0.4.8] — 2026-11-06
 
 Binds KISS `d47b99e` (0.8.1, `sk7`) for the **dtype set** (R3.17, `docs/kiss-ref-v4-delta.md`). Additive: `Dtype` is `#[non_exhaustive]`.
