@@ -181,6 +181,11 @@ pub enum Error {
     /// range (§6.13 `index_select` relies on exactly that), and only an actual
     /// OOB read declines.
     GatherSkipNoBase,
+    /// A `gather` under [`OobPolicy::Reject`] (KISS §6.11-0004) read an index outside
+    /// `0 <= i < extent` (a negative index is always out of bounds). `position` is the
+    /// row-major position, in the index tensor, of the first such index. The whole
+    /// `gather` declines: no partial output.
+    GatherIndexOutOfBounds { position: usize },
     /// A requested reduction/scan/contraction accumulator dtype is narrower than
     /// (or incomparable to) the storage/compute dtype. RFC #92 (direction b) C1:
     /// a narrower accumulator is forbidden — the storage→accumulator promotion

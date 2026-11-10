@@ -7,6 +7,13 @@ conformance crate is unpublished. Format follows [Keep a Changelog]; versions ar
 
 ## [Unreleased]
 
+## [0.4.11] — 2026-11-10
+
+Evaluates the KISS `gather` **`reject`** out-of-bounds policy (`oob_policy = 4`, KISS 0.14.0, board 404 "2: A"; number proposed, the PM allocates).
+
+- `OobPolicy::Reject` and `Error::GatherIndexOutOfBounds { position }`: under `Reject` every index must satisfy `0 <= i < extent` (a negative index is always out of bounds). The first bad index in row-major index order declines the whole `gather`, with no partial output, in both the float and the integer lane; it is checked over the whole index tensor, so an output with no cells still declines. No exemption value (a sentinel index is declined like any other); a `base` operand does not rescue it (it is not `Skip`).
+- Additive: `OobPolicy` and `Error` are `#[non_exhaustive]`. The op set is unchanged (126 ops) and no vendored corpus file moves.
+
 ## [0.4.10] — 2026-11-07
 
 Binds KISS `6780c09` (0.11.0) for the **op set** and evaluates `squeeze` and `unsqueeze` (KISS board 380; number proposed, the PM allocates). Additive.

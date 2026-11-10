@@ -434,7 +434,24 @@ fn resolve_index(ival: i64, extent: usize, oob: OobPolicy) -> Result<Resolved, E
         }
         OobPolicy::ZeroFill => Ok(Resolved::Zero),
         OobPolicy::Skip => Ok(Resolved::Skip),
+        // `gather` validates every index under `Reject` before it resolves any, so an
+        // out-of-bounds value never reaches here; decline rather than invent a value.
+        OobPolicy::Reject => Err(Error::GatherIndexOutOfBounds {
+            position: usize::MAX,
+        }),
     }
+}
+
+/// Under [`OobPolicy::Reject`] every index must be in `0..extent`; the decline names the first
+/// bad position in row-major index order, checked over the whole index tensor (so an output
+/// with no cells still declines an out-of-bounds index).
+pub(crate) fn reject_check(index: &[i64], extent: usize) -> Result<(), Error> {
+    for (position, &v) in index.iter().enumerate() {
+        if v < 0 || (v as u128) >= extent as u128 {
+            return Err(Error::GatherIndexOutOfBounds { position });
+        }
+    }
+    Ok(())
 }
 
 /// **gather** (§6.11-0004): data-dependent read replacing coordinate `axis` with a
@@ -464,6 +481,9 @@ pub fn gather<T: ScalarFloat>(
         });
     }
     let extent = dshape[axis];
+    if oob == OobPolicy::Reject {
+        reject_check(index.as_slice(), extent)?;
+    }
 
     let mut out_shape = [1usize; MAX_RANK];
     let mut w = 0;
@@ -722,6 +742,46 @@ mod tests {
         assert_eq!(zf.as_slice(), &[10.0, 30.0, 0.0, 0.0]);
         let cl = gather(&d.view(), &idx, 0, OobPolicy::Clamp, None).unwrap();
         assert_eq!(cl.as_slice(), &[10.0, 30.0, 30.0, 10.0]);
+    }
+
+    #[test]
+    fn gather_reject_declines_first_oob_index_and_reads_in_bounds() {
+        let d = t(&[10.0, 20.0, 30.0], &[3]);
+        let ok = IndexTensor::new(vec![2, 0, 1], &[3], Dtype::I64).unwrap();
+        let r = gather(&d.view(), &ok, 0, OobPolicy::Reject, None).unwrap();
+        assert_eq!(r.as_slice(), &[30.0, 10.0, 20.0]);
+        // idx == extent, then a negative one: the first bad position (1) is named; no output.
+        let bad = IndexTensor::new(vec![0, 3, -1], &[3], Dtype::I64).unwrap();
+        assert_eq!(
+            gather(&d.view(), &bad, 0, OobPolicy::Reject, None),
+            Err(Error::GatherIndexOutOfBounds { position: 1 })
+        );
+        let neg = IndexTensor::new(vec![1, -1], &[2], Dtype::I64).unwrap();
+        assert_eq!(
+            gather(&d.view(), &neg, 0, OobPolicy::Reject, None),
+            Err(Error::GatherIndexOutOfBounds { position: 1 }),
+            "a negative index never wraps"
+        );
+        // A base never rescues a reject (it is not Skip), and the same index is fine under Skip.
+        let base = t(&[0.0, 0.0, 0.0], &[3]);
+        assert_eq!(
+            gather(&d.view(), &bad, 0, OobPolicy::Reject, Some(&base.view())),
+            Err(Error::GatherIndexOutOfBounds { position: 1 })
+        );
+        assert!(gather(&d.view(), &bad, 0, OobPolicy::Skip, Some(&base.view())).is_ok());
+        // An output with no cells (an empty trailing axis) still declines an OOB index.
+        let empty = Tensor::from_vec(Vec::<f64>::new(), &[3, 0]).unwrap();
+        let oob1 = IndexTensor::new(vec![7], &[1], Dtype::I64).unwrap();
+        assert_eq!(
+            gather(&empty.view(), &oob1, 0, OobPolicy::Reject, None),
+            Err(Error::GatherIndexOutOfBounds { position: 0 })
+        );
+        // No exemption value: a u32::MAX-sized sentinel is declined like any other.
+        let sentinel = IndexTensor::new(vec![u32::MAX as i64], &[1], Dtype::I64).unwrap();
+        assert_eq!(
+            gather(&d.view(), &sentinel, 0, OobPolicy::Reject, None),
+            Err(Error::GatherIndexOutOfBounds { position: 0 })
+        );
     }
 
     #[test]
