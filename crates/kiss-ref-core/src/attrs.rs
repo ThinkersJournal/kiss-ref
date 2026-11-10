@@ -37,6 +37,11 @@ pub enum OobPolicy {
     Clamp,
     /// Output `0` at that position.
     ZeroFill,
+    /// Typed decline on any out-of-bounds index (KISS `oob_policy = 4`, §6.11-0004,
+    /// KISS 0.14.0): [`crate::Error::GatherIndexOutOfBounds`] names the first bad
+    /// index position in row-major index order, with no partial output. No exemption
+    /// value is defined (a sentinel index is declined like any other).
+    Reject,
 }
 
 /// Scatter WRITE combine (§6.11-0005 / §6.19-0016). Out-of-bounds writes are

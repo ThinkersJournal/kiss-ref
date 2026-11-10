@@ -254,6 +254,10 @@ fn resolve_index(ival: i64, extent: usize, oob: OobPolicy) -> Result<Option<usiz
         }
         OobPolicy::ZeroFill => Ok(None),         // → zero
         OobPolicy::Skip => Ok(Some(usize::MAX)), // sentinel handled by caller (base)
+        // `gather` validates every index under `Reject` first (kernels::reject_check).
+        OobPolicy::Reject => Err(Error::GatherIndexOutOfBounds {
+            position: usize::MAX,
+        }),
     }
 }
 
@@ -281,6 +285,9 @@ pub fn gather(
         });
     }
     let extent = dshape[axis];
+    if oob == OobPolicy::Reject {
+        crate::kernels::reject_check(index.as_slice(), extent)?;
+    }
     let mut out_shape = [1usize; MAX_RANK];
     let mut w = 0;
     for &d in &dshape[..axis] {
@@ -819,6 +826,18 @@ mod tests {
         let idx = IndexTensor::new(vec![2, 0, 9], &[3], Dtype::I64).unwrap();
         let g = gather(&d.view(), &idx, 0, OobPolicy::ZeroFill, None).unwrap();
         assert_eq!(g.as_slice(), &[30, 10, 0]);
+        // Reject (KISS oob_policy 4): the same OOB index declines, naming its position.
+        assert_eq!(
+            gather(&d.view(), &idx, 0, OobPolicy::Reject, None),
+            Err(Error::GatherIndexOutOfBounds { position: 2 })
+        );
+        let ok = IndexTensor::new(vec![2, 0], &[2], Dtype::I64).unwrap();
+        assert_eq!(
+            gather(&d.view(), &ok, 0, OobPolicy::Reject, None)
+                .unwrap()
+                .as_slice(),
+            &[30, 10]
+        );
 
         let dest = t(&[0, 0, 0], &[3]);
         let sidx = IndexTensor::new(vec![0, 0, 1], &[3], Dtype::I64).unwrap();
