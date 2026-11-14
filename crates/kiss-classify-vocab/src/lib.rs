@@ -4,7 +4,7 @@
 //! A Rust binding of the **KISS-Classify** pinned scalar dtype set
 //! (`../../KISS/spec/classify.md` §6.1, "The pinned scalar dtype set"), bound to
 //! the §6.1 dtype vocabulary introduced at **sk4**, unchanged at **sk5** (KISS `a33282c`), extended at **sk6** by three MX element formats
-//! (`f4e2m1`, `f6e2m3`, `f6e3m2`; KISS `68dc233`) and unchanged at **sk7** (KISS `250663c`).
+//! (`f4e2m1`, `f6e2m3`, `f6e3m2`; KISS `68dc233`) and unchanged at **sk7** (KISS `250663c`) and **sk8** (KISS `11407f72`: the key gains per-operand dtypes but the dtype set and its metadata do not move).
 //!
 //! KISS-Classify — not this crate — *owns* the dtype set. This crate is one
 //! conformant embodiment of it with **no privilege** (KISS-Classify front-matter).
