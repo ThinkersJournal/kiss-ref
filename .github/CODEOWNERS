@@ -1,1 +1,2 @@
+# Interim lane owner (PM TASK 2026-11-14): the KISS lane (Synapse role `kiss`) maintains kiss-ref for 0.18.0; kiss-ref has no lane of its own and the shared bot account is not an owner of record.
 * @ciresnave

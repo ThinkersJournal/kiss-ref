@@ -7,6 +7,14 @@ conformance crate is unpublished. Format follows [Keep a Changelog]; versions ar
 
 ## [Unreleased]
 
+## [0.4.12] — 2026-11-14
+
+Binds KISS `11407f72` (0.18.0, `sk8`) for the **dtype manifest** (number proposed, the PM allocates). No code change; the reference evaluator has no `structure_key`, OpAttrs blob or Contract codec, so the sk8 key change reaches it only through the vendored corpus.
+
+- Fixture: `dtype_manifest.json` re-vendored verbatim (blob `195db1a`): `structure_key_schema_version` 7→8 and `token_prefix` `sk7`→`sk8`; the 27 dtype rows are byte-identical, so `dtype_manifest_agreement` is unchanged.
+- **Publication honesty:** crates.io carries `0.4.0` only (2026-10-11). Versions `0.4.1` to `0.4.12` were proposed in this file and **never published**; a consumer that pins `"0.4.0"` (lightbulb, Unpopped) gets none of them.
+- Not done here: the op set is still 126 ops against KISS's 128 (`bitcast`, `iota` missing) and the 0.16-0.17 attribute changes are not evaluated; those are the next PRs.
+
 ## [0.4.11] — 2026-11-10
 
 Evaluates the KISS `gather` **`reject`** out-of-bounds policy (`oob_policy = 4`, KISS 0.14.0, board 404 "2: A"; number proposed, the PM allocates).

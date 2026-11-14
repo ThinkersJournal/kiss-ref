@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! `kiss-classify-vocab`'s dtype set against KISS's machine-readable `dtype_manifest.json` (vendored
-//! under `fixtures/kiss-corpus/`, KISS `250663c`, sk7): the same 27 tokens, and for each the same numeric
+//! under `fixtures/kiss-corpus/`, KISS `11407f72`, sk8): the same 27 tokens, and for each the same numeric
 //! kind, storage width and RESERVED status (KISS-CLASSIFY-6.1-0001). Since the pin `19c3ad7` KISS
 //! made `f8e6m2` reserved (#517); a vocabulary that still treats it as an MX scale usable in compute
 //! disagrees with the standard in exactly the way this test names.
