@@ -384,7 +384,10 @@ pub fn tensor_supported(op: Op) -> bool {
 /// The two F1 floor ops evaluated bit-level by [`crate::cast`], on every dtype that is legal
 /// for them (`cast_bits`/`concat` take a bit pattern or any `Copy` element).
 pub(crate) fn is_bit_level(op: Op) -> bool {
-    matches!(op, Op::Cast | Op::Concat | Op::Squeeze | Op::Unsqueeze)
+    matches!(
+        op,
+        Op::Cast | Op::Concat | Op::Squeeze | Op::Unsqueeze | Op::Iota
+    )
 }
 
 /// Whether any reference path evaluates `op` (float scalar, integer scalar, or the
@@ -435,6 +438,11 @@ pub fn legality(op: Op, dtype: Dtype) -> bool {
     // lives in `Dtype::from_token` (`Some` here, `None` for an unknown token).
     if dtype.declines_compute() {
         return false;
+    }
+    // `iota` (§6.11-0025) is defined only on the integer dtypes `i8..i64`, `u8..u64` and on `f16`, `bf16`,
+    // `f32`, `f64`: not on `bool`, a sub-byte, an MX or `f8*` dtype, or a complex one.
+    if op == Op::Iota {
+        return crate::iota::iota_max_exact(dtype).is_some();
     }
     let kind = dtype.numeric_kind();
     // §6.18: the complex-arithmetic family is defined EXACTLY on the complex

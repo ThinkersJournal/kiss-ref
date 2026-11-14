@@ -7,6 +7,16 @@ conformance crate is unpublished. Format follows [Keep a Changelog]; versions ar
 
 ## [Unreleased]
 
+## [0.4.13] — 2026-11-14
+
+Evaluates the KISS zero-operand counting source **`iota`** (§6.11-0025, OpAttrs §6.19-0047, board 422 "A") and binds KISS `0c74693` for the **op set** (127 ops; number proposed, the PM allocates). Additive: `Op` and `Error` are `#[non_exhaustive]`. First of the op-parity PRs after the sk8 re-vendor (0.4.12); `bitcast` and the 0.16-0.17 attribute changes follow.
+
+- `kiss-ops-vocab`: `iota`, family `Structural`, a floor atom (floor 47→48, vocabulary 126→127).
+- `kiss-ref-core::iota`: `iota(dtype, extents, axis)` returns the count along one axis as `dtype` bit patterns (exact; no floating-point arithmetic), plus `iota_max_exact`. Typed declines: a dtype other than `i8..i64`, `u8..u64`, `f16`, `bf16`, `f32`, `f64` (`UnsupportedDtype` / `ReservedOrScaleDtype`), rank 0 or above `MAX_RANK`, an extent of 0 (`IotaZeroExtent`), an axis at or above the rank, and a last count the dtype cannot hold exactly (`IotaUnrepresentable`).
+- Coverage: `iota` is `Done` on exactly those 12 dtypes and `NotApplicable` on every other; the gate is not relaxed.
+- Fixture: `op_manifest.json` re-vendored verbatim (blob `34deccb`); `op_manifest_agreement` compares 127 ops. New `tests/iota.rs` replays KISS's `test_ops_iota_semantics` vectors (counts, exactness boundaries, declines, the arange / triangular-mask / one-hot compositions).
+- Not published: crates.io has `0.4.0` only; `0.4.1` to `0.4.13` were proposed here and never shipped.
+
 ## [0.4.12] — 2026-11-14
 
 Binds KISS `11407f72` (0.18.0, `sk8`) for the **dtype manifest** (number proposed, the PM allocates). No code change; the reference evaluator has no `structure_key`, OpAttrs blob or Contract codec, so the sk8 key change reaches it only through the vendored corpus.

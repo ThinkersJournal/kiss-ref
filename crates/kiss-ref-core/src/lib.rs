@@ -51,6 +51,7 @@ pub mod cast;
 pub mod complex;
 pub mod diff;
 pub mod fp8;
+pub mod iota;
 pub mod kernels;
 pub mod recipe;
 pub mod recipe_int;
@@ -226,6 +227,12 @@ pub enum Error {
     AxesMaskBitOutOfRange { bit: usize, rank: usize },
     /// `squeeze` of a named axis whose extent is not `1`.
     SqueezeExtentNotOne { axis: usize, extent: usize },
+    // ---- `iota` (§6.11-0025) -------------------------------------------------------
+    /// An `iota` extent of `0` (every extent must be at least `1`).
+    IotaZeroExtent,
+    /// An `iota` whose last count `extents[axis] - 1` the `target_dtype` cannot hold exactly: a
+    /// rounded count is a wrong count.
+    IotaUnrepresentable { last: u64 },
 }
 
 /// Coverage of an `(op, dtype)` cell. Three states: a cell is either
