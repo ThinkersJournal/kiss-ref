@@ -45,6 +45,7 @@
 #![cfg_attr(not(test), no_std)]
 
 pub mod attrs;
+pub mod bitcast;
 pub mod boolean;
 pub mod bridge;
 pub mod cast;
@@ -233,6 +234,9 @@ pub enum Error {
     /// An `iota` whose last count `extents[axis] - 1` the `target_dtype` cannot hold exactly: a
     /// rounded count is a wrong count.
     IotaUnrepresentable { last: u64 },
+    // ---- `bitcast` (§6.21-0005) ----------------------------------------------------
+    /// A `bitcast` whose source and destination dtypes differ in bit width (`src`, `dst` in bits).
+    BitcastWidth { src: u16, dst: u16 },
 }
 
 /// Coverage of an `(op, dtype)` cell. Three states: a cell is either
