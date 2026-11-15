@@ -186,6 +186,26 @@ fn coverage_support_consistency() {
             let bit_level = matches!(op, Op::Cast | Op::Concat | Op::Squeeze | Op::Unsqueeze)
                 && !d.declines_compute()
                 && !d.is_complex();
+            // `iota` (§6.11-0025) is Done exactly on its spec dtypes: the integers i8..u64 and f16/bf16/f32/f64.
+            let iota_dtype = matches!(
+                d,
+                Dtype::I8
+                    | Dtype::I16
+                    | Dtype::I32
+                    | Dtype::I64
+                    | Dtype::U8
+                    | Dtype::U16
+                    | Dtype::U32
+                    | Dtype::U64
+                    | Dtype::F16
+                    | Dtype::Bf16
+                    | Dtype::F32
+                    | Dtype::F64
+            );
+            if op == Op::Iota {
+                assert_eq!(support(op, d) == Support::Done, iota_dtype, "{op:?}/{d:?}");
+                continue;
+            }
             let expect = bit_level
                 || match d {
                     Dtype::F32 | Dtype::F64 => float_supported(op) || tensor_supported(op),
