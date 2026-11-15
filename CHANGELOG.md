@@ -7,6 +7,14 @@ conformance crate is unpublished. Format follows [Keep a Changelog]; versions ar
 
 ## [Unreleased]
 
+## [0.4.15] — 2026-11-14
+
+**BREAKING (API).** The window family takes **independent low- and high-side padding**, `padding_lo` and `padding_hi`, in place of one symmetric `padding` (KISS-Ops §6.13-0010, §6.19-0023, board 426 5 "A", KISS 0.16.0; number proposed, the PM allocates). Pre-1.0 the second number is the major.
+
+- `kiss-ref-core::window::{avg_pool, max_pool, im2col}` and `tensor_int::{max_pool, im2col}`: the one `padding: &[usize]` parameter is now `padding_lo, padding_hi`, in that order, before `dilation`. Window `o` tap `j` reads `o*stride - padding_lo + j*dilation`; the output extent is `floor((n + padding_lo + padding_hi - D) / stride) + 1`, `0` when `n + padding_lo + padding_hi < D`. A symmetric `p` is `padding_lo = padding_hi = p`. The sum is checked: an overflowing pair is `ShapeOverflow`, never a wrap.
+- Not done here: §6.13-0011 (a window with no in-bounds tap is a typed decline) is not yet implemented in kiss-ref; reported to the PM as its own row.
+- Tests: new `tests/window_asymmetric_padding.rs` compares `im2col`, `max_pool` and `avg_pool` against an enumeration of the windows over a grid with `padding_lo != padding_hi` (4032 cells, 3 ops each) and shows the two sides are not interchangeable; the window fuzz suite passes the symmetric pair, so its model is unchanged.
+
 ## [0.4.14] — 2026-11-14
 
 Evaluates the KISS same-width bit reinterpretation **`bitcast`** (§6.21-0005, OpAttrs §6.19-0048, board 427 "B") and binds KISS `6fb1c35` for the **op set** (128 ops; number proposed, the PM allocates). Additive: `Op` and `Error` are `#[non_exhaustive]`. Second of the op-parity PRs; the 0.16-0.17 attribute changes follow.
