@@ -7,6 +7,12 @@ conformance crate is unpublished. Format follows [Keep a Changelog]; versions ar
 
 ## [Unreleased]
 
+## [0.5.3] — 2026-11-14
+
+Evaluates the **integer `matmul` accumulator** of KISS-Ops §6.17-0010 (KISS 0.16.0, board 426 6 "A"). Additive: `Error` is `#[non_exhaustive]`; number proposed, the PM allocates.
+
+- `kiss-ref-core::tensor_int::matmul_acc(a, b, compute, accumulator)` and `int_matmul_accumulator_ok`: the accumulator is the compute dtype (`None`, the `0x00` default, wrapping, exactly what `matmul` did) or a **signed** 32- or 64-bit integer at least as wide; an unsigned compute dtype of the accumulator's own width, a sub-32-bit or unsigned accumulator, a float one, or one narrower than the compute dtype is `Error::MatmulAccumulator`. Products and sums are taken in the accumulator dtype with two's-complement wrap, so the bits are the same for every reduction order. The result is in the accumulator dtype (converting it is a `cast`).
+- Tests: `tests/matmul_int_accumulator.rs` replays KISS's `test_ops_matmul_integer_accumulator` (legality table, typed declines, exactness against an independent `i128` sum wrapped to the width, order independence, wrap at 32 bits and not at 64).
 ## [0.5.2] — 2026-11-14
 
 Evaluates the three **tuple-state `reduce` monoids** `welford`, `online_softmax` and `argmax` (KISS-Ops §6.11-0026 to §6.11-0029, KISS 0.17.0, board 427 "2) d)"). Additive: `Error` is `#[non_exhaustive]`; number proposed, the PM allocates.
