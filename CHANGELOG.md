@@ -7,6 +7,16 @@ conformance crate is unpublished. Format follows [Keep a Changelog]; versions ar
 
 ## [Unreleased]
 
+## [0.4.14] — 2026-11-14
+
+Evaluates the KISS same-width bit reinterpretation **`bitcast`** (§6.21-0005, OpAttrs §6.19-0048, board 427 "B") and binds KISS `6fb1c35` for the **op set** (128 ops; number proposed, the PM allocates). Additive: `Op` and `Error` are `#[non_exhaustive]`. Second of the op-parity PRs; the 0.16-0.17 attribute changes follow.
+
+- `kiss-ops-vocab`: `bitcast`, family `Conversion`, a floor atom (floor 48→49, vocabulary 127→128).
+- `kiss-ref-core::bitcast`: `bitcast(src, dst, tensor)`, `bitcast_bits` and `bitcast_dtype_ok`. Every bit is preserved (NaN payload, quiet/signalling bit, signed zero, subnormals); a round trip is the identity. Typed declines: `bool`, a sub-byte, an MX element or a complex dtype (`UnsupportedDtype`), `f8e8m0` and the reserved floats (`ReservedOrScaleDtype`), and a destination of a different width (`BitcastWidth`).
+- Coverage: `bitcast` is `Done` on exactly the 14 legal dtypes (`i8..i64`, `u8..u64`, `f16`, `bf16`, `f32`, `f64`, `f8e4m3fn`, `f8e5m2`) and `NotApplicable` on every other; the gate is not relaxed.
+- Fixture: `op_manifest.json` re-vendored verbatim (blob `21643da`); `op_manifest_agreement` compares 128 ops. New `tests/bitcast.rs` replays KISS's `test_ops_bitcast_semantics` vectors.
+- Not published: crates.io has `0.4.0` only; `0.4.1` to `0.4.14` were proposed here and never shipped.
+
 ## [0.4.13] — 2026-11-14
 
 Evaluates the KISS zero-operand counting source **`iota`** (§6.11-0025, OpAttrs §6.19-0047, board 422 "A") and binds KISS `0c74693` for the **op set** (127 ops; number proposed, the PM allocates). Additive: `Op` and `Error` are `#[non_exhaustive]`. First of the op-parity PRs after the sk8 re-vendor (0.4.12); `bitcast` and the 0.16-0.17 attribute changes follow.

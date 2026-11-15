@@ -156,6 +156,8 @@ kiss_ops! {
     Unsqueeze => "unsqueeze", Structural, true;
     // ---- floor: KISS 0.15.0 (the zero-operand counting source `iota` §6.11-0025, board 422 "A") ----
     Iota => "iota", Structural, true;
+    // ---- floor: KISS 0.16.0 (the same-width bit reinterpretation `bitcast` §6.21-0005, board 427 "B") ----
+    Bitcast => "bitcast", Conversion, true;
 
     // ---- §6.13 non-primitive ops (reference decompositions in `decomp`) ----
     Sqr => "sqr", Arithmetic, false;
@@ -501,6 +503,7 @@ mod tests {
         "squeeze",
         "unsqueeze",
         "iota",
+        "bitcast",
     ];
 
     fn floor_tokens() -> Vec<&'static str> {
@@ -521,8 +524,8 @@ mod tests {
         assert_eq!(floor_tokens(), spec);
         assert_eq!(
             FLOOR_SPEC.len(),
-            48,
-            "the floor is 48 atoms (47 + iota, KISS 0.15.0)"
+            49,
+            "the floor is 49 atoms (48 + bitcast, KISS 0.16.0)"
         );
     }
 
@@ -540,9 +543,9 @@ mod tests {
 
     #[test]
     fn ops_full_set_size() {
-        // 48 floor + 79 non-primitive = 127 (incl. the 15-op §6.18 complex family and `argmin`,
+        // 49 floor + 79 non-primitive = 128 (incl. the 15-op §6.18 complex family and `argmin`,
         // KISS #516).
-        assert_eq!(Op::ALL.len(), 127);
+        assert_eq!(Op::ALL.len(), 128);
         assert_eq!(
             Op::ALL.iter().filter(|o| !o.is_primitive_floor()).count(),
             79
@@ -573,15 +576,15 @@ mod tests {
     #[test]
     fn ops_complex_no_new_primitive() {
         // KISS-OPS-6.18-0002: every complex op is non-primitive; the §6.3 floor
-        // (48 atoms at KISS 0.15.0) is unchanged by the family.
+        // (49 atoms at KISS 0.16.0) is unchanged by the family.
         assert!(Op::ALL
             .iter()
             .filter(|o| o.is_complex())
             .all(|o| !o.is_primitive_floor()));
         assert_eq!(
             Op::ALL.iter().filter(|o| o.is_primitive_floor()).count(),
-            48,
-            "the primitive floor stays at 48 atoms"
+            49,
+            "the primitive floor stays at 49 atoms"
         );
     }
 

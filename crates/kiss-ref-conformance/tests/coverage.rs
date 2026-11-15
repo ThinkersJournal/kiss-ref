@@ -206,6 +206,15 @@ fn coverage_support_consistency() {
                 assert_eq!(support(op, d) == Support::Done, iota_dtype, "{op:?}/{d:?}");
                 continue;
             }
+            // `bitcast` (§6.21-0005) is Done exactly on the integers and f16/bf16/f32/f64/f8e4m3fn/f8e5m2.
+            if op == Op::Bitcast {
+                assert_eq!(
+                    support(op, d) == Support::Done,
+                    kiss_ref_core::bitcast::bitcast_dtype_ok(d),
+                    "{op:?}/{d:?}"
+                );
+                continue;
+            }
             let expect = bit_level
                 || match d {
                     Dtype::F32 | Dtype::F64 => float_supported(op) || tensor_supported(op),

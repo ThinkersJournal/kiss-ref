@@ -386,7 +386,7 @@ pub fn tensor_supported(op: Op) -> bool {
 pub(crate) fn is_bit_level(op: Op) -> bool {
     matches!(
         op,
-        Op::Cast | Op::Concat | Op::Squeeze | Op::Unsqueeze | Op::Iota
+        Op::Cast | Op::Concat | Op::Squeeze | Op::Unsqueeze | Op::Iota | Op::Bitcast
     )
 }
 
@@ -443,6 +443,10 @@ pub fn legality(op: Op, dtype: Dtype) -> bool {
     // `f32`, `f64`: not on `bool`, a sub-byte, an MX or `f8*` dtype, or a complex one.
     if op == Op::Iota {
         return crate::iota::iota_max_exact(dtype).is_some();
+    }
+    // `bitcast` (§6.21-0005): defined on the integers and `f16`, `bf16`, `f32`, `f64`, `f8e4m3fn`, `f8e5m2`.
+    if op == Op::Bitcast {
+        return crate::bitcast::bitcast_dtype_ok(dtype);
     }
     let kind = dtype.numeric_kind();
     // §6.18: the complex-arithmetic family is defined EXACTLY on the complex
