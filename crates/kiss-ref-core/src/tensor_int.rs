@@ -574,35 +574,15 @@ pub fn int_matmul_accumulator_ok(compute: Dtype, accumulator: Dtype) -> bool {
     signed_wide && accumulator.bits() >= compute.bits() && !unsigned_same_width
 }
 
-/// **matmul** (integer lane) with an explicit accumulator dtype (§6.17-0010). `accumulator = None` is the
-/// `0x00` default (the compute dtype, wrapping: [`matmul`]). Otherwise every product and sum is taken
-/// **in the accumulator dtype** with two's-complement wrap on overflow (§6.2-0002); the integer fold is
-/// exact, so the result has the same bits for every reduction order. The result is in the accumulator
-/// dtype: converting it to another output dtype is a `cast` and not defined here. A float accumulator,
-/// an unsigned or sub-32-bit one, or one narrower than the compute dtype is
-/// [`Error::MatmulAccumulator`].
-pub fn matmul_acc(
-    a: &View<i128>,
-    b: &View<i128>,
-    dtype: Dtype,
-    accumulator: Option<Dtype>,
-) -> Result<Tensor<i128>, Error> {
-    let fold = accumulator.unwrap_or(dtype);
-    if !int_matmul_accumulator_ok(dtype, fold) {
-        return Err(Error::MatmulAccumulator {
-            compute: dtype,
-            accumulator: fold,
-        });
-    }
-    let ash = a.shape();
-    let bsh = b.shape();
-    if ash.len() < 2 || bsh.len() < 2 {
+/// The `(m, k, n)` of `a (.., m, k)` times `b (.., k, n)`; both need rank >= 2 and agree on `k`.
+fn matmul_dims(ash: &[usize], bsh: &[usize]) -> Result<(usize, usize, usize), Error> {
+    let (ar, br) = (ash.len(), bsh.len());
+    if ar < 2 || br < 2 {
         return Err(Error::ShapeMismatch {
             expected: 2,
-            got: ash.len().min(bsh.len()),
+            got: ar.min(br),
         });
     }
-    let (ar, br) = (ash.len(), bsh.len());
     let (m, k) = (ash[ar - 2], ash[ar - 1]);
     let (k2, n) = (bsh[br - 2], bsh[br - 1]);
     if k != k2 {
@@ -611,6 +591,24 @@ pub fn matmul_acc(
             got: k2,
         });
     }
+    Ok((m, k, n))
+}
+
+/// The broadcast operands of a batched `matmul` and its output geometry (shared by the fold).
+struct MatmulPlan<'a> {
+    av: View<'a, i128>,
+    bv: View<'a, i128>,
+    out_shape: [usize; MAX_RANK],
+    out_rank: usize,
+    batch_rank: usize,
+    k: usize,
+}
+
+/// Validate `a (.., m, k)` and `b (.., k, n)` and broadcast their batch dimensions to `batch ++ [m, n]`.
+fn matmul_plan<'a>(a: &'a View<i128>, b: &'a View<i128>) -> Result<MatmulPlan<'a>, Error> {
+    let (ash, bsh) = (a.shape(), b.shape());
+    let (m, k, n) = matmul_dims(ash, bsh)?;
+    let (ar, br) = (ash.len(), bsh.len());
     // Broadcast the batch dims (everything but the trailing two).
     let (batch_buf, batch_rank) = broadcast_shapes(&[&ash[..ar - 2], &bsh[..br - 2]])?;
     let batch = &batch_buf[..batch_rank];
@@ -637,8 +635,45 @@ pub fn matmul_acc(
     out_shape[..batch_rank].copy_from_slice(batch);
     out_shape[batch_rank] = m;
     out_shape[batch_rank + 1] = n;
-    let out_shape = &out_shape[..out_rank];
+    Ok(MatmulPlan {
+        av,
+        bv,
+        out_shape,
+        out_rank,
+        batch_rank,
+        k,
+    })
+}
 
+/// **matmul** (integer lane) with an explicit accumulator dtype (§6.17-0010). `accumulator = None` is the
+/// `0x00` default (the compute dtype, wrapping: [`matmul`]). Otherwise every product and sum is taken
+/// **in the accumulator dtype** with two's-complement wrap on overflow (§6.2-0002); the integer fold is
+/// exact, so the result has the same bits for every reduction order. The result is in the accumulator
+/// dtype: converting it to another output dtype is a `cast` and not defined here. A float accumulator,
+/// an unsigned or sub-32-bit one, or one narrower than the compute dtype is
+/// [`Error::MatmulAccumulator`].
+pub fn matmul_acc(
+    a: &View<i128>,
+    b: &View<i128>,
+    dtype: Dtype,
+    accumulator: Option<Dtype>,
+) -> Result<Tensor<i128>, Error> {
+    let fold = accumulator.unwrap_or(dtype);
+    if !int_matmul_accumulator_ok(dtype, fold) {
+        return Err(Error::MatmulAccumulator {
+            compute: dtype,
+            accumulator: fold,
+        });
+    }
+    let MatmulPlan {
+        av,
+        bv,
+        out_shape,
+        out_rank,
+        batch_rank,
+        k,
+    } = matmul_plan(a, b)?;
+    let out_shape = &out_shape[..out_rank];
     let count = numel(out_shape)?;
     let mut data: Vec<i128> = alloc_exact(count)?;
     let mut acoord = [0usize; MAX_RANK];
