@@ -203,13 +203,12 @@ fn test_ops_int_max_pool_window_and_identity() {
     let y = tensor_int::max_pool(&x.view(), &[0], &[2], &[1], &[0], &[0], &[1], Dtype::I8).unwrap();
     assert_eq!(y.as_slice(), &[3, 3, 5]);
 
-    // A wholly-out-of-bounds (padded) window yields the S8 max identity = -128,
-    // not −inf: extent 1, kernel 2 stride 1 pad 2 → first window taps land at
-    // -2,-1 (both OOB) → identity.
+    // A wholly-out-of-bounds (padded) window (extent 1, kernel 2 stride 1 pad 2: the first window's taps
+    // land at -2,-1) is not expressible, KISS-OPS-6.13-0011: the identity is never reached, the op declines.
     let z = t(&[7], &[1]);
-    let yz =
-        tensor_int::max_pool(&z.view(), &[0], &[2], &[1], &[2], &[2], &[1], Dtype::I8).unwrap();
-    assert_eq!(yz.as_slice()[0], -128);
+    let e =
+        tensor_int::max_pool(&z.view(), &[0], &[2], &[1], &[2], &[2], &[1], Dtype::I8).unwrap_err();
+    assert_eq!(e, kiss_ref_core::Error::NoRealTap { axis: 0, window: 0 });
 }
 
 #[test]

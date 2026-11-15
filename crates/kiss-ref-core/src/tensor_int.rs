@@ -702,8 +702,8 @@ pub fn matmul_acc(
 }
 
 /// **max_pool** (integer lane) — §6.13 `reduce(max)` over the window; OOB taps
-/// skipped. A wholly-out-of-bounds window yields the max monoid identity in
-/// `dtype` (the dtype minimum, via `int_identity`), NOT `−inf`. Combines via
+/// skipped. A window with no in-bounds tap is declined (§6.13-0011, `NoRealTap`), so the max monoid identity
+/// (the dtype minimum, `int_identity`) only seeds the fold and is never the answer. Combines via
 /// [`eval_int_op`]`(Op::MaxProp, …)`, which on integers is `args[0] >= args[1] ?
 /// args[0] : args[1]` (`scalar_int.rs`): there is no NaN to propagate/suppress and
 /// no `−0.0`/`+0.0` ordering, so the IEEE `fmax`/`max` distinction that motivates
@@ -963,12 +963,11 @@ mod tests {
         let y = max_pool(&x.view(), &[0], &[2], &[1], &[0], &[0], &[1], Dtype::I8).unwrap();
         assert_eq!(y.as_slice(), &[3, 3, 5]);
 
-        // A wholly-padded window yields the max identity = the S8 minimum (-128),
-        // not -inf: input extent 1, kernel 2 stride 1 pad 2 → the first output
-        // window's taps land at positions -2,-1 (both OOB) → identity.
+        // A wholly-padded window (extent 1, kernel 2 stride 1 pad 2: the first window's taps land at -2,-1)
+        // is not expressible (§6.13-0011), so the max identity is never reached: a typed decline.
         let z = t(&[7], &[1]);
-        let yz = max_pool(&z.view(), &[0], &[2], &[1], &[2], &[2], &[1], Dtype::I8).unwrap();
-        assert_eq!(yz.as_slice()[0], -128);
+        let e = max_pool(&z.view(), &[0], &[2], &[1], &[2], &[2], &[1], Dtype::I8).unwrap_err();
+        assert_eq!(e, Error::NoRealTap { axis: 0, window: 0 });
     }
 
     #[test]

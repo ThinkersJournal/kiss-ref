@@ -280,11 +280,56 @@ fn model_pool_out_dim(in_d: u128, k: u128, s: u128, p: u128, dil: u128) -> Resul
     Ok(out)
 }
 
+/// Work budget for [`model_first_tapless`]: a view this wide with every window landing a tap is not modeled.
+const TAP_SCAN_CAP: u128 = 1 << 11;
+
+/// KISS-OPS-6.13-0011 by enumeration: the first output window `o < out` on one axis with no tap in `[0, n)`
+/// (tap `j` at `o·s − p + j·dil`, `p` the symmetric padding), or `None`. Taps are enumerated for `k ≤ 64`; a
+/// wider kernel is decided on its two end taps and the spacing. `Err(())` when more than [`TAP_SCAN_CAP`]
+/// windows would have to be scanned (the case is then skipped, and the skip is counted).
+fn model_first_tapless(
+    n: u128,
+    k: u128,
+    s: u128,
+    p: u128,
+    dil: u128,
+    out: u128,
+) -> Result<Option<u128>, ()> {
+    let has_tap = |o: u128| -> bool {
+        let a = (o * s) as i128 - p as i128;
+        let tap = |j: u128| a + (j * dil) as i128;
+        if k <= 64 {
+            (0..k).any(|j| (0..n as i128).contains(&tap(j)))
+        } else if dil == 0 {
+            (0..n as i128).contains(&a) // every tap sits on `a`
+        } else {
+            // a wide kernel: the lowest tap not below zero, then whether it lands before `n` (and inside `k`)
+            let j = if a >= 0 {
+                0
+            } else {
+                ((-a) as u128).div_ceil(dil)
+            };
+            j < k && tap(j) < n as i128
+        }
+    };
+    for o in 0..out.min(TAP_SCAN_CAP) {
+        if !has_tap(o) {
+            return Ok(Some(o));
+        }
+    }
+    if out > TAP_SCAN_CAP {
+        return Err(());
+    }
+    Ok(None)
+}
+
 /// The outcome of `window_out_shape` — stage 1 of all three ops.
 #[derive(Clone, Debug, PartialEq)]
 enum Stage1 {
     /// The op declines with exactly this error.
     Decline(Error),
+    /// Too many windows to enumerate (see [`TAP_SCAN_CAP`]); the case is skipped.
+    Unmodeled,
     /// The pooled shape: the input shape with each spatial axis replaced (a
     /// duplicated axis is written twice — last write wins, as in `window.rs`).
     Shape(Vec<u128>),
@@ -311,7 +356,26 @@ fn model_stage1(c: &Case) -> Stage1 {
             c.padding[i] as u128,
             c.dilation[i] as u128,
         ) {
-            Ok(d) => out[ax] = d,
+            Ok(d) => {
+                out[ax] = d;
+                let (n, k, s, p, dil) = (
+                    c.shape[ax] as u128,
+                    c.kernel[i] as u128,
+                    c.stride[i] as u128,
+                    c.padding[i] as u128,
+                    c.dilation[i] as u128,
+                );
+                match model_first_tapless(n, k, s, p, dil, d) {
+                    Ok(None) => {}
+                    Ok(Some(w)) => {
+                        return Stage1::Decline(Error::NoRealTap {
+                            axis: ax,
+                            window: w as usize,
+                        })
+                    }
+                    Err(()) => return Stage1::Unmodeled,
+                }
+            }
             Err(e) => return Stage1::Decline(e),
         }
     }
@@ -348,6 +412,7 @@ fn to_usize_shape(s: &[u128]) -> Vec<usize> {
 fn expect_avg(c: &Case, s1: &Stage1) -> Expect {
     let shape = match s1 {
         Stage1::Decline(e) => return Expect::Decline(e.clone()),
+        Stage1::Unmodeled => unreachable!("an unmodeled case is skipped by `affordable`"),
         Stage1::Shape(s) => s,
     };
     if sat_prod(c.kernel.iter().map(|&d| d as u128)) > USIZE_MAX_U128 {
@@ -372,6 +437,7 @@ fn expect_avg(c: &Case, s1: &Stage1) -> Expect {
 fn expect_max(c: &Case, s1: &Stage1) -> Expect {
     let shape = match s1 {
         Stage1::Decline(e) => return Expect::Decline(e.clone()),
+        Stage1::Unmodeled => unreachable!("an unmodeled case is skipped by `affordable`"),
         Stage1::Shape(s) => s,
     };
     let out_numel = sat_prod(shape.iter().copied());
@@ -392,6 +458,7 @@ fn expect_max(c: &Case, s1: &Stage1) -> Expect {
 fn expect_im2col(c: &Case, s1: &Stage1) -> Expect {
     let shape = match s1 {
         Stage1::Decline(e) => return Expect::Decline(e.clone()),
+        Stage1::Unmodeled => unreachable!("an unmodeled case is skipped by `affordable`"),
         Stage1::Shape(s) => s,
     };
     let out_rank = c.shape.len() + c.axes.len();
@@ -424,6 +491,7 @@ fn expect_im2col(c: &Case, s1: &Stage1) -> Expect {
 fn affordable(c: &Case, s1: &Stage1) -> bool {
     let shape = match s1 {
         Stage1::Decline(_) => return true, // declines before any allocation
+        Stage1::Unmodeled => return false,
         Stage1::Shape(s) => s,
     };
     let rank = c.shape.len();
@@ -1473,37 +1541,45 @@ fn anchor_im2col_2d_stride2_pad1() {
 }
 
 #[test]
-fn anchor_avg_pool_wholly_padded_window() {
-    // x = [5], k=2 s=1 p=2 dil=1 → eff = 2, padded = 1+4 = 5, out = 4.
-    // window source positions o+t−2 for t∈{0,1}:
-    //  o=0 → {−2,−1}: no valid tap ; o=1 → {−1,0}: one ;
-    //  o=2 → { 0, 1}: one (1 is out of range) ; o=3 → {1,2}: none.
-    // count_include_pad=true  → divisor 2 always → [0/2, 5/2, 5/2, 0/2].
-    // count_include_pad=false → divisor = valid count → [0/0, 5/1, 5/1, 0/0],
-    // and 0/0 is NaN: the empty-window divisor is NOT special-cased.
+fn anchor_wholly_padded_window_is_declined() {
+    // KISS-OPS-6.13-0011. x = [5], k=2 s=1 p=2 dil=1 → out = 4, window o taps at o−2, o−1:
+    //  o=0 → {−2,−1}: no valid tap ; o=1 → {−1,0}: one ; o=2 → {0,1}: one ; o=3 → {1,2}: none.
+    // The first tap-less window is named; an empty `max_pool` / a zero-count `avg_pool` is never reached.
     let x = t64(&[5.0], &[1]);
-    let inc = avg_pool(&x.view(), &[0], &[2], &[1], &[2], &[2], &[1], true).expect("cip");
-    assert_eq!(inc.shape(), &[4]);
-    assert_eq!(inc.as_slice(), &[0.0, 2.5, 2.5, 0.0]);
-
-    let exc = avg_pool(&x.view(), &[0], &[2], &[1], &[2], &[2], &[1], false).expect("nocip");
-    assert!(exc.as_slice()[0].is_nan());
-    assert_eq!(exc.as_slice()[1], 5.0);
-    assert_eq!(exc.as_slice()[2], 5.0);
-    assert!(exc.as_slice()[3].is_nan());
+    let want = Error::NoRealTap { axis: 0, window: 0 };
+    for cip in [true, false] {
+        let e = avg_pool(&x.view(), &[0], &[2], &[1], &[2], &[2], &[1], cip).unwrap_err();
+        assert_eq!(e, want, "avg_pool count_include_pad={cip}");
+    }
+    assert_eq!(
+        max_pool(&x.view(), &[0], &[2], &[1], &[2], &[2], &[1]).unwrap_err(),
+        want
+    );
+    assert_eq!(
+        im2col(&x.view(), &[0], &[2], &[1], &[2], &[2], &[1]).unwrap_err(),
+        want
+    );
+    // Window 0 has a tap but the last does not: the first tap-less window is the start of the suffix.
+    // x = [5], k=2 s=1 lo=1 hi=2 → out = 3: o=0 → {−1,0} ok, o=1 → {0,1} ok, o=2 → {1,2} none.
+    let e = max_pool(&x.view(), &[0], &[2], &[1], &[1], &[2], &[1]).unwrap_err();
+    assert_eq!(e, Error::NoRealTap { axis: 0, window: 2 });
+    // One padding step less and every window has a tap: Ok.
+    let y = max_pool(&x.view(), &[0], &[2], &[1], &[1], &[1], &[1]).expect("max");
+    assert_eq!(y.as_slice(), &[5.0, 5.0]);
 }
 
 #[test]
-fn anchor_max_pool_wholly_padded_window_is_identity() {
-    // Same geometry: a window with no in-bounds tap yields the max identity −inf
-    // (documented in window.rs), NOT an error.
+fn anchor_attribute_bound_is_not_the_rule() {
+    // The clause's own example: n=1, k=2, d=2, s=1, p_lo=p_hi=1 satisfies p_lo+p_hi ≤ k, yet its one window has
+    // taps at −1 and 1 and no real tap, so it is declined. Dilation 1 at the same padding is expressible.
     let x = t64(&[5.0], &[1]);
-    let y = max_pool(&x.view(), &[0], &[2], &[1], &[2], &[2], &[1]).expect("max");
-    assert_eq!(y.shape(), &[4]);
-    assert_eq!(
-        y.as_slice(),
-        &[f64::NEG_INFINITY, 5.0, 5.0, f64::NEG_INFINITY]
-    );
+    let e = max_pool(&x.view(), &[0], &[2], &[1], &[1], &[1], &[2]).unwrap_err();
+    assert_eq!(e, Error::NoRealTap { axis: 0, window: 0 });
+    assert!(max_pool(&x.view(), &[0], &[2], &[1], &[1], &[1], &[1]).is_ok());
+    // n=3, k=2, d=4 straddles the operand: window 0 taps {−1,3}, window 1 {0,4}: window 0 has none.
+    let x3 = t64(&[1.0, 2.0, 3.0], &[3]);
+    let e = max_pool(&x3.view(), &[0], &[2], &[1], &[1], &[1], &[4]).unwrap_err();
+    assert_eq!(e, Error::NoRealTap { axis: 0, window: 0 });
 }
 
 #[test]
