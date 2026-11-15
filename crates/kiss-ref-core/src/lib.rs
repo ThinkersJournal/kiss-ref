@@ -238,6 +238,10 @@ pub enum Error {
     // ---- `bitcast` (§6.21-0005) ----------------------------------------------------
     /// A `bitcast` whose source and destination dtypes differ in bit width (`src`, `dst` in bits).
     BitcastWidth { src: u16, dst: u16 },
+    // ---- window overlap (§6.13-0011) -----------------------------------------------------
+    /// A window view in which some output window on spatial `axis` has no in-bounds tap (`window` is the
+    /// output index of one such window): not expressible, so a reader declines it (KISS `Decline::NoRealTap`).
+    NoRealTap { axis: usize, window: usize },
     // ---- tuple-state `reduce` monoids (§6.11-0026) --------------------------------------
     /// An `argmax` reduction over other than exactly one axis (`got` distinct axes).
     ArgmaxAxisCount { got: usize },

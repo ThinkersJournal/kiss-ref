@@ -7,12 +7,24 @@ conformance crate is unpublished. Format follows [Keep a Changelog]; versions ar
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-11-15
+
+**BREAKING (behaviour).** The window family declines a view in which some output window has **no in-bounds tap** (KISS-Ops §6.13-0011, KISS 0.17.x; the rule the 0.5.0 entry listed as not yet done). Number proposed, the PM allocates; pre-1.0 a break moves the second number.
+
+- `kiss-ref-core::Error::NoRealTap { axis, window }` (the enum is `#[non_exhaustive]`): `avg_pool`, `max_pool`, `im2col` and `tensor_int::{max_pool, im2col}` return it from `window_out_shape`, before any allocation, naming the spatial `axis` and the **first** output window with no tap in `[0, n)`. Output extent `0` (no window fits) stays `Ok`: it has no window to violate the rule.
+- What changed for callers: views that returned a result now decline. A `max_pool` window with no tap used to yield `-inf` (the dtype minimum for integers), an `avg_pool` with `count_include_pad = false` a `0/0` NaN, an `im2col` patch an all-zero row. None of these can be written now. Example: `n = 1, k = 2, p_lo = p_hi = 2` (window 0 on taps -2, -1), and the clause's own `n = 1, k = 2, d = 2, p_lo = p_hi = 1`, which satisfies `p_lo + p_hi <= k` and still has no real tap.
+- No byte moves: OpAttrs encoding is unchanged, only which values are accepted.
+- Cost: constant time per axis except where a dilation wider than the operand lets taps straddle it (`k >= 2`, `dilation > n`), where at most `2n + 4` windows are scanned.
+- Verification: `window_asymmetric_padding.rs` now replays its grid against an enumeration of the windows and asserts every op declines exactly the views the enumeration shows to be tap-less, naming a tap-less window; `window_fuzz.rs`' independent model enumerates windows (taps directly for `k <= 64`) and pins the exact `NoRealTap` value, including the first-window index; new anchors cover the clause's `n = 1, d = 2` example and a prefix and suffix case. Three older tests that asserted the identity and `0/0` results now assert the decline.
+- Not published: crates.io has `0.4.0` only.
+
 ## [0.5.3] — 2026-11-14
 
 Evaluates the **integer `matmul` accumulator** of KISS-Ops §6.17-0010 (KISS 0.16.0, board 426 6 "A"). Additive: `Error` is `#[non_exhaustive]`; number proposed, the PM allocates.
 
 - `kiss-ref-core::tensor_int::matmul_acc(a, b, compute, accumulator)` and `int_matmul_accumulator_ok`: the accumulator is the compute dtype (`None`, the `0x00` default, wrapping, exactly what `matmul` did) or a **signed** 32- or 64-bit integer at least as wide; an unsigned compute dtype of the accumulator's own width, a sub-32-bit or unsigned accumulator, a float one, or one narrower than the compute dtype is `Error::MatmulAccumulator`. Products and sums are taken in the accumulator dtype with two's-complement wrap, so the bits are the same for every reduction order. The result is in the accumulator dtype (converting it is a `cast`).
 - Tests: `tests/matmul_int_accumulator.rs` replays KISS's `test_ops_matmul_integer_accumulator` (legality table, typed declines, exactness against an independent `i128` sum wrapped to the width, order independence, wrap at 32 bits and not at 64).
+
 ## [0.5.2] — 2026-11-14
 
 Evaluates the three **tuple-state `reduce` monoids** `welford`, `online_softmax` and `argmax` (KISS-Ops §6.11-0026 to §6.11-0029, KISS 0.17.0, board 427 "2) d)"). Additive: `Error` is `#[non_exhaustive]`; number proposed, the PM allocates.
@@ -27,7 +39,7 @@ Evaluates the three **tuple-state `reduce` monoids** `welford`, `online_softmax`
 
 - `kiss-ref-core::window::{avg_pool, max_pool, im2col}` and `tensor_int::{max_pool, im2col}`: the one `padding: &[usize]` parameter is now `padding_lo, padding_hi`, in that order, before `dilation`. Window `o` tap `j` reads `o*stride - padding_lo + j*dilation`; the output extent is `floor((n + padding_lo + padding_hi - D) / stride) + 1`, `0` when `n + padding_lo + padding_hi < D`. A symmetric `p` is `padding_lo = padding_hi = p`.
   **Migration:** replace `&padding` by `&padding_lo, &padding_hi` (pass the same slice twice to keep today's symmetric behaviour), e.g. `max_pool(&x, &axes, &k, &s, &p, &d)` becomes `max_pool(&x, &axes, &k, &s, &p, &p, &d)`. The sum is checked: an overflowing pair is `ShapeOverflow`, never a wrap.
-- Not done here: §6.13-0011 (a window with no in-bounds tap is a typed decline) is not yet implemented in kiss-ref; reported to the PM as its own row.
+- §6.13-0011 (a window with no in-bounds tap is a typed decline) landed in 0.6.0.
 - Tests: new `tests/window_asymmetric_padding.rs` compares `im2col`, `max_pool` and `avg_pool` against an enumeration of the windows over a grid with `padding_lo != padding_hi` (4032 cells, 3 ops each) and shows the two sides are not interchangeable; the window fuzz suite passes the symmetric pair, so its model is unchanged.
 
 ## [0.4.14] — 2026-11-14

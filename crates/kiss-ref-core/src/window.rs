@@ -59,6 +59,74 @@ pub(crate) fn pool_out_dim(
         .ok_or(Error::ShapeOverflow)
 }
 
+/// One axis of a window view (§6.13-0010): operand extent `n`, window size `k`, stride `s`, `dilation`, low padding.
+#[derive(Clone, Copy)]
+struct AxisGeom {
+    n: usize,
+    k: usize,
+    s: usize,
+    dil: usize,
+    p_lo: usize,
+}
+
+impl AxisGeom {
+    /// Whether output window `o` has a tap in `[0, n)` (§6.13-0010: tap `j` sits at `o·s − p_lo + j·dil`).
+    /// `i128` throughout: `o < 2^64`, `s < 2^64`, so no product can overflow it.
+    fn window_has_real_tap(&self, o: usize) -> bool {
+        let (n, k, d) = (self.n as i128, self.k as i128, self.dil as i128);
+        let a = o as i128 * self.s as i128 - self.p_lo as i128;
+        if a >= n {
+            return false; // every tap is at or past `n`
+        }
+        if a >= 0 {
+            return true; // tap 0 is in bounds
+        }
+        if d == 0 {
+            return false; // a zero dilation puts every tap on `a`, which is negative
+        }
+        let j = (-a + d - 1) / d; // the first tap that is not negative
+        j < k && a + j * d < n
+    }
+
+    /// The first output window of `0..out` with no in-bounds tap, or `None` when every window has one.
+    /// (`n + p_lo` cannot overflow where it is evaluated: `out > 0` means `n + p_lo + p_hi` was checked.)
+    ///
+    /// Constant time except where taps can straddle the operand (`k ≥ 2` and `dil > n`: a gap wider than the
+    /// operand). Without such a gap the windows with no real tap are a prefix (all taps negative) and a
+    /// suffix (all taps at or past `n`), so the first and last window decide. With a gap, at most `n`
+    /// consecutive windows can each land a tap in bounds unless `s` is a multiple of `dil`, so a longer
+    /// run is declined outright and the multiple case is decided on four windows.
+    fn first_window_without_tap(&self, out: usize) -> Option<usize> {
+        if out == 0 {
+            return None;
+        }
+        let straddles = self.k >= 2 && self.dil > self.n;
+        let n2 = self.n.saturating_mul(2).saturating_add(4);
+        let probe: Vec<usize> = if !straddles {
+            if !self.window_has_real_tap(0) {
+                return Some(0);
+            }
+            // Window 0 has a tap, so the tap-less windows are the suffix whose taps all lie at or past `n`:
+            // the first is the first `o` with `o·s − p_lo ≥ n`.
+            return (!self.window_has_real_tap(out - 1))
+                .then(|| (self.n + self.p_lo).div_ceil(self.s));
+        } else if out <= n2 {
+            return (0..out).find(|&o| !self.window_has_real_tap(o));
+        } else if self.s % self.dil != 0 {
+            return (0..=n2).find(|&o| !self.window_has_real_tap(o)); // a run this long cannot all land a tap
+        } else {
+            let o0 = self.p_lo.div_ceil(self.s); // the first window whose tap 0 is not negative
+            alloc::vec![
+                0,
+                o0.min(out - 1),
+                o0.saturating_add(1).min(out - 1),
+                out - 1
+            ]
+        };
+        probe.into_iter().find(|&o| !self.window_has_real_tap(o))
+    }
+}
+
 /// Validate the parallel window-parameter arrays and build the output shape (input
 /// shape with each spatial axis replaced by its pooled extent).
 pub(crate) fn window_out_shape(
@@ -97,6 +165,16 @@ pub(crate) fn window_out_shape(
             padding_hi[i],
             dilation[i],
         )?;
+        let geom = AxisGeom {
+            n: in_shape[ax],
+            k: kernel[i],
+            s: stride[i],
+            dil: dilation[i],
+            p_lo: padding_lo[i],
+        };
+        if let Some(window) = geom.first_window_without_tap(out[ax]) {
+            return Err(Error::NoRealTap { axis: ax, window });
+        }
     }
     Ok((out, rank))
 }
@@ -187,7 +265,8 @@ pub fn avg_pool<T: ScalarFloat>(
 }
 
 /// `max_pool` — §6.13 `reduce(max)` over the window; OOB taps skipped, NaN
-/// propagates. A wholly-out-of-bounds window yields the max identity (`−inf`).
+/// propagates. A window with no in-bounds tap is declined before this runs (§6.13-0011, `NoRealTap`), so the
+/// empty `reduce(max)` and its `−inf` identity are never reached.
 pub fn max_pool<T: ScalarFloat>(
     x: &View<T>,
     axes: &[usize],
