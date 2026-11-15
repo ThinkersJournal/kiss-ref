@@ -244,6 +244,11 @@ pub enum Error {
     /// A `welford` count or an `argmax` index past its unsigned lane (`u32` beside `f32`, `u64` beside `f64`):
     /// a typed decline, never a wrap.
     PackedLaneOverflow,
+
+    // ---- integer `matmul` accumulator (§6.17-0010) -------------------------------------
+    /// An integer `matmul` whose accumulator dtype is not the compute dtype or a signed 32/64-bit integer at
+    /// least as wide (an unsigned compute dtype of the accumulator's own width is refused; a float is refused).
+    MatmulAccumulator { compute: Dtype, accumulator: Dtype },
 }
 
 /// Coverage of an `(op, dtype)` cell. Three states: a cell is either
