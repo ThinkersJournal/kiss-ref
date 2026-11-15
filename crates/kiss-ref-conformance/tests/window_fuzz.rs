@@ -886,7 +886,8 @@ fn run_one<T: ScalarFloat>(seed: u64, mode: Mode, dtype: &str) -> Obs {
             &case.axes,
             &case.kernel,
             &case.stride,
-            &case.padding,
+            &case.padding, // padding_lo
+            &case.padding, // padding_hi (symmetric)
             &case.dilation,
             case.count_include_pad,
         )
@@ -907,7 +908,8 @@ fn run_one<T: ScalarFloat>(seed: u64, mode: Mode, dtype: &str) -> Obs {
             &case.axes,
             &case.kernel,
             &case.stride,
-            &case.padding,
+            &case.padding, // padding_lo
+            &case.padding, // padding_hi (symmetric)
             &case.dilation,
         )
     }));
@@ -927,7 +929,8 @@ fn run_one<T: ScalarFloat>(seed: u64, mode: Mode, dtype: &str) -> Obs {
             &case.axes,
             &case.kernel,
             &case.stride,
-            &case.padding,
+            &case.padding, // padding_lo
+            &case.padding, // padding_hi (symmetric)
             &case.dilation,
         )
     }));
@@ -1167,7 +1170,8 @@ fn determinism_spot_check() {
                     &case.axes,
                     &case.kernel,
                     &case.stride,
-                    &case.padding,
+                    &case.padding, // padding_lo
+                    &case.padding, // padding_hi (symmetric)
                     &case.dilation,
                     case.count_include_pad,
                 ),
@@ -1176,7 +1180,8 @@ fn determinism_spot_check() {
                     &case.axes,
                     &case.kernel,
                     &case.stride,
-                    &case.padding,
+                    &case.padding, // padding_lo
+                    &case.padding, // padding_hi (symmetric)
                     &case.dilation,
                 ),
                 im2col::<f64>(
@@ -1184,7 +1189,8 @@ fn determinism_spot_check() {
                     &case.axes,
                     &case.kernel,
                     &case.stride,
-                    &case.padding,
+                    &case.padding, // padding_lo
+                    &case.padding, // padding_hi (symmetric)
                     &case.dilation,
                 ),
             )
@@ -1260,7 +1266,8 @@ fn cross_check_avg_and_max_against_im2col() {
             &case.axes,
             &case.kernel,
             &case.stride,
-            &case.padding,
+            &case.padding, // padding_lo
+            &case.padding, // padding_hi (symmetric)
             &case.dilation,
         ) {
             Ok(t) => t,
@@ -1278,7 +1285,8 @@ fn cross_check_avg_and_max_against_im2col() {
             &case.axes,
             &case.kernel,
             &case.stride,
-            &case.padding,
+            &case.padding, // padding_lo
+            &case.padding, // padding_hi (symmetric)
             &case.dilation,
             true,
         ) {
@@ -1316,7 +1324,8 @@ fn cross_check_avg_and_max_against_im2col() {
                 &case.axes,
                 &case.kernel,
                 &case.stride,
-                &case.padding,
+                &case.padding, // padding_lo
+                &case.padding, // padding_hi (symmetric)
                 &case.dilation,
             ) {
                 for p in 0..patches {
@@ -1345,7 +1354,8 @@ fn cross_check_avg_and_max_against_im2col() {
                 &case.axes,
                 &case.kernel,
                 &case.stride,
-                &case.padding,
+                &case.padding, // padding_lo
+                &case.padding, // padding_hi (symmetric)
                 &case.dilation,
                 true,
             );
@@ -1354,7 +1364,8 @@ fn cross_check_avg_and_max_against_im2col() {
                 &case.axes,
                 &case.kernel,
                 &case.stride,
-                &case.padding,
+                &case.padding, // padding_lo
+                &case.padding, // padding_hi (symmetric)
                 &case.dilation,
                 false,
             );
@@ -1405,12 +1416,12 @@ fn anchor_avg_pool_dilated_1d() {
     // o=0: taps at 0,2 → (1+3)/2 = 2 ; o=1: 1,3 → (2+4)/2 = 3 ;
     // o=2: taps at 2,4 → (3+5)/2 = 4. Exact in f32 and f64.
     let x = t64(&[1.0, 2.0, 3.0, 4.0, 5.0], &[5]);
-    let y = avg_pool(&x.view(), &[0], &[2], &[1], &[0], &[2], false).expect("avg");
+    let y = avg_pool(&x.view(), &[0], &[2], &[1], &[0], &[0], &[2], false).expect("avg");
     assert_eq!(y.shape(), &[3]);
     assert_eq!(y.as_slice(), &[2.0, 3.0, 4.0]);
 
     let x32 = Tensor::from_vec(vec![1.0f32, 2.0, 3.0, 4.0, 5.0], &[5]).expect("t32");
-    let y32 = avg_pool(&x32.view(), &[0], &[2], &[1], &[0], &[2], true).expect("avg32");
+    let y32 = avg_pool(&x32.view(), &[0], &[2], &[1], &[0], &[0], &[2], true).expect("avg32");
     assert_eq!(y32.as_slice(), &[2.0f32, 3.0, 4.0]);
 }
 
@@ -1420,7 +1431,16 @@ fn anchor_max_pool_2d() {
     // (0,0) max{1,9,8,3}=9 ; (0,1) max{9,2,3,7}=9 ;
     // (1,0) max{8,3,4,6}=8 ; (1,1) max{3,7,6,5}=7.
     let x = t64(&[1.0, 9.0, 2.0, 8.0, 3.0, 7.0, 4.0, 6.0, 5.0], &[3, 3]);
-    let y = max_pool(&x.view(), &[0, 1], &[2, 2], &[1, 1], &[0, 0], &[1, 1]).expect("max");
+    let y = max_pool(
+        &x.view(),
+        &[0, 1],
+        &[2, 2],
+        &[1, 1],
+        &[0, 0],
+        &[0, 0],
+        &[1, 1],
+    )
+    .expect("max");
     assert_eq!(y.shape(), &[2, 2]);
     assert_eq!(y.as_slice(), &[9.0, 9.0, 8.0, 7.0]);
 }
@@ -1435,7 +1455,16 @@ fn anchor_im2col_2d_stride2_pad1() {
     //  patch(1,0): {(1,−1),(1,0),(2,−1),(2,0)}   → 0,3,0,0
     //  patch(1,1): {(1,1),(1,2),(2,1),(2,2)}     → 4,0,0,0
     let x = t64(&[1.0, 2.0, 3.0, 4.0], &[2, 2]);
-    let y = im2col(&x.view(), &[0, 1], &[2, 2], &[2, 2], &[1, 1], &[1, 1]).expect("im2col");
+    let y = im2col(
+        &x.view(),
+        &[0, 1],
+        &[2, 2],
+        &[2, 2],
+        &[1, 1],
+        &[1, 1],
+        &[1, 1],
+    )
+    .expect("im2col");
     assert_eq!(y.shape(), &[2, 2, 2, 2]);
     assert_eq!(
         y.as_slice(),
@@ -1453,11 +1482,11 @@ fn anchor_avg_pool_wholly_padded_window() {
     // count_include_pad=false → divisor = valid count → [0/0, 5/1, 5/1, 0/0],
     // and 0/0 is NaN: the empty-window divisor is NOT special-cased.
     let x = t64(&[5.0], &[1]);
-    let inc = avg_pool(&x.view(), &[0], &[2], &[1], &[2], &[1], true).expect("cip");
+    let inc = avg_pool(&x.view(), &[0], &[2], &[1], &[2], &[2], &[1], true).expect("cip");
     assert_eq!(inc.shape(), &[4]);
     assert_eq!(inc.as_slice(), &[0.0, 2.5, 2.5, 0.0]);
 
-    let exc = avg_pool(&x.view(), &[0], &[2], &[1], &[2], &[1], false).expect("nocip");
+    let exc = avg_pool(&x.view(), &[0], &[2], &[1], &[2], &[2], &[1], false).expect("nocip");
     assert!(exc.as_slice()[0].is_nan());
     assert_eq!(exc.as_slice()[1], 5.0);
     assert_eq!(exc.as_slice()[2], 5.0);
@@ -1469,7 +1498,7 @@ fn anchor_max_pool_wholly_padded_window_is_identity() {
     // Same geometry: a window with no in-bounds tap yields the max identity −inf
     // (documented in window.rs), NOT an error.
     let x = t64(&[5.0], &[1]);
-    let y = max_pool(&x.view(), &[0], &[2], &[1], &[2], &[1]).expect("max");
+    let y = max_pool(&x.view(), &[0], &[2], &[1], &[2], &[2], &[1]).expect("max");
     assert_eq!(y.shape(), &[4]);
     assert_eq!(
         y.as_slice(),
@@ -1481,17 +1510,17 @@ fn anchor_max_pool_wholly_padded_window_is_identity() {
 fn anchor_zero_extent_output_is_ok_not_error() {
     // eff = 5 > padded = 2 ⇒ pooled extent 0 ⇒ an EMPTY tensor, not a decline.
     let x = t64(&[1.0, 2.0], &[2]);
-    let y = avg_pool(&x.view(), &[0], &[5], &[1], &[0], &[1], true).expect("avg");
+    let y = avg_pool(&x.view(), &[0], &[5], &[1], &[0], &[0], &[1], true).expect("avg");
     assert_eq!(y.shape(), &[0]);
     assert!(y.as_slice().is_empty());
-    let c = im2col(&x.view(), &[0], &[5], &[1], &[0], &[1]).expect("im2col");
+    let c = im2col(&x.view(), &[0], &[5], &[1], &[0], &[0], &[1]).expect("im2col");
     assert_eq!(c.shape(), &[0, 5]);
     assert!(c.as_slice().is_empty());
     // A kernel of usize::MAX is the same story — an empty output, not overflow.
-    let big = im2col(&x.view(), &[0], &[usize::MAX], &[1], &[0], &[1]).expect("im2col big k");
+    let big = im2col(&x.view(), &[0], &[usize::MAX], &[1], &[0], &[0], &[1]).expect("im2col big k");
     assert_eq!(big.shape(), &[0, usize::MAX]);
     // A huge stride only shrinks the output.
-    let s = im2col(&x.view(), &[0], &[1], &[usize::MAX], &[0], &[1]).expect("im2col big s");
+    let s = im2col(&x.view(), &[0], &[1], &[usize::MAX], &[0], &[0], &[1]).expect("im2col big s");
     assert_eq!(s.shape(), &[1, 1]);
     assert_eq!(s.as_slice(), &[1.0]);
 }
@@ -1503,10 +1532,29 @@ fn anchor_duplicate_axes_last_write_wins() {
     // and the tap position comes from the last entry too.
     // out(0,j) = mean(x[0,j], x[1,j]) → [(1+3)/2, (2+4)/2] = [2,3].
     let x = t64(&[1.0, 2.0, 3.0, 4.0], &[2, 2]);
-    let y = avg_pool(&x.view(), &[0, 0], &[1, 2], &[1, 1], &[0, 0], &[1, 1], true).expect("avg");
+    let y = avg_pool(
+        &x.view(),
+        &[0, 0],
+        &[1, 2],
+        &[1, 1],
+        &[0, 0],
+        &[0, 0],
+        &[1, 1],
+        true,
+    )
+    .expect("avg");
     assert_eq!(y.shape(), &[1, 2]);
     assert_eq!(y.as_slice(), &[2.0, 3.0]);
-    let c = im2col(&x.view(), &[0, 0], &[1, 2], &[1, 1], &[0, 0], &[1, 1]).expect("im2col");
+    let c = im2col(
+        &x.view(),
+        &[0, 0],
+        &[1, 2],
+        &[1, 1],
+        &[0, 0],
+        &[0, 0],
+        &[1, 1],
+    )
+    .expect("im2col");
     assert_eq!(c.shape(), &[1, 2, 1, 2]);
     assert_eq!(c.as_slice(), &[1.0, 3.0, 2.0, 4.0]);
 }
@@ -1515,10 +1563,10 @@ fn anchor_duplicate_axes_last_write_wins() {
 fn anchor_empty_axis_selection_is_identity() {
     // No spatial axes ⇒ no windowing ⇒ the input passes through unchanged.
     let x = t64(&[7.0], &[]);
-    let y = avg_pool(&x.view(), &[], &[], &[], &[], &[], false).expect("avg");
+    let y = avg_pool(&x.view(), &[], &[], &[], &[], &[], &[], false).expect("avg");
     assert_eq!(y.shape(), &[] as &[usize]);
     assert_eq!(y.as_slice(), &[7.0]);
-    let c = im2col(&x.view(), &[], &[], &[], &[], &[]).expect("im2col");
+    let c = im2col(&x.view(), &[], &[], &[], &[], &[], &[]).expect("im2col");
     assert_eq!(c.shape(), &[] as &[usize]);
     assert_eq!(c.as_slice(), &[7.0]);
 }
@@ -1528,14 +1576,14 @@ fn anchor_typed_declines() {
     let x = t64(&[1.0, 2.0], &[2]);
     // kernel 0 / stride 0 — the shared "degenerate window" decline.
     assert_eq!(
-        max_pool(&x.view(), &[0], &[0], &[1], &[0], &[1]).unwrap_err(),
+        max_pool(&x.view(), &[0], &[0], &[1], &[0], &[0], &[1]).unwrap_err(),
         Error::ShapeMismatch {
             expected: 1,
             got: 0
         }
     );
     assert_eq!(
-        max_pool(&x.view(), &[0], &[1], &[0], &[0], &[1]).unwrap_err(),
+        max_pool(&x.view(), &[0], &[1], &[0], &[0], &[0], &[1]).unwrap_err(),
         Error::ShapeMismatch {
             expected: 1,
             got: 0
@@ -1543,7 +1591,7 @@ fn anchor_typed_declines() {
     );
     // parallel-array length mismatch (reported against kernel.len()).
     assert_eq!(
-        avg_pool(&x.view(), &[0], &[1, 1], &[1], &[0], &[1], false).unwrap_err(),
+        avg_pool(&x.view(), &[0], &[1, 1], &[1], &[0], &[0], &[1], false).unwrap_err(),
         Error::ShapeMismatch {
             expected: 1,
             got: 2
@@ -1551,22 +1599,40 @@ fn anchor_typed_declines() {
     );
     // axis out of range.
     assert_eq!(
-        im2col(&x.view(), &[3], &[1], &[1], &[0], &[1]).unwrap_err(),
+        im2col(&x.view(), &[3], &[1], &[1], &[0], &[0], &[1]).unwrap_err(),
         Error::AxisOutOfRange { axis: 3, rank: 1 }
     );
     // The `2·p` doubling and the `dil·(k−1)+1` effective window are both checked
     // (the `2*p` case is the standing regression from the prior adversarial
     // review — kept here so this suite owns it too).
     assert_eq!(
-        max_pool(&x.view(), &[0], &[1], &[1], &[usize::MAX], &[1]).unwrap_err(),
+        max_pool(
+            &x.view(),
+            &[0],
+            &[1],
+            &[1],
+            &[usize::MAX],
+            &[usize::MAX],
+            &[1]
+        )
+        .unwrap_err(),
         Error::ShapeOverflow
     );
     assert_eq!(
-        max_pool(&x.view(), &[0], &[1], &[1], &[usize::MAX / 2 + 1], &[1]).unwrap_err(),
+        max_pool(
+            &x.view(),
+            &[0],
+            &[1],
+            &[1],
+            &[usize::MAX / 2 + 1],
+            &[usize::MAX / 2 + 1],
+            &[1]
+        )
+        .unwrap_err(),
         Error::ShapeOverflow
     );
     assert_eq!(
-        max_pool(&x.view(), &[0], &[2], &[1], &[0], &[usize::MAX]).unwrap_err(),
+        max_pool(&x.view(), &[0], &[2], &[1], &[0], &[0], &[usize::MAX]).unwrap_err(),
         Error::ShapeOverflow
     );
     // Over-rank tap odometer (9 spatial entries on a rank-1 input).
@@ -1574,14 +1640,14 @@ fn anchor_typed_declines() {
     let ones = vec![1usize; 9];
     let zeros = vec![0usize; 9];
     assert_eq!(
-        avg_pool(&x.view(), &nine, &ones, &ones, &zeros, &ones, false).unwrap_err(),
+        avg_pool(&x.view(), &nine, &ones, &ones, &zeros, &zeros, &ones, false).unwrap_err(),
         Error::RankExceeded {
             rank: 9,
             max: MAX_RANK
         }
     );
     assert_eq!(
-        max_pool(&x.view(), &nine, &ones, &ones, &zeros, &ones).unwrap_err(),
+        max_pool(&x.view(), &nine, &ones, &ones, &zeros, &zeros, &ones).unwrap_err(),
         Error::RankExceeded {
             rank: 9,
             max: MAX_RANK
@@ -1589,7 +1655,7 @@ fn anchor_typed_declines() {
     );
     // im2col appends the tap axes, so it trips one axis earlier: 1 + 9 = 10.
     assert_eq!(
-        im2col(&x.view(), &nine, &ones, &ones, &zeros, &ones).unwrap_err(),
+        im2col(&x.view(), &nine, &ones, &ones, &zeros, &zeros, &ones).unwrap_err(),
         Error::RankExceeded {
             rank: 10,
             max: MAX_RANK
@@ -1603,6 +1669,7 @@ fn anchor_typed_declines() {
             &[0, 1, 2, 0, 1, 2],
             &[1; 6],
             &[1; 6],
+            &[0; 6],
             &[0; 6],
             &[1; 6]
         )
@@ -1650,7 +1717,7 @@ fn never_panic_huge_padding_capacity_overflow() {
     let x = t64(&[1.0, 2.0], &[2]);
     let p = usize::MAX / 4;
     let r = catch_unwind(AssertUnwindSafe(|| {
-        max_pool(&x.view(), &[0], &[1], &[1], &[p], &[1]).map(|t| t.shape().to_vec())
+        max_pool(&x.view(), &[0], &[1], &[1], &[p], &[p], &[1]).map(|t| t.shape().to_vec())
     }));
     match r {
         Ok(Ok(shape)) => panic!("expected a typed decline, got Ok(shape {shape:?})"),
@@ -1682,7 +1749,7 @@ fn never_panic_huge_padding_allocation_failure() {
     let x = t64(&[1.0, 2.0], &[2]);
     let p = 1usize << 40;
     let r = catch_unwind(AssertUnwindSafe(|| {
-        max_pool(&x.view(), &[0], &[1], &[1], &[p], &[1]).map(|t| t.shape().to_vec())
+        max_pool(&x.view(), &[0], &[1], &[1], &[p], &[p], &[1]).map(|t| t.shape().to_vec())
     }));
     match r {
         Ok(Ok(shape)) => panic!("expected a typed decline, got Ok(shape {shape:?})"),

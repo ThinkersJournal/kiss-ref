@@ -200,14 +200,15 @@ fn test_ops_int_max_pool_window_and_identity() {
     // the dtype minimum (KISS-OPS-6.11-0002), NOT −inf (no float infinities).
     // [1,3,2,5], kernel 2 stride 1 → [max(1,3), max(3,2), max(2,5)] = [3,3,5].
     let x = t(&[1, 3, 2, 5], &[4]);
-    let y = tensor_int::max_pool(&x.view(), &[0], &[2], &[1], &[0], &[1], Dtype::I8).unwrap();
+    let y = tensor_int::max_pool(&x.view(), &[0], &[2], &[1], &[0], &[0], &[1], Dtype::I8).unwrap();
     assert_eq!(y.as_slice(), &[3, 3, 5]);
 
     // A wholly-out-of-bounds (padded) window yields the S8 max identity = -128,
     // not −inf: extent 1, kernel 2 stride 1 pad 2 → first window taps land at
     // -2,-1 (both OOB) → identity.
     let z = t(&[7], &[1]);
-    let yz = tensor_int::max_pool(&z.view(), &[0], &[2], &[1], &[2], &[1], Dtype::I8).unwrap();
+    let yz =
+        tensor_int::max_pool(&z.view(), &[0], &[2], &[1], &[2], &[2], &[1], Dtype::I8).unwrap();
     assert_eq!(yz.as_slice()[0], -128);
 }
 
@@ -218,7 +219,7 @@ fn test_ops_int_im2col_zero_fill_oob() {
     // [10,20,30], kernel 2 stride 1 pad 1 → 4 patches × 2 taps:
     // patch0=[0,10], patch1=[10,20], patch2=[20,30], patch3=[30,0].
     let x = t(&[10, 20, 30], &[3]);
-    let y = tensor_int::im2col(&x.view(), &[0], &[2], &[1], &[1], &[1]).unwrap();
+    let y = tensor_int::im2col(&x.view(), &[0], &[2], &[1], &[1], &[1], &[1]).unwrap();
     assert_eq!(y.shape(), &[4, 2]);
     assert_eq!(y.as_slice(), &[0, 10, 10, 20, 20, 30, 30, 0]);
 }

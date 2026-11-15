@@ -2,8 +2,8 @@
 //! The window family (§6.13): `avg_pool`, `max_pool`, `im2col`.
 //!
 //! Each pools/gathers over a sliding window across a set of spatial `axes` with
-//! per-axis `(kernel, stride, padding, dilation)`. The window source position for
-//! output spatial index `o` and window tap `t` is `o·stride + t·dilation − padding`
+//! per-axis `(kernel, stride, padding_lo, padding_hi, dilation)`. The window source position for
+//! output spatial index `o` and window tap `t` is `o·stride + t·dilation − padding_lo`
 //! (§6.13 im2col mapping); positions outside the input are out of bounds.
 //!
 //! - `avg_pool` — §6.13 `reduce_mean` over the window; divisor is the full window
@@ -26,13 +26,14 @@ use crate::scalar::ScalarFloat;
 use crate::tensor::{alloc_exact, numel, Odometer, Tensor, View, MAX_RANK};
 use crate::Error;
 
-/// The output extent of a pooled axis: `floor((in + 2·pad − dilation·(k−1) − 1) /
-/// stride) + 1`, or `0` when the effective window is larger than the padded input.
+/// The output extent of a pooled axis (§6.13-0010): `floor((in + p_lo + p_hi − D) / stride) + 1` with
+/// `D = dilation·(k−1) + 1`, or `0` when the dilated window is larger than the padded input.
 pub(crate) fn pool_out_dim(
     in_d: usize,
     k: usize,
     s: usize,
-    p: usize,
+    p_lo: usize,
+    p_hi: usize,
     dil: usize,
 ) -> Result<usize, Error> {
     if s == 0 || k == 0 {
@@ -45,11 +46,10 @@ pub(crate) fn pool_out_dim(
         .checked_mul(k - 1)
         .and_then(|x| x.checked_add(1))
         .ok_or(Error::ShapeOverflow)?;
-    // Checked doubling of the padding, like every other multiply in the reference
-    // (never-panic contract) — a raw `2 * p` would overflow on a pathological pad.
-    let padded = p
-        .checked_mul(2)
-        .and_then(|pp| in_d.checked_add(pp))
+    // Checked sum of the two sides, like every other add in the reference (never-panic contract).
+    let padded = in_d
+        .checked_add(p_lo)
+        .and_then(|v| v.checked_add(p_hi))
         .ok_or(Error::ShapeOverflow)?;
     if padded < eff {
         return Ok(0);
@@ -66,12 +66,18 @@ pub(crate) fn window_out_shape(
     axes: &[usize],
     kernel: &[usize],
     stride: &[usize],
-    padding: &[usize],
+    padding_lo: &[usize],
+    padding_hi: &[usize],
     dilation: &[usize],
 ) -> Result<([usize; MAX_RANK], usize), Error> {
     let rank = in_shape.len();
     let n = axes.len();
-    if kernel.len() != n || stride.len() != n || padding.len() != n || dilation.len() != n {
+    if kernel.len() != n
+        || stride.len() != n
+        || padding_lo.len() != n
+        || padding_hi.len() != n
+        || dilation.len() != n
+    {
         return Err(Error::ShapeMismatch {
             expected: n,
             got: kernel.len(),
@@ -83,26 +89,33 @@ pub(crate) fn window_out_shape(
         if ax >= rank {
             return Err(Error::AxisOutOfRange { axis: ax, rank });
         }
-        out[ax] = pool_out_dim(in_shape[ax], kernel[i], stride[i], padding[i], dilation[i])?;
+        out[ax] = pool_out_dim(
+            in_shape[ax],
+            kernel[i],
+            stride[i],
+            padding_lo[i],
+            padding_hi[i],
+            dilation[i],
+        )?;
     }
     Ok((out, rank))
 }
 
 /// The source spatial position of window tap `t` at output position `o`:
-/// `o·stride + t·dilation − padding`. Returns `None` (out of bounds) if negative
+/// `o·stride + t·dilation − padding_lo`. Returns `None` (out of bounds) if negative
 /// or `>= extent`.
 pub(crate) fn tap_pos(
     o: usize,
     t: usize,
     stride: usize,
     dilation: usize,
-    padding: usize,
+    padding_lo: usize,
     extent: usize,
 ) -> Option<usize> {
     let pos = (o as isize)
         .wrapping_mul(stride as isize)
         .wrapping_add((t as isize).wrapping_mul(dilation as isize))
-        .wrapping_sub(padding as isize);
+        .wrapping_sub(padding_lo as isize);
     if pos < 0 || pos >= extent as isize {
         None
     } else {
@@ -118,13 +131,16 @@ pub fn avg_pool<T: ScalarFloat>(
     axes: &[usize],
     kernel: &[usize],
     stride: &[usize],
-    padding: &[usize],
+    padding_lo: &[usize],
+    padding_hi: &[usize],
     dilation: &[usize],
     count_include_pad: bool,
 ) -> Result<Tensor<T>, Error> {
     let in_shape = x.shape();
     let rank = in_shape.len();
-    let (out_shape_buf, _) = window_out_shape(in_shape, axes, kernel, stride, padding, dilation)?;
+    let (out_shape_buf, _) = window_out_shape(
+        in_shape, axes, kernel, stride, padding_lo, padding_hi, dilation,
+    )?;
     let out_shape = &out_shape_buf[..rank];
     let count_total = numel(kernel)?;
 
@@ -145,7 +161,7 @@ pub fn avg_pool<T: ScalarFloat>(
                     tap[i],
                     stride[i],
                     dilation[i],
-                    padding[i],
+                    padding_lo[i],
                     in_shape[ax],
                 ) {
                     Some(p) => src[ax] = p,
@@ -177,12 +193,15 @@ pub fn max_pool<T: ScalarFloat>(
     axes: &[usize],
     kernel: &[usize],
     stride: &[usize],
-    padding: &[usize],
+    padding_lo: &[usize],
+    padding_hi: &[usize],
     dilation: &[usize],
 ) -> Result<Tensor<T>, Error> {
     let in_shape = x.shape();
     let rank = in_shape.len();
-    let (out_shape_buf, _) = window_out_shape(in_shape, axes, kernel, stride, padding, dilation)?;
+    let (out_shape_buf, _) = window_out_shape(
+        in_shape, axes, kernel, stride, padding_lo, padding_hi, dilation,
+    )?;
     let out_shape = &out_shape_buf[..rank];
 
     let count = numel(out_shape)?;
@@ -202,7 +221,7 @@ pub fn max_pool<T: ScalarFloat>(
                     tap[i],
                     stride[i],
                     dilation[i],
-                    padding[i],
+                    padding_lo[i],
                     in_shape[ax],
                 ) {
                     Some(p) => src[ax] = p,
@@ -223,20 +242,23 @@ pub fn max_pool<T: ScalarFloat>(
 
 /// `im2col` — §6.13 closed-form zero-filled gather. Output shape = the pooled
 /// output spatial shape (the "patch" axes) with the window (tap) axes appended;
-/// `out[patch.., tap..] = x[patch with spatial → o·stride + t·dilation − padding]`,
+/// `out[patch.., tap..] = x[patch with spatial → o·stride + t·dilation − padding_lo]`,
 /// zero-filled where a tap is out of bounds. Exact-byte (pure data movement).
 pub fn im2col<T: ScalarFloat>(
     x: &View<T>,
     axes: &[usize],
     kernel: &[usize],
     stride: &[usize],
-    padding: &[usize],
+    padding_lo: &[usize],
+    padding_hi: &[usize],
     dilation: &[usize],
 ) -> Result<Tensor<T>, Error> {
     let in_shape = x.shape();
     let rank = in_shape.len();
     let n = axes.len();
-    let (patch_shape_buf, _) = window_out_shape(in_shape, axes, kernel, stride, padding, dilation)?;
+    let (patch_shape_buf, _) = window_out_shape(
+        in_shape, axes, kernel, stride, padding_lo, padding_hi, dilation,
+    )?;
     let patch_shape = &patch_shape_buf[..rank];
 
     let out_rank = rank + n;
@@ -265,7 +287,7 @@ pub fn im2col<T: ScalarFloat>(
                 oc[rank + i],
                 stride[i],
                 dilation[i],
-                padding[i],
+                padding_lo[i],
                 in_shape[ax],
             ) {
                 Some(p) => src[ax] = p,
@@ -296,7 +318,7 @@ mod tests {
     fn avg_pool_1d_no_pad() {
         // [1,2,3,4], kernel 2 stride 2 → [(1+2)/2, (3+4)/2] = [1.5, 3.5]
         let x = t(&[1.0, 2.0, 3.0, 4.0], &[4]);
-        let y = avg_pool(&x.view(), &[0], &[2], &[2], &[0], &[1], false).unwrap();
+        let y = avg_pool(&x.view(), &[0], &[2], &[2], &[0], &[0], &[1], false).unwrap();
         assert_eq!(y.shape(), &[2]);
         assert_eq!(y.as_slice(), &[1.5, 3.5]);
     }
@@ -305,14 +327,14 @@ mod tests {
     fn max_pool_1d_stride1() {
         // [1,3,2,5], kernel 2 stride 1 → [max(1,3),max(3,2),max(2,5)] = [3,3,5]
         let x = t(&[1.0, 3.0, 2.0, 5.0], &[4]);
-        let y = max_pool(&x.view(), &[0], &[2], &[1], &[0], &[1]).unwrap();
+        let y = max_pool(&x.view(), &[0], &[2], &[1], &[0], &[0], &[1]).unwrap();
         assert_eq!(y.as_slice(), &[3.0, 3.0, 5.0]);
     }
 
     #[test]
     fn max_pool_nan_propagates() {
         let x = t(&[1.0, f64::NAN, 2.0, 3.0], &[4]);
-        let y = max_pool(&x.view(), &[0], &[2], &[2], &[0], &[1]).unwrap();
+        let y = max_pool(&x.view(), &[0], &[2], &[2], &[0], &[0], &[1]).unwrap();
         assert!(y.as_slice()[0].is_nan()); // window [1,NaN] → NaN
         assert_eq!(y.as_slice()[1], 3.0);
     }
@@ -322,10 +344,10 @@ mod tests {
         // [1,2,3], kernel 2 stride 1 pad 1 → windows: [pad,1],[1,2],[2,3],[3,pad]
         // count_include_pad=true → divisor 2 each: [0.5,1.5,2.5,1.5]
         let x = t(&[1.0, 2.0, 3.0], &[3]);
-        let y = avg_pool(&x.view(), &[0], &[2], &[1], &[1], &[1], true).unwrap();
+        let y = avg_pool(&x.view(), &[0], &[2], &[1], &[1], &[1], &[1], true).unwrap();
         assert_eq!(y.as_slice(), &[0.5, 1.5, 2.5, 1.5]);
         // count_include_pad=false → edge windows divide by valid count 1: [1,1.5,2.5,3]
-        let y2 = avg_pool(&x.view(), &[0], &[2], &[1], &[1], &[1], false).unwrap();
+        let y2 = avg_pool(&x.view(), &[0], &[2], &[1], &[1], &[1], &[1], false).unwrap();
         assert_eq!(y2.as_slice(), &[1.0, 1.5, 2.5, 3.0]);
     }
 
@@ -334,7 +356,7 @@ mod tests {
         // [10,20,30], kernel 2 stride 1 pad 1 → patches 4, taps 2.
         // patch0 = [pad=0, 10]; patch1=[10,20]; patch2=[20,30]; patch3=[30, pad=0]
         let x = t(&[10.0, 20.0, 30.0], &[3]);
-        let y = im2col(&x.view(), &[0], &[2], &[1], &[1], &[1]).unwrap();
+        let y = im2col(&x.view(), &[0], &[2], &[1], &[1], &[1], &[1]).unwrap();
         assert_eq!(y.shape(), &[4, 2]);
         assert_eq!(
             y.as_slice(),
@@ -346,15 +368,24 @@ mod tests {
     fn bad_window_params_error_not_panic() {
         let x = t(&[1.0, 2.0], &[2]);
         // mismatched param arrays
-        assert!(avg_pool(&x.view(), &[0], &[2], &[], &[0], &[1], false).is_err());
+        assert!(avg_pool(&x.view(), &[0], &[2], &[], &[0], &[0], &[1], false).is_err());
         // stride 0
-        assert!(max_pool(&x.view(), &[0], &[2], &[0], &[0], &[1]).is_err());
+        assert!(max_pool(&x.view(), &[0], &[2], &[0], &[0], &[0], &[1]).is_err());
         // axis out of range
-        assert!(max_pool(&x.view(), &[5], &[2], &[1], &[0], &[1]).is_err());
+        assert!(max_pool(&x.view(), &[5], &[2], &[1], &[0], &[0], &[1]).is_err());
         // pathological padding must return ShapeOverflow, never panic/wrap
         // (regression, adversarial review — the `2*p` doubling is now checked).
         assert!(matches!(
-            avg_pool(&x.view(), &[0], &[2], &[1], &[usize::MAX], &[1], false),
+            avg_pool(
+                &x.view(),
+                &[0],
+                &[2],
+                &[1],
+                &[usize::MAX],
+                &[usize::MAX],
+                &[1],
+                false
+            ),
             Err(Error::ShapeOverflow)
         ));
     }

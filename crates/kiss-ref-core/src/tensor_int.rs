@@ -639,13 +639,16 @@ pub fn max_pool(
     axes: &[usize],
     kernel: &[usize],
     stride: &[usize],
-    padding: &[usize],
+    padding_lo: &[usize],
+    padding_hi: &[usize],
     dilation: &[usize],
     dtype: Dtype,
 ) -> Result<Tensor<i128>, Error> {
     let in_shape = x.shape();
     let rank = in_shape.len();
-    let (out_shape_buf, _) = window_out_shape(in_shape, axes, kernel, stride, padding, dilation)?;
+    let (out_shape_buf, _) = window_out_shape(
+        in_shape, axes, kernel, stride, padding_lo, padding_hi, dilation,
+    )?;
     let out_shape = &out_shape_buf[..rank];
 
     let count = numel(out_shape)?;
@@ -665,7 +668,7 @@ pub fn max_pool(
                     tap[i],
                     stride[i],
                     dilation[i],
-                    padding[i],
+                    padding_lo[i],
                     in_shape[ax],
                 ) {
                     Some(p) => src[ax] = p,
@@ -695,13 +698,16 @@ pub fn im2col(
     axes: &[usize],
     kernel: &[usize],
     stride: &[usize],
-    padding: &[usize],
+    padding_lo: &[usize],
+    padding_hi: &[usize],
     dilation: &[usize],
 ) -> Result<Tensor<i128>, Error> {
     let in_shape = x.shape();
     let rank = in_shape.len();
     let n = axes.len();
-    let (patch_shape_buf, _) = window_out_shape(in_shape, axes, kernel, stride, padding, dilation)?;
+    let (patch_shape_buf, _) = window_out_shape(
+        in_shape, axes, kernel, stride, padding_lo, padding_hi, dilation,
+    )?;
     let patch_shape = &patch_shape_buf[..rank];
 
     let out_rank = rank + n;
@@ -730,7 +736,7 @@ pub fn im2col(
                 oc[rank + i],
                 stride[i],
                 dilation[i],
-                padding[i],
+                padding_lo[i],
                 in_shape[ax],
             ) {
                 Some(p) => src[ax] = p,
@@ -879,14 +885,14 @@ mod tests {
     fn int_max_pool_window_and_ident() {
         // [1,3,2,5], kernel 2 stride 1 → [max(1,3),max(3,2),max(2,5)] = [3,3,5]
         let x = t(&[1, 3, 2, 5], &[4]);
-        let y = max_pool(&x.view(), &[0], &[2], &[1], &[0], &[1], Dtype::I8).unwrap();
+        let y = max_pool(&x.view(), &[0], &[2], &[1], &[0], &[0], &[1], Dtype::I8).unwrap();
         assert_eq!(y.as_slice(), &[3, 3, 5]);
 
         // A wholly-padded window yields the max identity = the S8 minimum (-128),
         // not -inf: input extent 1, kernel 2 stride 1 pad 2 → the first output
         // window's taps land at positions -2,-1 (both OOB) → identity.
         let z = t(&[7], &[1]);
-        let yz = max_pool(&z.view(), &[0], &[2], &[1], &[2], &[1], Dtype::I8).unwrap();
+        let yz = max_pool(&z.view(), &[0], &[2], &[1], &[2], &[2], &[1], Dtype::I8).unwrap();
         assert_eq!(yz.as_slice()[0], -128);
     }
 
@@ -895,7 +901,7 @@ mod tests {
         // [10,20,30], kernel 2 stride 1 pad 1 → patches 4, taps 2.
         // patch0=[0,10]; patch1=[10,20]; patch2=[20,30]; patch3=[30,0]
         let x = t(&[10, 20, 30], &[3]);
-        let y = im2col(&x.view(), &[0], &[2], &[1], &[1], &[1]).unwrap();
+        let y = im2col(&x.view(), &[0], &[2], &[1], &[1], &[1], &[1]).unwrap();
         assert_eq!(y.shape(), &[4, 2]);
         assert_eq!(y.as_slice(), &[0, 10, 10, 20, 20, 30, 30, 0]);
     }
