@@ -19,7 +19,7 @@ extern crate alloc;
 use alloc::vec;
 use alloc::vec::Vec;
 
-use kiss_classify_vocab::Dtype;
+use kiss_classify_vocab::{Dtype, NumericKind};
 use kiss_ops_vocab::decomp::Expr;
 use kiss_ops_vocab::Op;
 
@@ -554,6 +554,46 @@ pub fn cummax(x: &View<i128>, dtype: Dtype, axis: usize) -> Result<Tensor<i128>,
 /// dtype. Integer add is associative, so — unlike the float lane — the ascending-K
 /// contraction is fully deterministic (no §6.0-0004 order caveat).
 pub fn matmul(a: &View<i128>, b: &View<i128>, dtype: Dtype) -> Result<Tensor<i128>, Error> {
+    matmul_acc(a, b, dtype, None)
+}
+
+/// Whether `accumulator` is a legal `matmul` accumulator for the integer compute dtype `compute`
+/// (§6.17-0010): the compute dtype itself (the `0x00` default, wrapping), or a **signed** 32- or
+/// 64-bit integer at least as wide as `compute`, an unsigned compute dtype of the accumulator's own
+/// width being refused. Not an integer narrower than 32 bits, not an unsigned one, not a float.
+pub fn int_matmul_accumulator_ok(compute: Dtype, accumulator: Dtype) -> bool {
+    if !compute.is_integer() {
+        return false;
+    }
+    if accumulator == compute {
+        return true;
+    }
+    let signed_wide = matches!(accumulator, Dtype::I32 | Dtype::I64);
+    let unsigned_same_width =
+        compute.numeric_kind() == NumericKind::Uint && accumulator.bits() == compute.bits();
+    signed_wide && accumulator.bits() >= compute.bits() && !unsigned_same_width
+}
+
+/// **matmul** (integer lane) with an explicit accumulator dtype (§6.17-0010). `accumulator = None` is the
+/// `0x00` default (the compute dtype, wrapping: [`matmul`]). Otherwise every product and sum is taken
+/// **in the accumulator dtype** with two's-complement wrap on overflow (§6.2-0002); the integer fold is
+/// exact, so the result has the same bits for every reduction order. The result is in the accumulator
+/// dtype: converting it to another output dtype is a `cast` and not defined here. A float accumulator,
+/// an unsigned or sub-32-bit one, or one narrower than the compute dtype is
+/// [`Error::MatmulAccumulator`].
+pub fn matmul_acc(
+    a: &View<i128>,
+    b: &View<i128>,
+    dtype: Dtype,
+    accumulator: Option<Dtype>,
+) -> Result<Tensor<i128>, Error> {
+    let fold = accumulator.unwrap_or(dtype);
+    if !int_matmul_accumulator_ok(dtype, fold) {
+        return Err(Error::MatmulAccumulator {
+            compute: dtype,
+            accumulator: fold,
+        });
+    }
     let ash = a.shape();
     let bsh = b.shape();
     if ash.len() < 2 || bsh.len() < 2 {
@@ -616,10 +656,10 @@ pub fn matmul(a: &View<i128>, b: &View<i128>, dtype: Dtype) -> Result<Tensor<i12
             bcoord[batch_rank] = p; // b's K index
             let prod = eval_int_op(
                 Op::Mul,
-                dtype,
+                fold,
                 &[av.read(&acoord[..out_rank])?, bv.read(&bcoord[..out_rank])?],
             )?;
-            acc = eval_int_op(Op::Add, dtype, &[acc, prod])?;
+            acc = eval_int_op(Op::Add, fold, &[acc, prod])?;
         }
         data.push(acc);
     }
