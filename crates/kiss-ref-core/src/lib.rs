@@ -54,6 +54,7 @@ pub mod diff;
 pub mod fp8;
 pub mod iota;
 pub mod kernels;
+pub mod packed;
 pub mod recipe;
 pub mod recipe_int;
 pub mod resolve;
@@ -237,6 +238,12 @@ pub enum Error {
     // ---- `bitcast` (§6.21-0005) ----------------------------------------------------
     /// A `bitcast` whose source and destination dtypes differ in bit width (`src`, `dst` in bits).
     BitcastWidth { src: u16, dst: u16 },
+    // ---- tuple-state `reduce` monoids (§6.11-0026) --------------------------------------
+    /// An `argmax` reduction over other than exactly one axis (`got` distinct axes).
+    ArgmaxAxisCount { got: usize },
+    /// A `welford` count or an `argmax` index past its unsigned lane (`u32` beside `f32`, `u64` beside `f64`):
+    /// a typed decline, never a wrap.
+    PackedLaneOverflow,
 }
 
 /// Coverage of an `(op, dtype)` cell. Three states: a cell is either

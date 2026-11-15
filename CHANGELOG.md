@@ -7,6 +7,14 @@ conformance crate is unpublished. Format follows [Keep a Changelog]; versions ar
 
 ## [Unreleased]
 
+## [0.5.2] — 2026-11-14
+
+Evaluates the three **tuple-state `reduce` monoids** `welford`, `online_softmax` and `argmax` (KISS-Ops §6.11-0026 to §6.11-0029, KISS 0.17.0, board 427 "2) d)"). Additive: `Error` is `#[non_exhaustive]`; number proposed, the PM allocates.
+
+- `kiss-ref-core::packed`: `reduce_packed(kind, compute, x, axes, keepdim)` returns one packed tensor (the `keepdim` result plus a trailing state axis of extent 3 for `welford`, 2 for the others), lanes as bit patterns of the state dtype; `state_dtype` (`f32`/`f64` as is, `f32` for a narrower float, a typed decline otherwise), `packed_shape`, `welford_finalise` (population or Bessel) and `online_softmax_finalise`. Count and index lanes are `u32` beside `f32` and `u64` beside `f64`; a count or index past the lane is `Error::PackedLaneOverflow`, never a wrap; `argmax` over other than one axis is `Error::ArgmaxAxisCount`; a packed rank above `MAX_RANK` is `RankExceeded`.
+- Fixture: `packed_reduction_vectors.json` vendored from KISS `b264d4c` (blob `d231c2b`); `tests/packed_reductions.rs` replays its 19 value cases and 8 shape cases, plus the f64 lane width, the narrow-float state and the finalisers.
+- Not published: crates.io has `0.4.0` only.
+
 ## [0.5.0] — 2026-11-14
 
 **BREAKING (API).** The window family takes **independent low- and high-side padding**, `padding_lo` and `padding_hi`, in place of one symmetric `padding` (KISS-Ops §6.13-0010, §6.19-0023, board 426 5 "A", KISS 0.16.0). The PM allocated `0.5.0`: pre-1.0 the second number is the major, so a breaking API change is `0.4.x -> 0.5.0`.
