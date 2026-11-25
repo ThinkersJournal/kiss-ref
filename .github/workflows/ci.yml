@@ -71,19 +71,18 @@ jobs:
   spdx:
     name: Every source file declares the licence
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # The gate's own controls run FIRST. A checker nobody has watched fail is
-      # a checker nobody has evidence works, and a gate whose parser silently
-      # broke would report a clean tree rather than an error.
-      - name: Self-test the SPDX gate
-        run: python3 .github/spdx_gate.py --self-test
+      - name: Install coderipper 0.48.1
+        env:
+          RUSTC_WRAPPER: ''
+        run: cargo install coderipper --version 0.48.1 --locked
 
-      - name: Every tracked source file declares the workspace licence
-        run: python3 .github/spdx_gate.py
+      - name: Every source file declares the licence (SUP-016)
+        run: coderipper check SUP-016 --project . --deny medium
 
   gates:
     name: test / clippy / fmt / no_std
