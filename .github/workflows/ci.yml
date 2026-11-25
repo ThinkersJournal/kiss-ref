@@ -76,6 +76,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # Kept ALONGSIDE the SUP-016 gate until its hosted install is verified (an old
+      # gate removed before the new one is proven is a window with no gate), and for
+      # its extension census, which SUP-016's static `extensions` list does not do.
+      - name: Self-test the SPDX gate
+        run: python3 .github/spdx_gate.py --self-test
+
+      - name: Every tracked source file declares the workspace licence
+        run: python3 .github/spdx_gate.py
+
       - name: Install coderipper 0.48.1
         env:
           RUSTC_WRAPPER: ''
