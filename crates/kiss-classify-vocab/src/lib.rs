@@ -50,7 +50,7 @@ pub enum NumericKind {
     Complex,
 }
 
-/// The KISS-Classify §6.1 pinned scalar dtype set — exactly 27 dtypes (24 at sk4/sk5; the three MX element formats are additive at sk6).
+/// The KISS-Classify §6.1 pinned scalar dtype set — exactly 34 dtypes (24 at sk4/sk5; the three MX element formats are additive at sk6; the seven union-batch-1 tokens are additive at kiss-conformance 0.24.0).
 ///
 /// Token spelling is normative and case-sensitive (KISS-CLASSIFY §6.1 / the same
 /// exact-spelling discipline KISS-OPS-6.1-0002 applies to ops). At sk4 the integer
@@ -135,12 +135,31 @@ pub enum Dtype {
     /// MX **element** FP6 E3M2 (sign 1, exponent 3, mantissa 2, bias 3); no infinity, no NaN;
     /// max finite ±28; four elements per three bytes, LSB-first (§6.1-0015). Additive at sk6.
     F6e3m2,
+    /// IEEE-754 binary128 (sign 1, exponent 15, fraction 112, bias 16383), 128 bits
+    /// (KISS-Classify §6.1-0018). Additive (union batch 1, kiss-conformance 0.24.0).
+    F128,
+    /// Signed 128-bit two's-complement (§6.1-0017). Additive (union batch 1).
+    I128,
+    /// Unsigned 128-bit (§6.1-0017). Additive (union batch 1).
+    U128,
+    /// Signed 256-bit two's-complement (§6.1-0017). Additive (union batch 1).
+    I256,
+    /// Unsigned 256-bit (§6.1-0017). Additive (union batch 1).
+    U256,
+    /// FP8 E3M4 **IEEE-style** (sign 1, exponent 3, mantissa 4, bias 3), with infinity and
+    /// NaN; max finite ±15.5 (§6.1-0019, taken from LLVM `APFloat` `semFloat8E3M4` and ml_dtypes;
+    /// Mojo's docstring says finite-only and disagrees, see the clause). Additive (union batch 1).
+    F8e3m4,
+    /// **Unsigned** FP8 E4M3 scale (no sign bit; exponent 4, mantissa 3, bias 7), no infinity,
+    /// single NaN `0x7F`, finite range `[0, 448]` — the NVFP4 per-16 block scale (§6.1-0020).
+    /// A scale type like `f8e8m0`: it declines compute in a value position. Additive (union batch 1).
+    F8ue4m3,
 }
 
 impl Dtype {
     /// Every dtype in the KISS-Classify §6.1 set, in table order. The coverage
     /// gate iterates this to enumerate the (op × dtype) matrix.
-    pub const ALL: [Dtype; 27] = [
+    pub const ALL: [Dtype; 34] = [
         Dtype::F16,
         Dtype::Bf16,
         Dtype::F32,
@@ -168,6 +187,13 @@ impl Dtype {
         Dtype::F4e2m1,
         Dtype::F6e2m3,
         Dtype::F6e3m2,
+        Dtype::F128,
+        Dtype::I128,
+        Dtype::U128,
+        Dtype::I256,
+        Dtype::U256,
+        Dtype::F8e3m4,
+        Dtype::F8ue4m3,
     ];
 
     /// The normative, case-sensitive KISS token for this dtype.
@@ -200,6 +226,13 @@ impl Dtype {
             Dtype::F4e2m1 => "f4e2m1",
             Dtype::F6e2m3 => "f6e2m3",
             Dtype::F6e3m2 => "f6e3m2",
+            Dtype::F128 => "f128",
+            Dtype::I128 => "i128",
+            Dtype::U128 => "u128",
+            Dtype::I256 => "i256",
+            Dtype::U256 => "u256",
+            Dtype::F8e3m4 => "f8e3m4",
+            Dtype::F8ue4m3 => "f8ue4m3",
         }
     }
 
@@ -230,11 +263,21 @@ impl Dtype {
             | Dtype::F8e6m2
             | Dtype::F4e2m1
             | Dtype::F6e2m3
-            | Dtype::F6e3m2 => NumericKind::Float,
-            Dtype::I8 | Dtype::I16 | Dtype::I32 | Dtype::I64 | Dtype::I4 => NumericKind::Int,
-            Dtype::U8 | Dtype::U16 | Dtype::U32 | Dtype::U64 | Dtype::U4 | Dtype::B1 => {
-                NumericKind::Uint
+            | Dtype::F6e3m2
+            | Dtype::F128
+            | Dtype::F8e3m4
+            | Dtype::F8ue4m3 => NumericKind::Float,
+            Dtype::I8 | Dtype::I16 | Dtype::I32 | Dtype::I64 | Dtype::I4 | Dtype::I128 | Dtype::I256 => {
+                NumericKind::Int
             }
+            Dtype::U8
+            | Dtype::U16
+            | Dtype::U32
+            | Dtype::U64
+            | Dtype::U4
+            | Dtype::B1
+            | Dtype::U128
+            | Dtype::U256 => NumericKind::Uint,
             Dtype::Bool => NumericKind::Bool,
             Dtype::C64 | Dtype::C128 => NumericKind::Complex,
         }
@@ -257,12 +300,15 @@ impl Dtype {
             | Dtype::F8e5m2
             | Dtype::F8e5m2fnuz
             | Dtype::F8e8m0
-            | Dtype::F8e6m2 => 8,
+            | Dtype::F8e6m2
+            | Dtype::F8e3m4
+            | Dtype::F8ue4m3 => 8,
             Dtype::I4 | Dtype::U4 | Dtype::F4e2m1 => 4,
             Dtype::F6e2m3 | Dtype::F6e3m2 => 6,
             Dtype::B1 => 1,
             Dtype::C64 => 64,
-            Dtype::C128 => 128,
+            Dtype::C128 | Dtype::F128 | Dtype::I128 | Dtype::U128 => 128,
+            Dtype::I256 | Dtype::U256 => 256,
         }
     }
 
@@ -298,7 +344,8 @@ impl Dtype {
     /// element-value dtype — so it declines compute in a value position. (`f8e6m2` was an MX
     /// scale in the 0.3.x line; KISS #517 made it reserved, see [`Dtype::is_reserved`].)
     pub const fn is_mx_scale(self) -> bool {
-        matches!(self, Dtype::F8e8m0)
+        // `f8ue4m3` (the NVFP4 scale, §6.1-0020) is a scale type on the same footing (§6.6-0021).
+        matches!(self, Dtype::F8e8m0 | Dtype::F8ue4m3)
     }
 
     /// True for a dtype that is a **recognized** token of the closed sk4 vocabulary
@@ -329,9 +376,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn classify_dtype_set_has_exactly_twenty_seven() {
-        // KISS-CLASSIFY-6.1-0001 (sk4): the scalar dtype set is exactly 27 tokens (24 at sk4, +3 MX element formats at sk6).
-        assert_eq!(Dtype::ALL.len(), 27);
+    fn classify_dtype_set_has_exactly_thirty_four() {
+        // KISS-CLASSIFY-6.1-0001: the scalar dtype set is exactly 34 tokens (24 at sk4, +3 MX element formats at sk6,
+        // +7 union-batch-1 tokens at kiss-conformance 0.24.0).
+        assert_eq!(Dtype::ALL.len(), 34);
     }
 
     #[test]
@@ -350,11 +398,11 @@ mod tests {
         for d in Dtype::ALL {
             assert_eq!(Dtype::from_token(d.token()), Some(d), "round-trip {d:?}");
         }
-        // Uniqueness: 27 distinct tokens.
+        // Uniqueness: 34 distinct tokens.
         let mut toks: Vec<&str> = Dtype::ALL.iter().map(|d| d.token()).collect();
         toks.sort_unstable();
         toks.dedup();
-        assert_eq!(toks.len(), 27, "all 27 tokens must be distinct");
+        assert_eq!(toks.len(), 34, "all 34 tokens must be distinct");
     }
 
     #[test]
@@ -382,11 +430,38 @@ mod tests {
     }
 
     #[test]
+    fn classify_union_batch1_tokens_widths_kinds_and_scale() {
+        // KISS-CLASSIFY-6.1-0017..-0020 (kiss-conformance 0.24.0, union batch 1). Literals transcribed from
+        // the KISS clauses, not derived from the code under test.
+        use NumericKind::*;
+        for (tok, bits, kind) in [
+            ("f128", 128, Float),
+            ("i128", 128, Int),
+            ("u128", 128, Uint),
+            ("i256", 256, Int),
+            ("u256", 256, Uint),
+            ("f8e3m4", 8, Float),
+            ("f8ue4m3", 8, Float),
+        ] {
+            let d = Dtype::from_token(tok).unwrap_or_else(|| panic!("{tok} must parse"));
+            assert_eq!((d.token(), d.bits(), d.numeric_kind()), (tok, bits, kind), "{tok}");
+            assert!(!d.is_reserved(), "{tok} is usable, not reserved");
+        }
+        // f8ue4m3 is a scale type (6.1-0020, 6.6-0021): it declines compute in a value position; f8e3m4 does not.
+        assert!(Dtype::F8ue4m3.is_mx_scale() && Dtype::F8ue4m3.declines_compute());
+        assert!(!Dtype::F8e3m4.declines_compute());
+        // the earlier 27 tokens keep their position (no accumulator ordinal moves)
+        assert_eq!(Dtype::ALL[26], Dtype::F6e3m2);
+        assert_eq!(Dtype::ALL[27], Dtype::F128);
+        assert_eq!(Dtype::ALL[33], Dtype::F8ue4m3);
+    }
+
+    #[test]
     fn classify_sk3_spellings_are_no_longer_dtypes() {
         // The sk3 spellings (and never-valid tokens) must not parse at sk4.
         for bad in [
             "s8", "s16", "s4", "e4m3", "e5m2", "c32", // sk3 spellings, retired
-            "s32", "s64", "f8", "int32", "F32", "", "u128", // never valid
+            "s32", "s64", "f8", "int32", "F32", "", "u512", "f256", // never valid
         ] {
             assert_eq!(
                 Dtype::from_token(bad),
