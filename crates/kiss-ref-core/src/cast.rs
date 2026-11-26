@@ -399,11 +399,21 @@ fn encode_int(
     }
 }
 
+/// Whether the bit-level data-movement path (`cast`, `concat`, `squeeze`, `unsqueeze`) can carry `d`: a non-complex,
+/// non-reserved, non-scale dtype whose element fits the `u64` bit pattern this path moves and that has a pinned format
+/// here. The union-batch-1 tokens `f128`, `i128`, `u128`, `i256`, `u256` (wider than 64 bits) and `f8e3m4` (no format
+/// implemented yet) are NOT carried: they decline by name until each is implemented.
+pub fn cast_supported_dtype(d: Dtype) -> bool {
+    !d.is_complex() && !d.declines_compute() && d.bits() <= 64 && d != Dtype::F8e3m4
+}
+
 fn check_dtype(d: Dtype) -> Result<(), Error> {
     if d.is_complex() {
         Err(Error::UnsupportedDtype(d))
     } else if d.declines_compute() {
         Err(Error::ReservedOrScaleDtype(d))
+    } else if !cast_supported_dtype(d) {
+        Err(Error::UnsupportedDtype(d))
     } else {
         Ok(())
     }

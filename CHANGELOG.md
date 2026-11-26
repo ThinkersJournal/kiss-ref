@@ -8,7 +8,7 @@ conformance crate is unpublished. Format follows [Keep a Changelog]; versions ar
 ## [Unreleased]
 
 - `kiss-classify-vocab::Dtype` gains the seven tokens of KISS union batch 1 (kiss-conformance 0.24.0, KISS-CLASSIFY-6.1-0017..-0020; CireSnave board 501 "A", board 515): `F128` (IEEE binary128), `I128`, `U128`, `I256`, `U256`, `F8e3m4` (IEEE-style FP8 E3M4) and `F8ue4m3` (the unsigned NVFP4 scale), appended after `F6e3m2` so `Dtype::ALL` (now 34) keeps the first 27 in place. `F8ue4m3` is a scale type (`is_mx_scale()` and `declines_compute()` are true, as for `F8e8m0`). Additive: `Dtype` is `#[non_exhaustive]`; number proposed 0.6.2, the PM allocates.
-- No evaluation yet: `kiss-ref-core` declines the seven by name (`Error::UnsupportedDtype`) until each is implemented; the coverage ledger counts them as pending, not as done.
+- No evaluation yet: `kiss-ref-core` declines the seven by name until each is implemented (`Error::UnsupportedDtype` for the six element tokens, `ReservedOrScaleDtype` for `f8ue4m3`); `cast_bits` on a 128/256-bit or `f8e3m4` dtype used to mask an identity cast to a wrong 8-bit width and now declines, and `cast`/`concat`/`squeeze`/`unsqueeze` are Pending, not Done, for them (`cast::cast_supported_dtype`). Test: `tests/union_batch1_decline.rs`.
 - Vendored `dtype_manifest.json` re-vendored from KISS `a9ad8cf5` (34 rows; blob `44731168`); `tests/dtype_manifest_agreement.rs` pins 34. The `f8e3m4` constants follow LLVM `APFloat` and ml_dtypes; Mojo's docstring disagrees (finite-only), see KISS-CLASSIFY-6.1-0019.
 - Verification: `cargo test --workspace`, 37 test binaries, 0 failed; new test `classify_union_batch1_tokens_widths_kinds_and_scale` uses literals from the KISS clauses.
 
