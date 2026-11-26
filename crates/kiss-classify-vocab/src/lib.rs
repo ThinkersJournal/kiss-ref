@@ -267,9 +267,13 @@ impl Dtype {
             | Dtype::F128
             | Dtype::F8e3m4
             | Dtype::F8ue4m3 => NumericKind::Float,
-            Dtype::I8 | Dtype::I16 | Dtype::I32 | Dtype::I64 | Dtype::I4 | Dtype::I128 | Dtype::I256 => {
-                NumericKind::Int
-            }
+            Dtype::I8
+            | Dtype::I16
+            | Dtype::I32
+            | Dtype::I64
+            | Dtype::I4
+            | Dtype::I128
+            | Dtype::I256 => NumericKind::Int,
             Dtype::U8
             | Dtype::U16
             | Dtype::U32
@@ -444,7 +448,11 @@ mod tests {
             ("f8ue4m3", 8, Float),
         ] {
             let d = Dtype::from_token(tok).unwrap_or_else(|| panic!("{tok} must parse"));
-            assert_eq!((d.token(), d.bits(), d.numeric_kind()), (tok, bits, kind), "{tok}");
+            assert_eq!(
+                (d.token(), d.bits(), d.numeric_kind()),
+                (tok, bits, kind),
+                "{tok}"
+            );
             assert!(!d.is_reserved(), "{tok} is usable, not reserved");
         }
         // f8ue4m3 is a scale type (6.1-0020, 6.6-0021): it declines compute in a value position; f8e3m4 does not.
