@@ -531,7 +531,11 @@ pub(crate) fn bool_legal(op: Op) -> bool {
 /// dispatch behind `Done`. (Legality is orthogonal and comes first in [`support`].)
 fn implemented_on(op: Op, dtype: Dtype) -> bool {
     if is_bit_level(op) {
-        // `legality` has already removed the complex, reserved and scale dtypes.
+        // `legality` has already removed the complex, reserved and scale dtypes. The four data-movement ops
+        // additionally need a dtype the bit-level path can carry (it cannot yet: 128/256-bit, `f8e3m4`).
+        if matches!(op, Op::Cast | Op::Concat | Op::Squeeze | Op::Unsqueeze) {
+            return crate::cast::cast_supported_dtype(dtype);
+        }
         return true;
     }
     let float_ok = match dtype {

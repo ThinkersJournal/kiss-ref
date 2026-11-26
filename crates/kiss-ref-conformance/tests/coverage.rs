@@ -185,7 +185,8 @@ fn coverage_support_consistency() {
             // `cast`/`concat`/`squeeze`/`unsqueeze` are bit-level (crate::cast): Done on every dtype legal for them.
             let bit_level = matches!(op, Op::Cast | Op::Concat | Op::Squeeze | Op::Unsqueeze)
                 && !d.declines_compute()
-                && !d.is_complex();
+                && !d.is_complex()
+                && kiss_ref_core::cast::cast_supported_dtype(d);
             // `iota` (§6.11-0025) is Done exactly on its spec dtypes: the integers i8..u64 and f16/bf16/f32/f64.
             let iota_dtype = matches!(
                 d,
