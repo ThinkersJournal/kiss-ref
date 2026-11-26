@@ -5,7 +5,7 @@ All notable changes to the published crates (`kiss-classify-vocab`, `kiss-ops-vo
 conformance crate is unpublished. Format follows [Keep a Changelog]; versions are
 [SemVer].
 
-## [Unreleased]
+## [0.6.2] — 2026-11-26
 
 - `kiss-classify-vocab::Dtype` gains the seven tokens of KISS union batch 1 (kiss-conformance 0.24.0, KISS-CLASSIFY-6.1-0017..-0020; CireSnave board 501 "A", board 515): `F128` (IEEE binary128), `I128`, `U128`, `I256`, `U256`, `F8e3m4` (IEEE-style FP8 E3M4) and `F8ue4m3` (the unsigned NVFP4 scale), appended after `F6e3m2` so `Dtype::ALL` (now 34) keeps the first 27 in place. `F8ue4m3` is a scale type (`is_mx_scale()` and `declines_compute()` are true, as for `F8e8m0`). Additive: `Dtype` is `#[non_exhaustive]`; number proposed 0.6.2, the PM allocates.
 - No evaluation yet: `kiss-ref-core` declines the seven by name until each is implemented (`Error::UnsupportedDtype` for the six element tokens, `ReservedOrScaleDtype` for `f8ue4m3`); `cast_bits` on a 128/256-bit or `f8e3m4` dtype used to mask an identity cast to a wrong 8-bit width and now declines, and `cast`/`concat`/`squeeze`/`unsqueeze` are Pending, not Done, for them (`cast::cast_supported_dtype`). Test: `tests/union_batch1_decline.rs`.
