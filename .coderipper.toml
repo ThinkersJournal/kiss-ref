@@ -1,0 +1,6 @@
+[sup016]
+gate = true
+licence = "MIT OR Apache-2.0"
+extensions = [".rs", ".py"]
+min_files = 30
+copyright_expected = ["spdx_gate.py"]
