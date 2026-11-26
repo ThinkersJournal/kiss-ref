@@ -7,6 +7,10 @@ conformance crate is unpublished. Format follows [Keep a Changelog]; versions ar
 
 ## [Unreleased]
 
+## [0.6.1] — 2026-11-26
+
+- CI only: licence gate (`.github/spdx_gate.py`, `.coderipper.toml`, SUP-016). No code change; not breaking.
+
 ## [0.6.0] — 2026-11-15
 
 **BREAKING (behaviour).** The window family declines a view in which some output window has **no in-bounds tap** (KISS-Ops §6.13-0011, KISS 0.17.x; the rule the 0.5.0 entry listed as not yet done). Number proposed, the PM allocates; pre-1.0 a break moves the second number.
